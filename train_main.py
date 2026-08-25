@@ -60,10 +60,13 @@ def main():
 
     criterion = c.criterion.to(device)
     optimizer = optim.Adam(filter(lambda p: p.requires_grad, net.parameters()), lr=c.lr)
+    # GradScaler is required for fp16 training (unlike inference, which only needs autocast) -
+    # it rescales gradients to avoid them underflowing to zero in fp16. No-op when disabled.
+    scaler = torch.cuda.amp.GradScaler(enabled=(device.type == 'cuda'))
 
     for epoch in range(c.num_epochs):
         logging.info(f'Starting epoch {epoch + 1}')
-        train(criterion, device, epoch, net, optimizer, train_data_loader)
+        train(criterion, device, epoch, net, optimizer, train_data_loader, scaler)
         validation_loss = validate(criterion, device, epoch, net, eval_data_loader, early_stopping.best_validation_loss)
 
         if early_stopping(validation_loss) and c.enable_early_stopping:
@@ -78,17 +81,19 @@ def main():
     logging.info(f"Application finished. Best validation loss was {early_stopping.best_validation_loss}")
 
 
-def train(criterion, device, epoch, net, opt, dl):
+def train(criterion, device, epoch, net, opt, dl, scaler):
     net.train()
     xma, ma, = [], []
 
     for i, batch in enumerate(dl):
         img, frames, hm = batch[0], batch[1].to(device), batch[2][:, int(c.hm_filter), :, :].unsqueeze(1).to(device)
-        out = net(frames)
         opt.zero_grad()
-        loss = criterion(out, hm)
-        loss.backward()
-        opt.step()
+        with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=(device.type == 'cuda')):
+            out = net(frames)
+            loss = criterion(out, hm)
+        scaler.scale(loss).backward()
+        scaler.step(opt)
+        scaler.update()
         xma.append(loss.item())
         ma.append(loss.item())
         if c.visualize:
@@ -106,8 +111,10 @@ def validate(criterion, device, epoch, net, dl, best_loss):
 
         for i, batch in enumerate(dl):
             img, frames, hm, bbs_gt = batch[0], batch[1].to(device), batch[2][:, int(c.hm_filter), :, :].unsqueeze(1).to(device), batch[3]
-            out = net(frames)
-            ma.append(criterion(out, hm).item())
+            with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=(device.type == 'cuda')):
+                out = net(frames)
+                loss = criterion(out, hm)
+            ma.append(loss.item())
             if c.visualize:
                 visualize_train_output(img, batch[1], out, hm)
 

@@ -1,6 +1,12 @@
+import os
+
 import dill
 
 from config.config import AbstractConfig
+from dataset.abstract_dataset import HeatMap
+from dataset.kth_dataset import KthDataSet
+from dataset.testing_dataset import TestingDataSet
+from eval.threshold_eval import ThresholdEval
 
 base_config = AbstractConfig({
     # dataset (KthDataSet | MnistDataSet | TestingDataSet)
@@ -29,6 +35,32 @@ base_config = AbstractConfig({
     'eval_method': None
 })
 config = base_config.copy()
+
+# evaluate on the real NFO footage (seq1-4). eval_method matches the publication exactly:
+# ThresholdEval (Otsu-threshold + contour based, not a plain argmax) with a distance error
+# tolerance of 0.1 (10% of the heatmap side length).
+nfo_test = {
+    'dataset_type': TestingDataSet,
+    'test_data': 'data/nfo_processed',
+    'hm_filter': HeatMap.CIRCLE,
+    'batch_size': 16,
+    'seq_size': 5,
+    'eval_method': ThresholdEval(max_dist_error=0.1),
+    'num_workers': min(8, os.cpu_count() or 1),
+}
+
+# diagnostic config: box/F1 evaluation on KTH's own validation set (same domain/resolution
+# as training) - isolates "does the eval/matching code work at all" from "did the model
+# generalize to NFO", since KthDataSet already carries real ground-truth boxes too.
+kth_val_test = {
+    'dataset_type': KthDataSet,
+    'test_data': 'data/kth_val',
+    'hm_filter': HeatMap.CIRCLE,
+    'batch_size': 16,
+    'seq_size': 5,
+    'eval_method': ThresholdEval(max_dist_error=0.1),
+    'num_workers': min(8, os.cpu_count() or 1),
+}
 
 
 def set_cfg(config_name: str):
