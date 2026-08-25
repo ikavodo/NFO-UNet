@@ -6,6 +6,9 @@ out/
 model.pt
 *.pkl
 temp/
+data/
+# paywalled/copyrighted reference papers - keep local only, never commit or push
+docs/*.pdf
 
 
 ########################################################################################################################
