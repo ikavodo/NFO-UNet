@@ -1,3 +1,12 @@
+import os
+
+
+def available_cpus() -> int:
+    # os.cpu_count() reports the node's total CPUs, not the SLURM job's --cpus-per-task
+    # allocation (that's a cgroup/cpuset affinity limit os.cpu_count() doesn't read) -
+    # prefer SLURM's own env var when present so num_workers doesn't oversubscribe.
+    return int(os.environ.get('SLURM_CPUS_PER_TASK', os.cpu_count() or 1))
+
 
 class AbstractConfig(object):
 

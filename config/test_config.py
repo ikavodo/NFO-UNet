@@ -1,8 +1,6 @@
-import os
-
 import dill
 
-from config.config import AbstractConfig
+from config.config import AbstractConfig, available_cpus
 from dataset.abstract_dataset import HeatMap
 from dataset.kth_dataset import KthDataSet
 from dataset.testing_dataset import TestingDataSet
@@ -47,7 +45,7 @@ nfo_test = {
     'seq_size': 7,
     'nth_frame': 2,  # match training's frame rate f=2 (see config/train_config.py)
     'eval_method': ThresholdEval(max_dist_error=0.1),
-    'num_workers': min(8, os.cpu_count() or 1),
+    'num_workers': min(8, available_cpus()),
 }
 
 # diagnostic config: box/F1 evaluation on KTH's own validation set (same domain/resolution
@@ -61,7 +59,7 @@ kth_val_test = {
     'seq_size': 7,
     'nth_frame': 2,  # match training's frame rate f=2 (see config/train_config.py)
     'eval_method': ThresholdEval(max_dist_error=0.1),
-    'num_workers': min(8, os.cpu_count() or 1),
+    'num_workers': min(8, available_cpus()),
 }
 
 

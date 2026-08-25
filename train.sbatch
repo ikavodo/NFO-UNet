@@ -2,7 +2,7 @@
 
 #SBATCH --job-name=nfo_unet_train
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
 #SBATCH --nodelist=node3,node4,node11,node13,node14,node15,node16,node17,node19,node20
 # --nodelist above is copied from integ.sbatch as a starting point - it does not target

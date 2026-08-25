@@ -1,8 +1,6 @@
-import os
-
 import dill
 
-from config.config import AbstractConfig
+from config.config import AbstractConfig, available_cpus
 from dataset.abstract_dataset import HeatMap
 from dataset.kth_dataset import KthDataSet
 from logistic_loss import LogisticLoss
@@ -85,7 +83,7 @@ kth_train = {
     'num_epochs': 100,
     'train_transforms': [rand_h_flip(), rand_v_flip(), rand_rot_90(), reduce_colors(4), rand_color_swap()],
     # scale to whichever machine actually runs training (e.g. a remote GPU box)
-    'num_workers': min(8, os.cpu_count() or 1),
+    'num_workers': min(8, available_cpus()),
 }
 
 
