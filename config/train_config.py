@@ -67,6 +67,10 @@ config = base_config.copy()
 # lr=1e-3, batch_size=16, up to 100 epochs (early stopping patience=15 already matches the
 # paper's cmax=15), color discretization (cbest=2, i.e. 4 colors) + swapping plus
 # geometric flip/rotation augmentation.
+# nth_frame=2 (the paper's frame rate f=2): Table 3 of the IEEE paper (Pflugfelder & Auer,
+# AVSS 2021) shows precision for N=5 (our seq_size) jumps from 0.85 at f=1 (nth_frame=1,
+# the previous default - the worst setting tested) to 0.92 at f=2 - not a fidelity nuance,
+# a real, previously-missed parameter.
 kth_train = {
     'dataset_type': KthDataSet,
     'train_data': 'data/kth_train',
@@ -75,6 +79,7 @@ kth_train = {
     'criterion': LogisticLoss(),
     'batch_size': 16,
     'seq_size': 5,
+    'nth_frame': 2,
     'lr': 1e-3,
     'num_epochs': 100,
     'train_transforms': [rand_h_flip(), rand_v_flip(), rand_rot_90(), reduce_colors(4), rand_color_swap()],

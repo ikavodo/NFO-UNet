@@ -45,6 +45,7 @@ nfo_test = {
     'hm_filter': HeatMap.CIRCLE,
     'batch_size': 16,
     'seq_size': 5,
+    'nth_frame': 2,  # match training's frame rate f=2 (see config/train_config.py)
     'eval_method': ThresholdEval(max_dist_error=0.1),
     'num_workers': min(8, os.cpu_count() or 1),
 }
@@ -58,6 +59,7 @@ kth_val_test = {
     'hm_filter': HeatMap.CIRCLE,
     'batch_size': 16,
     'seq_size': 5,
+    'nth_frame': 2,  # match training's frame rate f=2 (see config/train_config.py)
     'eval_method': ThresholdEval(max_dist_error=0.1),
     'num_workers': min(8, os.cpu_count() or 1),
 }

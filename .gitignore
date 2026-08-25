@@ -7,8 +7,11 @@ model.pt
 *.pkl
 temp/
 data/
-# paywalled/copyrighted reference papers - keep local only, never commit or push
+# paywalled/copyrighted reference papers (and their docling-converted text) - keep local
+# only, never commit or push. docs/superpowers/ (our own specs/plans) is unaffected, since
+# * doesn't match across directories.
 docs/*.pdf
+docs/*.md
 
 
 ########################################################################################################################
