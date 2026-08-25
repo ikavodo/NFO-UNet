@@ -23,18 +23,22 @@ def detect_blobs(masks: np.ndarray, min_area: float = 80):
     return detections
 
 
+def _bbox_height(bbox):
+    return bbox[3] - bbox[1]
+
+
 class _Track:
     """Constant-velocity Kalman filter, position/motion state only. Ported from
     master_thesis/experiments/prototypes/motion_via_blob_tracking.py (numpy/scipy only,
     no torch dependency in the original either)."""
     _next_id = 0
 
-    def __init__(self, x, y, t0):
+    def __init__(self, x, y, t0, height=None):
         self.id = _Track._next_id
         _Track._next_id += 1
         self.state = np.array([x, y, 0.0, 0.0])
         self.P = np.eye(4) * 50.0
-        self.history = {t0: (x, y)}
+        self.history = {t0: (x, y, height)}
         self.first_frame = t0
         self.last_frame = t0
         self.misses = 0
@@ -46,7 +50,7 @@ class _Track:
         self.P = F @ self.P @ F.T + Q
         return self.state[:2]
 
-    def update(self, x, y, t):
+    def update(self, x, y, t, height=None):
         H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=float)
         R = np.eye(2) * 9.0
         z = np.array([x, y])
@@ -55,7 +59,7 @@ class _Track:
         K = self.P @ H.T @ np.linalg.inv(S)
         self.state = self.state + K @ y_res
         self.P = (np.eye(4) - K @ H) @ self.P
-        self.history[t] = (x, y)
+        self.history[t] = (x, y, height)
         self.last_frame = t
         self.misses = 0
 
@@ -77,7 +81,7 @@ def track_blobs(detections, max_dist: float, max_age: int = 6):
             row_ind, col_ind = linear_sum_assignment(cost)
             for r, c in zip(row_ind, col_ind):
                 if cost[r, c] <= max_dist:
-                    active[r].update(dets[c]["x"], dets[c]["y"], t)
+                    active[r].update(dets[c]["x"], dets[c]["y"], t, height=_bbox_height(dets[c]["bbox"]))
                     matched_tracks.add(r)
                     matched_dets.add(c)
         for i, tr in enumerate(active):
@@ -85,7 +89,7 @@ def track_blobs(detections, max_dist: float, max_age: int = 6):
                 tr.misses += 1
         for j, d in enumerate(dets):
             if j not in matched_dets:
-                active.append(_Track(d["x"], d["y"], t))
+                active.append(_Track(d["x"], d["y"], t, height=_bbox_height(d["bbox"])))
         still_active = []
         for tr in active:
             (dead if tr.misses > max_age else still_active).append(tr)
@@ -117,10 +121,22 @@ def merged_center(detections_at_frame, anchor_x: float, anchor_y: float, merge_r
     return (x1 + x2) / 2, (y1 + y2) / 2
 
 
-def score_and_fit(tracks, min_track_length: int = 3):
+def score_and_fit(tracks, min_track_length: int = 3, expected_height: float = None,
+                  height_tolerance: float = 0.5):
     """Score completed tracks by persistence x drift-consistency (span * net_displacement
     / (1 + residual_std) of a linear fit to the x-centroid trajectory). Returns the winning
-    track's info dict, or None if no track has at least min_track_length frames."""
+    track's info dict, or None if no track has at least min_track_length frames.
+
+    Motion consistency alone can't tell a person apart from any other smoothly-moving
+    foreground blob (e.g. a wind-blown branch) - verified on real NFO footage: a track on
+    swaying foliage outscored the actual (partially-occluded, harder-to-segment) person.
+    When expected_height is given (measured typical person height in this frame's pixel
+    space - a dataset/resolution-specific value, hence not defaulted), the score is
+    multiplied by a size-consistency term (Gaussian falloff in relative deviation from
+    expected_height, controlled by height_tolerance), penalizing tracks whose average blob
+    height doesn't look person-sized. Defaults to None (no penalty, original behavior)
+    since blob height isn't tracked at all unless the caller passes it through.
+    """
     results = []
     for tr in tracks:
         frames = sorted(tr.history.keys())
@@ -133,8 +149,15 @@ def score_and_fit(tracks, min_track_length: int = 3):
         resid_std = (xs - A @ coef).std()
         net_disp = np.hypot(xs[-1] - xs[0], tr.history[frames[-1]][1] - tr.history[frames[0]][1])
         score = span * net_disp / (1.0 + resid_std)
-        results.append(dict(id=tr.id, span=span, score=score, vx=coef[0],
-                             resid_std=resid_std, net_disp=net_disp, frames=frames, history=tr.history))
+
+        heights = np.array([tr.history[f][2] for f in frames if tr.history[f][2] is not None])
+        mean_height = heights.mean() if len(heights) else None
+        if expected_height is not None and mean_height is not None:
+            rel_dev = (mean_height - expected_height) / (height_tolerance * expected_height)
+            score = score * np.exp(-rel_dev ** 2)
+
+        results.append(dict(id=tr.id, span=span, score=score, vx=coef[0], resid_std=resid_std,
+                             net_disp=net_disp, mean_height=mean_height, frames=frames, history=tr.history))
     if not results:
         return None
     results.sort(key=lambda r: -r["score"])

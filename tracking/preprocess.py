@@ -2,14 +2,49 @@ import numpy as np
 import cv2
 
 
-def foreground_mask(frames: np.ndarray, bg_frames: int = 5, var_threshold: float = 16.0) -> np.ndarray:
+def foreground_mask(frames: np.ndarray, bg_frames: int = None, var_threshold: float = 16.0,
+                    warmup_frames: np.ndarray = None, adaptive_learning_rate: bool = False) -> np.ndarray:
     """MOG2 background subtraction over a [T, H, W] uint8 grayscale stack.
-    Returns a [T, H, W] uint8 binary mask (0/255)."""
+    Returns a [T, H, W] uint8 binary mask (0/255).
+
+    warmup_frames: optional [Tw, H, W] stack of person-absent frames from the same
+    (static-camera) sequence, run through the subtractor first and discarded, so it can
+    learn e.g. wind-blown foliage as a legitimate multi-modal background state before ever
+    seeing the actual window. Without this, every window starts from zero history, so
+    anything with visual variability - vegetation motion included - looks exactly as "new"
+    to the model as a real person does. cv2's MOG2 save()/read() roundtrip does not
+    actually restore usable state (verified empirically - a reloaded model misbehaves like
+    a brand-new one), so warm-up must be re-run per window rather than cached/cloned.
+    bg_frames defaults to len(warmup_frames) when given (unless explicitly overridden), so
+    the adaptation rate (learning_rate ~= 1/history) matches how much warm-up was fed in.
+
+    adaptive_learning_rate: when True, use an explicit per-frame learning rate of
+    1/min(frames_seen_so_far, bg_frames) instead of leaving it at MOG2's default (a fixed
+    ~1/bg_frames from frame 0). Needed for track_sequence.track_windows_in_sequence, which
+    processes a whole sequence with one fixed bg_frames covering both early windows (few
+    real frames elapsed) and late ones (many elapsed) - a fixed history tuned for "fully
+    warmed" leaves early windows under-adapted (verified empirically: bg_frames=100 with
+    only ~38 real frames elapsed left a window barely learned at all, far worse than when
+    history was set to match the actual elapsed count). This schedule starts fast (learn
+    strongly from what little data exists) and settles to the configured rate once enough
+    real frames have accumulated. Off by default - track_window's existing, already-
+    validated single-window behavior is unaffected.
+    """
+    if bg_frames is None:
+        bg_frames = len(warmup_frames) if warmup_frames is not None else 5
     subtractor = cv2.createBackgroundSubtractorMOG2(history=bg_frames, varThreshold=var_threshold,
                                                      detectShadows=False)
+    frames_seen = 0
+    if warmup_frames is not None:
+        for wf in warmup_frames:
+            lr = 1.0 / min(frames_seen + 1, bg_frames) if adaptive_learning_rate else -1
+            subtractor.apply(wf, learningRate=lr)
+            frames_seen += 1
     masks = np.zeros_like(frames, dtype=np.uint8)
     for t in range(frames.shape[0]):
-        masks[t] = subtractor.apply(frames[t])
+        lr = 1.0 / min(frames_seen + 1, bg_frames) if adaptive_learning_rate else -1
+        masks[t] = subtractor.apply(frames[t], learningRate=lr)
+        frames_seen += 1
     return masks
 
 
