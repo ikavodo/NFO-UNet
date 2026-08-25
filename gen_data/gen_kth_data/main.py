@@ -1,9 +1,11 @@
+import argparse
+import multiprocessing as mp
 import os
-from functools import reduce
+from functools import partial, reduce
 from typing import Tuple
 
 import numpy as np
-from cv2 import cv2
+import cv2
 from tqdm import tqdm
 
 from gen_data.gen_kth_data import kth_config as conf
@@ -48,8 +50,10 @@ def extract_mean_bb(bbs, index):
         return BoundingBox(-1, -1, 1, 1)
 
 
-def gen_seq(root: str, gauss: np.ndarray):
+def gen_seq(root: str, gauss: np.ndarray, skip_existing: bool = False):
     seq_path = os.path.join(c.out_dir, f'{os.path.basename(os.path.normpath(root))}_gt', '')
+    if skip_existing and os.path.isfile(os.path.join(seq_path, 'groundtruth.txt')):
+        return
     ensure_dir(seq_path)
     img_files = sorted(search_files(root, '.jpg'), key=lambda x: x.path)
     bbs = extract_bbs(search_files(root, 'groundtruth.txt')[0])
@@ -82,20 +86,32 @@ def gen_seq(root: str, gauss: np.ndarray):
     save_bbs(bb_dict, os.path.join(seq_path, "groundtruth.txt"))
 
 
+def gen_occlusion_sample(i: int, skip_existing: bool = False):
+    out_path = os.path.join(c.out_dir, f'occlusion/{str(i).zfill(5)}.jpg')
+    if skip_existing and os.path.isfile(out_path):
+        return
+    occlusion = generate_occlusion_morph((c.img_size, c.img_size), iterations=c.occ_iterations,
+                                         init_occ_prob=c.occ_init_prob, occ_grow_prob=c.occ_growing_prob,
+                                         occ_shrink_prob=c.occ_shrink_prob)
+    save_occlusion(out_path, occlusion)
+
+
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--skip-existing', action='store_true',
+                        help='skip sequences/occlusion samples already written by a previous run')
+    args = parser.parse_args()
+
     c = conf.config
 
     # do not change this... this one is configured such that it is exactly fitting the border of the image
     gauss = generate_gauss((198, 198), (99, 99), (30, 30)).astype(np.uint8)
 
+    # sequences and occlusion samples are independent of each other -> parallelize both across processes
     roots = search_folders(c.in_dir, 'person', recursive=False)
-    for root in tqdm(roots):
-        path = os.path.join(c.out_dir, f'{str(root).zfill(5)}/')
-        gen_seq(path, gauss)
-
-    # generate occlusion
-    for i in range(c.num_occ_samples):
-        occlusion = generate_occlusion_morph((c.img_size, c.img_size), iterations=c.occ_iterations,
-                                             init_occ_prob=c.occ_init_prob, occ_grow_prob=c.occ_growing_prob,
-                                             occ_shrink_prob=c.occ_shrink_prob)
-        save_occlusion(os.path.join(c.out_dir, f'occlusion/{str(i).zfill(5)}.jpg'), occlusion)
+    with mp.Pool(mp.cpu_count()) as pool:
+        list(tqdm(pool.imap_unordered(partial(gen_seq, gauss=gauss, skip_existing=args.skip_existing), roots),
+                  total=len(roots), desc='sequences'))
+        list(tqdm(pool.imap_unordered(partial(gen_occlusion_sample, skip_existing=args.skip_existing),
+                                       range(c.num_occ_samples)),
+                  total=c.num_occ_samples, desc='occlusion'))

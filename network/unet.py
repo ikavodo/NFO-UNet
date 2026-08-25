@@ -49,5 +49,7 @@ class UNet(nn.Module):
         file = join(root_dir, 'model.pt')
         if not os.path.isfile(file):
             raise ValueError()
-        file = torch.load(file)
+        # map_location='cpu': checkpoints saved from a GPU run must load on a CPU-only
+        # machine too. Callers already call .to(device) afterward.
+        file = torch.load(file, map_location='cpu')
         self.load_state_dict(file)

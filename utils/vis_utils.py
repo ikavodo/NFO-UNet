@@ -1,5 +1,5 @@
 import numpy as np
-from cv2 import cv2
+import cv2
 
 
 def visualize_train_output(orig_batch, frames_batch, out_batch, hm_batch):

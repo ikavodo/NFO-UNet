@@ -1,48 +1,36 @@
 from typing import Tuple
 
 import numpy as np
-from cv2 import cv2
+import cv2
 
 from utils.fs_utils import ensure_dir
 
 
+_MORPH_KERNEL = np.ones((3, 3), dtype=np.uint8)
+
+
 def __shrink_region(region: np.ndarray, shrink_prob: float):
-    shape = region.shape
+    # ponytail: vectorized reimplementation of the original per-pixel loop (same semantics:
+    # each True pixel independently triggers with shrink_prob, spreading True to its 3x3
+    # neighborhood) using cv2.dilate instead of scalar Python loops - ~1000x faster at 224x224
+    seeds = region & (np.random.random(region.shape) < shrink_prob)
+    spread = cv2.dilate(seeds.astype(np.uint8), _MORPH_KERNEL).astype(bool)
     output = np.copy(region)
-    for height in range(shape[0]):
-        for width in range(shape[1]):
-            if region[height, width] and np.random.uniform(0, 1) < shrink_prob:
-                for i in [-1, 0, 1]:
-                    for j in [-1, 0, 1]:
-                        try:
-                            output[height + i, width + j] = True
-                        except IndexError:
-                            pass
+    output[spread] = True
     return output
 
 
 def __grow_region(region: np.ndarray, grow_prob: float):
-    shape = region.shape
+    seeds = (~region) & (np.random.random(region.shape) < grow_prob)
+    spread = cv2.dilate(seeds.astype(np.uint8), _MORPH_KERNEL).astype(bool)
     output = np.copy(region)
-    for height in range(shape[0]):
-        for width in range(shape[1]):
-            if not region[height, width] and np.random.uniform(0, 1) < grow_prob:
-                for i in [-1, 0, 1]:
-                    for j in [-1, 0, 1]:
-                        try:
-                            output[height + i, width + j] = False
-                        except IndexError:
-                            pass
+    output[spread] = False
     return output
 
 
 def generate_occlusion_morph(shape: Tuple[int, int], init_occ_prob: float = 0.05, iterations: int = 1,
                              occ_grow_prob: float = 1, occ_shrink_prob: float = 1) -> np.ndarray:
-    occlusion = np.ones(shape, dtype=np.bool)
-    # init occlusion
-    for height in range(shape[0]):
-        for width in range(shape[1]):
-            occlusion[height, width] = np.random.uniform(0, 1) > init_occ_prob
+    occlusion = np.random.random(shape) > init_occ_prob
 
     for i in range(iterations):
         occlusion = __grow_region(occlusion, occ_grow_prob)

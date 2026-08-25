@@ -2,7 +2,7 @@ from config.config import AbstractConfig
 
 base_config = AbstractConfig({
     # directory containing the sequence folders, each of them containing the seq images and labels
-    'in_dir': None,
+    'in_dir': 'data/kth_staged',
     # image size of sequences to be generated
     "img_size": 224,
     # if None, bounding boxes will not be averaged, else these are the weights for the mean calculation
@@ -10,7 +10,7 @@ base_config = AbstractConfig({
     # radius of circles in heatmap
     'hm_circle_radius': 0.07,
     # root directory which will hold all generated sequences
-    "out_dir": None,
+    "out_dir": 'data/kth_processed',
     # number of generated occlusion files
     'num_occ_samples': 1000,
     # number of iterations specifying how many times the occlusion should be growing and shrinking

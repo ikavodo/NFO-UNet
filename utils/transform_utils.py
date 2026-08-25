@@ -3,7 +3,7 @@ from typing import List, Callable, Tuple, Union
 
 import numpy as np
 import torch
-from cv2 import cv2
+import cv2
 from torchvision.transforms import transforms
 
 from utils.bb_utils import BoundingBox

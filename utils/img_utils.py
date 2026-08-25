@@ -2,7 +2,7 @@ import numpy as np
 
 
 def add_and_clip(bg: np.ndarray, img: np.ndarray, pos) -> np.ndarray:
-    bg = bg.astype(np.int)
+    bg = bg.astype(int)
     for x in range(img.shape[0]):
         for y in range(img.shape[1]):
             try:

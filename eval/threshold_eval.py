@@ -1,5 +1,5 @@
 import numpy as np
-from cv2 import cv2
+import cv2
 
 from eval.abstract_eval import AbstractEval
 from utils.bb_utils import BoundingBox

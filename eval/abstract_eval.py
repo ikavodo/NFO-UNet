@@ -1,7 +1,7 @@
 from abc import abstractmethod, ABC
 
 import numpy as np
-from cv2 import cv2
+import cv2
 
 
 class AbstractEval(ABC):

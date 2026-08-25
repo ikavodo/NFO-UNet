@@ -6,7 +6,7 @@ from typing import List, Dict, Tuple
 
 import numpy as np
 import torch
-from cv2 import cv2
+import cv2
 from torch.utils.data import Dataset
 
 from utils.bb_utils import parse_bbs

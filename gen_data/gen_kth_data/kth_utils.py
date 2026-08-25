@@ -1,7 +1,7 @@
 from typing import Tuple, List
 
 import numpy as np
-from cv2 import cv2
+import cv2
 
 from utils.bb_utils import BoundingBox
 
