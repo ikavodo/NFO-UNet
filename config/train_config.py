@@ -67,10 +67,11 @@ config = base_config.copy()
 # lr=1e-3, batch_size=16, up to 100 epochs (early stopping patience=15 already matches the
 # paper's cmax=15), color discretization (cbest=2, i.e. 4 colors) + swapping plus
 # geometric flip/rotation augmentation.
-# nth_frame=2 (the paper's frame rate f=2): Table 3 of the IEEE paper (Pflugfelder & Auer,
-# AVSS 2021) shows precision for N=5 (our seq_size) jumps from 0.85 at f=1 (nth_frame=1,
-# the previous default - the worst setting tested) to 0.92 at f=2 - not a fidelity nuance,
-# a real, previously-missed parameter.
+# seq_size=7: Table 3 of the IEEE paper (Pflugfelder & Auer, AVSS 2021) shows precision
+# saturates around 0.96 at N>=7, clearly ahead of N=5's ~0.92 ceiling.
+# nth_frame=2 (the paper's frame rate f=2): at either N, f=2 beats f=1 (nth_frame=1, the
+# previous default - the worst setting tested) - not a fidelity nuance, a previously-
+# missed parameter.
 kth_train = {
     'dataset_type': KthDataSet,
     'train_data': 'data/kth_train',
@@ -78,7 +79,7 @@ kth_train = {
     'hm_filter': HeatMap.CIRCLE,
     'criterion': LogisticLoss(),
     'batch_size': 16,
-    'seq_size': 5,
+    'seq_size': 7,
     'nth_frame': 2,
     'lr': 1e-3,
     'num_epochs': 100,

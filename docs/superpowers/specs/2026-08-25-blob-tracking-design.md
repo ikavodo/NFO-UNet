@@ -110,7 +110,8 @@ function arguments (not hardcoded), since they need dataset-specific retuning:
   when camera framing/zoom is comparable across datasets, which it wasn't
   here.
 - `min_track_length` may need lowering from `master_thesis`'s default of 3,
-  since a `seq_size`-length window (e.g. 5 frames) leaves little headroom.
+  since a `seq_size`-length window (e.g. 7 frames, matching `config/train_config.py`'s
+  current `seq_size=7`) leaves limited headroom.
 
 ## Validation
 
