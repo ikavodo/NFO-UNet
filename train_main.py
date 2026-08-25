@@ -2,6 +2,10 @@ import argparse
 import logging
 import os
 
+# must be set before the CUDA allocator initializes (i.e. before any torch.cuda call) -
+# reduces GPU memory fragmentation, letting larger batch sizes fit without OOM
+os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')
+
 import torch
 import torch.optim as optim
 from torch.utils.data.dataloader import DataLoader
@@ -23,6 +27,9 @@ def parse_args():
 
 def get_device():
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    if device.type == 'cuda':
+        # inputs are fixed-size (224x224, fixed batch_size) -> let cudnn pick the fastest conv algorithm
+        torch.backends.cudnn.benchmark = True
     logging.info("Device is {}".format(device))
     return device
 

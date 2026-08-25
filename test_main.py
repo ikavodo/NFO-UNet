@@ -2,6 +2,10 @@ import argparse
 import logging
 import os
 
+# must be set before the CUDA allocator initializes (i.e. before any torch.cuda call) -
+# reduces GPU memory fragmentation, letting larger batch sizes fit without OOM
+os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')
+
 import torch
 from torch.utils.data.dataloader import DataLoader
 
@@ -21,6 +25,8 @@ def parse_args():
 
 def get_device():
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    if device.type == 'cuda':
+        torch.backends.cudnn.benchmark = True
     # logging.info("Device is {}".format(device))
     return device
 
@@ -61,7 +67,10 @@ def evaluate(device, net, dl, criterion):
         for i, batch in enumerate(dl):
             img, frames, hm, bbs_gt = batch[0], batch[1].to(device), batch[2][:, int(c.hm_filter), :, :].unsqueeze(
                 1).to(device), batch[3]
-            out = net(frames)
+            # fp16 autocast only for the forward pass (inference-only path, no grad scaler
+            # needed since there's no backward pass here); no-op on CPU
+            with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=(device.type == 'cuda')):
+                out = net(frames)
 
             # calculate stats for mean loss
             loss = criterion(out, hm).item()
