@@ -68,8 +68,12 @@ New top-level package `tracking/`, mirroring the existing `eval/`/`dataset/`/`ne
 
 - `tracking/preprocess.py` — `foreground_mask()`, `refine_mask()`, `filter_by_shape()`.
   All numpy arrays in/out.
-- `tracking/blob_tracker.py` — `detect_blobs()` (connected components per frame)
-  plus the vendored `_Track` / `track_blobs` / `score_and_fit`.
+- `tracking/blob_tracker.py` — `detect_blobs()` (connected components per frame),
+  the vendored `_Track` / `track_blobs` / `score_and_fit`, and `merged_center()`
+  (merges detections near a tracked point into one combined bbox before reading
+  off a position — added during implementation once validation showed the
+  tracker locking onto individual body-part fragments rather than a
+  whole-person centroid; see "Hyperparameters" and "Validation" below).
 - `tracking/track_window.py` (or a top-level function re-exported from
   `tracking/__init__.py`) — `track_window(frames: np.ndarray[seq_size, H, W]) -> dict | None`,
   wiring preprocessing → detection → tracking → scoring, and returning the
@@ -83,12 +87,28 @@ function arguments (not hardcoded), since they need dataset-specific retuning:
 - MOG2: `bg_frames`, `var_threshold` — same defaults as `master_thesis`.
 - Morphology: `close_kernel_size`, `open_kernel_size` — same defaults.
 - Shape filter: `min_area`, `min_solidity` — same defaults.
-- Kalman/Hungarian: `MAX_DIST`, `MERGE_RADIUS` — **rescaled**, not copied as-is.
-  `master_thesis`'s originals (`MAX_DIST=80`, `MERGE_RADIUS=150`) were tuned at
-  1024×1024. `data/kth_staged` frames are native KTH resolution, 160×120.
-  Scaling by width (matching the horizontal-motion convention throughout):
-  `160/1024 ≈ 0.156` → `MAX_DIST ≈ 12.5`, `MERGE_RADIUS ≈ 23`. These are
-  starting points to verify empirically, not final values.
+- Kalman gating (`MAX_DIST`): **rescaled**, not copied as-is. `master_thesis`'s
+  original (`MAX_DIST=80`) was tuned at 1024×1024. `data/kth_staged` frames are
+  native KTH resolution, 160×120. Scaling by width (matching the
+  horizontal-motion convention throughout): `160/1024 ≈ 0.156` → `MAX_DIST ≈
+  12.5`. Starting point to verify empirically, not a final value.
+- Blob-merge radius (`MERGE_RADIUS`): **do not** resolution-rescale this one —
+  tried during implementation and empirically wrong. It needs to track how
+  large a person actually is in pixels (a framing/zoom property), not raw
+  frame resolution: `master_thesis`'s people apparently occupy a much smaller
+  fraction of their 1024×1024 frame than KTH's do of 160×120 (measured
+  directly from KTH ground truth: person height ≈ 90-95px in a 120px-tall
+  frame, ~78% of frame height). Resolution-ratio scaling gave `MERGE_RADIUS ≈
+  23`, which was too small to bridge KTH's fragmented body parts (verified:
+  tracker locked onto an isolated head/shoulder fragment ~35px from the
+  ground-truth whole-person centroid). Deriving it instead from measured
+  person height (`≈ half of ~93px`) gives `MERGE_RADIUS ≈ 50`, which passes
+  the validation check below (11.3px from ground truth). General lesson: when
+  porting a tuned geometric threshold across datasets, rescale by the
+  *quantity the threshold is actually about* (object size here), not by
+  whatever's most convenient to compute (frame resolution) — they only agree
+  when camera framing/zoom is comparable across datasets, which it wasn't
+  here.
 - `min_track_length` may need lowering from `master_thesis`'s default of 3,
   since a `seq_size`-length window (e.g. 5 frames) leaves little headroom.
 

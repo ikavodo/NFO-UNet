@@ -94,6 +94,29 @@ def track_blobs(detections, max_dist: float, max_age: int = 6):
     return dead
 
 
+def merged_center(detections_at_frame, anchor_x: float, anchor_y: float, merge_radius: float):
+    """Merge all detections within merge_radius of (anchor_x, anchor_y) into one combined
+    bbox, and return its center. A single frame's foreground mask commonly fragments a
+    person into disconnected blobs (head/torso/legs) - track_blobs/score_and_fit track
+    whichever individual fragment scores best, not the whole-person centroid a
+    ground-truth box represents, so this merge step is needed to read off a position that
+    corresponds to the whole person. Adapted from master_thesis's compute_merged_box,
+    simplified: that function also picks the best-scoring frame across a whole track;
+    here the target frame is already fixed (the window's center), so only the merge
+    itself is needed.
+
+    Falls back to (anchor_x, anchor_y) if no detections are within range.
+    """
+    nearby = [d for d in detections_at_frame if np.hypot(d['x'] - anchor_x, d['y'] - anchor_y) <= merge_radius]
+    if not nearby:
+        return anchor_x, anchor_y
+    x1 = min(d['bbox'][0] for d in nearby)
+    y1 = min(d['bbox'][1] for d in nearby)
+    x2 = max(d['bbox'][2] for d in nearby)
+    y2 = max(d['bbox'][3] for d in nearby)
+    return (x1 + x2) / 2, (y1 + y2) / 2
+
+
 def score_and_fit(tracks, min_track_length: int = 3):
     """Score completed tracks by persistence x drift-consistency (span * net_displacement
     / (1 + residual_std) of a linear fit to the x-centroid trajectory). Returns the winning
