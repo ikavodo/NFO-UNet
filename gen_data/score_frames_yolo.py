@@ -59,7 +59,11 @@ def score_sequence(seq_dir, bbs, model, batch_size):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--seq', required=True, help='e.g. seq1')
-    parser.add_argument('--model', default='yolov8n.pt')
+    parser.add_argument('--model', default='yolov8l.pt',
+                        help='nano (yolov8n) came back at essentially noise-floor confidence '
+                             '(mean 0.001, 0%% of frames above 0.5) on real NFO data - the paper '
+                             'own YOLO baseline got a real 0.53 precision at this same 800x800 '
+                             'scale, so this looks like model capacity, not task difficulty')
     parser.add_argument('--batch-size', type=int, default=16,
                         help='lower than a 224x224 pipeline would use - each upscaled 800x800 '
                              'image is ~13x the pixel count')
