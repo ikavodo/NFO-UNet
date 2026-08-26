@@ -1,268 +1,230 @@
-# Why NFO evaluation is still failing (F1≈0.04) despite a paper-matched training setup
+# Why NFO evaluation disagreed with the paper — resolved
 
-**Status:** unresolved, handing off to a fresh session for deeper debugging.
-**Audience:** a future Claude session (higher effort / stronger model), after re-reading
-`docs/Person_Localisation_under_Fragmented_Occlusion.pdf`.
+**Status:** root cause found and confirmed by retrain. All four earlier hypotheses are closed
+(two were real but minor, two were refuted). Investigated 2026-08-26 against
+`out/kth_train_20260825_160927`; scale fix confirmed via retrain `out/kth_train_20260826_123145`
+(Prec. 0.474 → 0.802, see bottom of this file). Small residual gap (0.802 vs. paper's 0.96)
+remains, see "Confirmed: retrained with `rand_zoom_out`" section below for next steps.
 
-## Summary
+## TL;DR
 
-Training looks superficially healthy (smooth train loss, no NaNs/divergence, early-stopping at
-epoch 54 - paper's own logistic-loss runs stop at 38-44/100, a plausible range) but **does not
-reach the paper's claimed loss floor**: paper reports logistic loss `<5e-5` by epoch 40; ours
-plateaus at best val loss `0.00663`, ~100x higher (see Hypothesis 3 below - this may be the
-actual root cause, not just a downstream symptom). The model is not garbage - spot-checking raw
-predictions against ground truth shows it genuinely finds the correct location on many
-individual frames. But the aggregate NFO eval result was originally:
+Nothing is wrong with the model, the training, the loss, or the post-processing. Three separate
+things were wrong with the *comparison*, and one thing is genuinely wrong with the *data*:
 
-```
-F1 score was 0.03895
-tp: 2809, fp: 137934, fn: 686
-```
+| # | Finding | Effect | Status |
+|---|---------|--------|--------|
+| 1 | We reported **F1**; the paper reports **Prec. = TP/(TP+FP)** | apples-to-oranges | fixed in `test_main.py` |
+| 2 | Unannotated NFO frames were evaluated → **3,781 guaranteed FPs** | 67% of all reported FPs | fixed in `dataset/testing_dataset.py` |
+| 3 | **KTH training persons are 71–144px tall; NFO persons are 45–64px** — disjoint | costs **0.46 precision** | root cause; `rand_zoom_out` added, needs retrain |
+| 4 | `eval_transforms: []` — validation ran on a different distribution than training | cosmetic here | fixed in `config/train_config.py` |
 
-`fp` is enormous - **137,934**, against roughly 7,300 total evaluation windows in the NFO
-dataset. That's ~19 false positives per window on average, which is a different kind of problem
-than "the model is bad at localizing" - it smells like a post-processing/evaluation pipeline
-issue layered on top of a model that's at least partially working.
+Corrected score for the **existing** checkpoint, no retraining: **Prec. 0.474** (was reported as
+"F1 0.308"). Paper, same config (N=7, f=2): **0.96**.
 
-Everything below is a hypothesis, not a confirmed root cause. Confirm/refute before acting on it.
+## The root cause: person scale
 
-## What's already fixed and shouldn't need revisiting
-
-(See git log for full detail; summarized so this doesn't get re-litigated.)
-
-- Resolution mismatch (NFO was being fed at native 800x600 vs. the 224x224 the network trains
-  at) - fixed, `data/nfo_processed` is now correctly padded+resized to 224x224 matching KTH.
-- Loss/heatmap pairing - `LogisticLoss` + `HeatMap.CIRCLE` (not MSE + Gaussian), per the paper's
-  own head-to-head comparison (logistic wins on final NFO F1 in their Table 4.3: 0.906 vs 0.739
-  for the `n5,2` config). Confirmed correct, not a candidate for the current bug.
-- `lr=1e-3`, `batch_size=16`, `seq_size=7`, `nth_frame=2`, color discretization (`cbest=2`) +
-  swapping, geometric augmentation - all matched to the paper's stated values.
-- `num_workers`/SLURM `--cpus-per-task` mismatch, `conda activate` failing in non-interactive
-  SLURM shells - both fixed, unrelated to this issue but mentioned so they're not re-suspected.
-
-## Correction to a prior "fix": `eval_method` should be `MaxEval`, not `ThresholdEval`
-
-Earlier in this investigation `eval_method` was switched from `MaxEval` to `ThresholdEval`,
-believing the paper's phrase "threshold evaluation metric" named this extraction algorithm. On
-rereading `docs/Person_*.md` §3.2 ("Post-Processing"), that's wrong:
-
-> As the method assumes **unimodality** of H by construction, the simplest approach... is to
-> report the image (heatmap) coordinates of the pixel with the largest value. Nuisances might
-> interfere the assumption of unimodality during training and inference. In this case, H has
-> many local maxima that needs careful outlier detection as further post-processing **which is
-> out of the scope of this paper**.
-
-The paper's actual described method is a single global argmax per frame - exactly
-`eval/max_eval.py:MaxEval.extract_centers` (`np.argmax(hm)`, one `BoundingBox`, done). The
-"threshold" in "threshold evaluation metric" (§4.2, τ=0.1) refers to the **distance-tolerance
-matching criterion** used to call a prediction TP/FP (shared by both `MaxEval` and
-`ThresholdEval` via `AbstractEval.max_dist_error`), not to `ThresholdEval`'s Otsu+multi-contour
-*extraction* algorithm - that class name is a coincidental collision with our codebase, not a
-faithful reproduction of the paper's method.
-
-This directly and structurally explains the fp explosion better than Hypothesis 1 below:
-`ThresholdEval` emits 16-25 detections per frame (one per Otsu-surviving contour, no cap), while
-`MaxEval` can never emit more than one detection per frame no matter how noisy/unbounded the
-underlying output is. Recommended first move for the next session: **revert `eval_method` back
-to `MaxEval` in `nfo_test`/`kth_val_test`, rerun, and compare `tp`/`fp`/`fn` before touching
-anything else.** This is a one-line config change and should be tried before Hypothesis 1's
-sigmoid fix - it's cheaper, and the paper itself explicitly disclaims handling multi-modal
-outputs, so reproducing multi-modal *extraction* was never faithful to begin with.
-
-Note this doesn't necessarily explain Hypothesis 2's spurious fixed secondary peak (with
-`MaxEval`, that peak would still occasionally win the argmax and produce one wrong TP/FN pair
-per affected frame) - but it should collapse the fp count from noise-contour multiplication,
-which was independent of and much larger than that effect.
-
-**Confirmed - rerun after the fix (2026-08-26, remote GPU, same checkpoint
-`out/kth_train_20260825_160927`):**
-```
-F1 score was 0.307678
-tp: 1657, fp: 5619, fn: 1838
-```
-vs. the original `ThresholdEval` run: `F1 0.03895, tp: 2809, fp: 137934, fn: 686`. fp dropped
-24x (137934 -> 5619) and F1 rose 8x (0.039 -> 0.308) from this one-line change alone - strong
-confirmation that `ThresholdEval`'s multi-contour extraction, not the model itself, was the
-dominant source of the fp explosion.
-
-Still far from the paper's reported ~0.9 F1, and now the residual errors look like genuine
-localization mistakes rather than postprocessing artifacts: `fp` (5619) still exceeds `tp`
-(1657) by ~3.4x, and `fn` roughly tripled (686 -> 1838, since a wrong single argmax now costs
-both a miss and a false alarm on the same frame, instead of being drowned in noise-contours that
-happened to sometimes include a correct hit). This reopens both remaining hypotheses as the next
-real targets, now uncontaminated by extraction noise:
-- Hypothesis 1 (sigmoid/output-scaling) may still affect *which* pixel wins the argmax under an
-  unbounded, non-monotonic-under-noise score field.
-- Hypothesis 2 (persistent spurious secondary peak) is now the more likely dominant explanation
-  for the remaining fp/fn, since with a single-point extractor a competing fixed mode directly
-  costs one wrong prediction per frame it wins on - exactly consistent with a ~3.4:1 fp:tp
-  ratio if that mode wins a large minority of frames.
-
-## Hypothesis 3 (new, possibly more fundamental): training loss plateaus ~100x above the paper's reported floor
-
-The paper states logistic loss drops below `5e-5` by epoch 40. Our actual run
-(`out/kth_train_20260825_160927/train.log`) does not get remotely close:
+`AbstractDataSet` ground-truth box heights, in pixels at 224×224 (sentinel `-1,-1,1,1` rows
+excluded — those are the authors' "not annotated" marker, not real boxes):
 
 ```
-[40/100] Training mean loss was 0.00430695     [40/100] Validation mean loss was 0.00718401
-[54/100] Training mean loss was 0.0036214       [54/100] Validation mean loss was 0.00761981
+KTH train:  median 109px   p5 71px   p95 144px
+KTH val:    median 117px   p5 79px   p95 141px
+NFO test:   median  54px   p5 45px   p95  64px
 ```
 
-Train loss is still slowly decreasing at epoch 54 (early-stop trigger), but validation loss has
-plateaued/is noisily flat from ~epoch 20 onward (0.0068-0.008, no clear downward trend) - this is
-not "still converging, just slower than the paper," it looks like a genuine plateau roughly 2
-orders of magnitude above their reported floor.
+**The entire NFO range sits below KTH's 5th percentile.** The network has never seen a person
+this small, and a U-Net is not scale-invariant.
 
-`generate_circle` (`utils/gauss_utils.py`) produces a **hard-edged binary** disc (0/255, radius
-`0.07 * img_height ≈ 15.7px` at 224px), which after `LogisticLoss`'s `2*t-1` mapping is exactly
-the `{-1, 1}` label the loss expects - so the label side looks correct, not an obvious culprit by
-itself. But a hard step edge is an intrinsically hard target for a smooth conv net's continuous
-output to represent - boundary-adjacent pixels may keep contributing non-trivial loss
-indefinitely, which could explain a real (if unwanted) non-zero floor, though likely not 100x
-worth of one on its own (the boundary is a small fraction of total pixels).
-
-This needs verifying, not just theorizing:
-1. Check whether the *paper's own* config (`nth_frame`, `seq_size`, `hm_circle_radius`, batch
-   size, optimizer/lr schedule, weight decay) for the specific run reporting `<5e-5` actually
-   matches ours exactly - Table 3 may have per-config variations we haven't cross-checked for
-   the loss curve claim specifically, only for the paper's *final* F1 comparisons.
-2. Check whether the paper specifies an LR schedule/decay (ours is a flat `lr=1e-3`, no
-   scheduler) - a flat high LR plateauing rather than continuing to descend is a classic sign a
-   schedule is missing.
-3. Check batch normalization / weight init / optimizer choice (Adam vs. SGD, momentum, weight
-   decay) - none of this is documented as verified against the paper in this report yet.
-4. If the loss genuinely can't go lower with current hyperparameters, that would independently
-   explain why NFO F1 (0.308) is far below the paper's (~0.9) even after the eval_method fix -
-   an undertrained model producing less-confident/less-separated heatmap peaks is exactly what
-   would let a persistent spurious secondary peak (Hypothesis 2) win the argmax more often.
-
-This may be the *actual* root cause behind both the F1 gap and Hypothesis 2's competing peak,
-with Hypotheses 1/2 as downstream symptoms rather than independent bugs. Recommend investigating
-this before further chasing Hypothesis 1/2 in isolation.
-
-## Hypothesis 1 (secondary): the eval pipeline assumes a bounded [0,1] output; logistic-loss output is unbounded and never gets sigmoided
-
-Still worth checking (it affects normalization/argmax stability even under `MaxEval`), but no
-longer the primary suspect for the fp count - see correction above.
-
-**The paper's own math** (Section 3, method description) defines the logistic-loss branch's
-output explicitly as an *unbounded real-valued utility*: predicted heatmap pixels
-`V(i,j) ∈ [-∞, ∞]`, with the *ground truth* pixels being the bounded classification labels
-`Y(i,j) ≡ y ∈ {-1, 1}`. This is standard logistic-regression framing: `V` is a raw score, and the
-associated probability is `sigmoid(V)`, not `V` itself.
-
-**Grep confirms there is no `sigmoid` anywhere in this codebase:**
-```
-$ grep -rn "sigmoid" --include=*.py .
-(no results)
-```
-`network/unet.py`'s `forward()` returns the raw final-conv output directly - no activation
-function at all (matches `conv_9.3` in the paper's own architecture table, a plain `1x1` conv
-with no listed activation). This is *correct* for training (both `MSELoss` and `LogisticLoss`
-operate on raw/target-transformed values, not post-sigmoid probabilities), but it means the
-value that reaches evaluation is the raw, unbounded `V(i,j)`.
-
-**The eval pipeline was written assuming a bounded, probability-like heatmap:**
-- `eval/abstract_eval.py:_preprocess`: `hm = batched_hms[i, 0, ...] * 255` - multiplying by 255
-  only makes sense if the input is already roughly in `[0, 1]`.
-- `eval/threshold_eval.py:normalize`: does a per-frame min-max stretch to fill the full
-  `[0, 255]` range, `regardless of the input's absolute scale or confidence`. Feed it noise with
-  a tiny true dynamic range, and it will still stretch that noise to full contrast.
-- `AbstractEval.init_thresh` (an absolute-confidence gate, applied *before* normalization) is
-  unset (`None`) in `nfo_test`/`kth_val_test` - and even if set, a threshold expressed "as a
-  fraction of 255" is meaningless against a raw range that spans roughly `[-34, +15]` (measured
-  directly, see below), not `[0, 1]`.
-
-**Measured raw output range, spot-checking the actual trained model on real NFO windows:**
-```
-idx=23 out_min=-33.615 out_max=10.128 n_contours=24
-idx=27 out_min=-32.189 out_max=11.626 n_contours=25
-idx=29 out_min=-31.325 out_max=15.346 n_contours=23
-```
-16-25 separate contours per single frame. Each contour becomes one predicted center in
-`ThresholdEval.extract_centers` (one `argmax` per surviving Otsu-thresholded contour, no cap on
-count, no minimum-area filter). With ~1 ground-truth box per frame, most of those 16-25
-predictions are automatically false positives - this arithmetic alone plausibly accounts for
-the fp explosion (`137934 / ~7300 windows ≈ 19/window`, in the same range as the measured
-per-frame contour counts).
-
-**Cross-check against the paper's own reported numbers:** Table 4.3 (MSE vs. logistic loss,
-NFO test set) reports **total** fp counts of 271 and 198 for their two logistic-trained
-networks - across their *entire* test set, not per frame. Our per-frame contour count alone
-(16-25) dwarfs their whole-dataset fp count. Whatever their actual postprocessing did, it did
-not produce anything like this many spurious detections per frame - which argues fairly
-strongly that something in *our* postprocessing pipeline, not the trained model itself, is the
-dominant problem.
-
-### How to verify this hypothesis
-
-1. Apply `sigmoid` to the raw output before it reaches `AbstractEval`/`ThresholdEval` (either in
-   `test_main.py`'s `evaluate()` before calling `retrieve_centers`, or as a wrapper), so values
-   are bounded to `(0, 1)` before the `* 255` / min-max-normalize / Otsu-threshold chain. Rerun
-   the same NFO eval and check whether `fp` drops to a sane order of magnitude.
-2. Independently of the sigmoid question, check contour *size*: are the 16-25 contours per frame
-   mostly tiny (1-5px) noise specks, or comparably-sized blobs? If tiny, a minimum-area filter in
-   `ThresholdEval.extract_centers` (reject contours below some pixel-area threshold before the
-   `argmax`-per-contour step) is an independent, complementary fix worth having regardless of
-   the sigmoid question.
-3. Re-read the paper specifically for any postprocessing detail beyond what's already extracted
-   in `docs/Person_Localisation_under_Fragmented_Occlusion.md` - in particular whether they
-   describe applying a sigmoid/normalization step for the logistic-loss branch specifically, or
-   any contour/area filtering in their threshold-evaluation description (Section 4.2). This
-   report's authors (i.e., the current session) may have missed something on the first pass.
-
-## Hypothesis 2 (secondary, likely independent): a persistent, fixed spurious secondary peak
-
-Spot-checking consecutive frames of the same NFO walk (`seq2`, indices 23-30) shows the model
-alternating between the *correct* location and a *fixed, wrong* location:
+Decisive test (`scratchpad/scale_test.py`): upscale each NFO window 2× and crop 224 back out,
+with the ground truth placed at a *random* offset from the crop centre so an "always guess
+centre" strategy cannot win:
 
 ```
-idx=23 gt=(0.88,0.46) pred_argmax=(0.35,0.89)   <- wrong, fixed location
-idx=24 gt=(0.87,0.46) pred_argmax=(0.90,0.47)   <- correct
-idx=25 gt=(0.86,0.46) pred_argmax=(0.85,0.45)   <- correct
-idx=26 gt=(0.86,0.46) pred_argmax=(0.84,0.45)   <- correct
-idx=27 gt=(0.85,0.46) pred_argmax=(0.33,0.89)   <- wrong, same fixed location as idx=23
-idx=28 gt=(0.84,0.46) pred_argmax=(0.34,0.88)   <- wrong, same fixed location
-idx=29 gt=(0.84,0.46) pred_argmax=(0.33,0.88)   <- wrong, same fixed location
-idx=30 gt=(0.83,0.46) pred_argmax=(0.36,0.88)   <- wrong, same fixed location
+n=100  NFO as-is (54px person):          prec = 0.520
+       NFO 2x upscaled (108px person):   prec = 0.980
+       "always guess centre" baseline:   prec = 0.060
 ```
 
-This is a *different* symptom than an earlier (5-epoch, MSE, sanity-config) model, which was
-stuck at one wrong location on essentially every frame. This model has clearly learned the real
-signal (idx 24-26 are excellent) but retains a second, competing, spatially-fixed mode around
-`(x≈0.34, y≈0.88)` that sometimes outscores the correct one at `argmax`. Notably this candidate
-location is bottom-left-ish - worth checking whether it coincides with something structural
-(e.g. a consistent artifact from the pad-to-square + border-replicate step used to make both
-KTH and NFO frames square before the 224x224 resize - KTH's padding is proportionally much
-smaller than NFO's, given KTH's native 160x120 vs. NFO's 800x600, so a padding-replication
-artifact that's negligible in KTH could be much more prominent in NFO and something the network
-never learned to ignore).
+Same weights, same post-processing, same τ. Only the apparent person size changed, and
+precision went from 0.52 to 0.98 — i.e. to the paper's 0.96. The scale gap *is* the KTH→NFO gap.
 
-### How to verify this hypothesis
+The paper says this itself, in the Conclusion (p. 8): *"The experiments show further that motion
+of vegetation causes failure cases and that **the training data is not capturing sufficiently the
+different scales of a person**."* We hit exactly the failure they flagged.
 
-1. Check whether `(≈0.34, ≈0.88)` (or a similar fixed point) recurs across *different* NFO
-   sequences (seq1/3/4), not just seq2 - if it's the exact same absolute location regardless of
-   scene content, that's strong evidence of a learned artifact bias rather than a real
-   content-dependent confusion (e.g. vegetation, as we found for the classical tracker baseline
-   in `tracking/`).
-2. Visualize the padded/replicated border region of a few NFO frames directly and compare its
-   proportional size/appearance to KTH's - if NFO's border-replication artifact is visually much
-   more prominent, that supports the padding-artifact hypothesis over, say, a generic
-   overfitting explanation.
-3. This is independent of Hypothesis 1 - fixing the sigmoid/normalization issue won't
-   necessarily remove this secondary mode, it'll just stop *drowning it in tens of thousands of
-   unrelated noise-contour false positives*. Expect to still need to address this even after
-   Hypothesis 1's fix.
+Supporting evidence — in-domain performance is perfect, so nothing upstream of the domain shift
+is broken:
 
-## Suggested order of attack
+```
+KTH val (same distribution as training): prec = 1.000 (100/100), loss 0.0070
+NFO per sequence: seq1 0.250, seq2 0.450, seq3 0.533, seq4 0.650
+```
 
-1. ~~Revert `eval_method` to `MaxEval`~~ - **done, confirmed** (see rerun result above). fp
-   24x lower, F1 0.039 -> 0.308.
-2. Investigate Hypothesis 3 (training loss plateau ~100x above paper's reported floor) next -
-   it's plausibly upstream of both remaining hypotheses, not just an independent third issue.
-   Cross-check lr schedule, optimizer, weight decay, and batch norm details against the paper.
-3. Dig into Hypothesis 2 (persistent spurious secondary peak) using the spot-check approach
-   already demonstrated in this session's history - may turn out to be a direct symptom of
-   Hypothesis 3 rather than a separate bug.
-4. Revisit Hypothesis 1 (sigmoid/output-scaling) last - no longer expected to matter for fp
-   *count*, but could still affect argmax stability.
+Per-sequence spread tracks vegetation density (the paper's Figure 6 ordering), and wrong
+predictions are **scattered** (std 0.13–0.37 in both axes), not clustered. This is
+content-dependent confusion under occlusion, not a systematic artifact.
+
+### What was done about it
+
+`utils/transform_utils.py:rand_zoom_out(min_scale, max_scale)` — shrinks the frame by a random
+factor and pads back to 224 with replicated borders, moving heatmap and boxes with it. Wired
+into `kth_train` as `rand_zoom_out(0.4, 1.0)`, which maps the KTH median (109px) down to ~44px
+and so covers NFO's 45–64px range. Has a 200-case self-check (run the `__main__`-style snippet
+in the commit message, or re-derive: box centre and heatmap centroid must track the content).
+
+**Not yet validated — this needs a retrain to confirm.** It is placed before `reduce_colors` so
+the INTER_AREA interpolation cannot invent intermediate grey levels after quantisation.
+
+## Finding 1: wrong metric
+
+The paper's measure (§4.2, and Tables 2/3) is **precision** and the raw **TP count**:
+
+> The method's precision or sensitivity (Prec.) is then derived from the TP/FP values by […]
+> Threshold τ is set in the experiments to 10% of the image width/height which is
+> 0.1 × 224 = 22.4 pixel.
+
+Table 3, N=7 / f=2 (our config): **Prec. 0.96, TP 3234** out of 3,379 annotated test images.
+F1 appears nowhere in the paper. `test_main.py` now logs `Prec.` alongside F1.
+
+## Finding 2: unannotated frames were counted as false positives
+
+`TestingDataSet` indexed every window whose sequence neighbourhood was in range — 7,276 of them.
+Only **3,495** of those centre frames carry a ground-truth box. `MaxEval` emits exactly one point
+per window unconditionally, so each of the remaining **3,781** windows was a guaranteed false
+positive.
+
+The arithmetic from the old run confirms this exactly:
+
+```
+tp + fp = 1657 + 5619 = 7276   <- exactly the window count
+tp + fn = 1657 + 1838 = 3495   <- exactly the annotated-window count
+fp - 3781 = 1838 = fn          <- one prediction per frame: matched -> tp, else fp AND fn
+```
+
+The paper puts this explicitly out of scope (§4.2):
+
+> This assumes presence of a person in each test image. The absence of persons introduces
+> true/false negatives and the method's ability to reject a localisation hypothesis which is
+> out of the scope of this paper.
+
+and again in the Conclusion: *"As the current method is not a detector, it does not allow images
+with empty scenes."*
+
+`TestingDataSet._construct_ds_entries` now requires a non-empty `bbs` to index a window,
+mirroring `KthDataSet`'s existing `and gauss_file is not None`. Verified: 3,495 windows, and
+every indexed window has a box.
+
+## Finding 4: validation ran on a different distribution than training
+
+`train_main.py:validate()` uses `c.eval_transforms`, which was `[]`, while `train()` used
+`reduce_colors(4)` + `rand_color_swap()`. So the two logged losses were never comparable, and
+early stopping (patience 15, fired epoch 54) was driven by a mismatched signal. Measured:
+`loss(kth_val, raw) = 0.0070` vs `loss(kth_val, quantised) = 0.0114`.
+
+Real bug, now fixed (`eval_transforms: [rand_zoom_out(0.4, 1.0), reduce_colors(4)]`), but it did
+**not** cause the F1 gap — in-domain precision is 1.000 either way.
+
+## Refuted hypotheses — do not re-open these
+
+### Hypothesis 3 (loss plateau ~100× above the paper's floor): premise was a misread plot
+
+The claim was "paper reports logistic loss <5e-5 by epoch 40; ours plateaus at 0.0066, ~100×
+higher." Figure 7 (p. 8) is a **dual-axis** chart, rendered here directly from the PDF:
+
+- **Left axis: `L_mse`**, ticks 1.00E-03 … 5.00E-05.
+- **Right axis: `L_log`**, ticks 2.00E-02, 1.00E-02, 8.00E-03, 6.00E-03, **4.00E-03**.
+
+The `5e-5` figure is the bottom of the **MSE** axis. The two `L_log` curves (n5,2 and n7,2) end
+near the bottom of the **right** axis, i.e. around **4e-3**. Our best val loss of **0.0066** and
+train loss of **0.0036** at epoch 54 sit right on the paper's actual logistic-loss floor. There
+was never a 100× gap, and in-domain precision of 1.000 independently shows the model is not
+undertrained. No LR schedule, weight-decay, or init investigation is needed.
+
+### Hypothesis 1 (missing sigmoid): mathematically cannot matter under `MaxEval`
+
+`MaxEval.extract_centers` is `np.argmax(hm)`, and everything upstream of it in
+`AbstractEval._preprocess` is `hm * 255` with `init_thresh=None`. `argmax` is invariant under any
+monotonically increasing map, and `sigmoid` and `×255` are both monotone. Applying a sigmoid
+therefore cannot change which pixel wins — not "probably doesn't matter", cannot. (It *did*
+matter under the old `ThresholdEval`, which is why the hypothesis looked plausible; that
+extractor is gone.)
+
+### Hypothesis 2 (persistent fixed spurious secondary peak): refuted by measurement
+
+The original evidence was seq2 indices 23–30 landing repeatedly near (0.34, 0.88). Those are
+eight *consecutive* frames of one walk — consecutive frames naturally share a wrong answer.
+Sampled across all four sequences, wrong predictions are diffuse:
+
+```
+seq1 wrong_pred mean=(0.42,0.65) std=(0.27,0.34)
+seq2 wrong_pred mean=(0.25,0.45) std=(0.31,0.37)
+seq3 wrong_pred mean=(0.36,0.44) std=(0.13,0.39)
+seq4 wrong_pred mean=(0.23,0.49) std=(0.30,0.33)
+```
+
+No fixed mode. No padding artifact either — `pad_img_and_bb_to_square` uses `BORDER_REPLICATE`
+for KTH and NFO alike (`prep_nfo_data.py` calls the same `scale_and_pad_img_to_square`), and both
+are 4:3 sources so the padding is proportionally identical.
+
+### Colour quantisation at test time: refuted experimentally
+
+`nfo_test` has `test_transforms: []` while training used `reduce_colors(4)`, and §3.2 does
+present `f_rad` as method *pre-processing*, so this looked like a real train/test mismatch.
+Applying it at test makes localisation **worse**:
+
+```
+seq2, n=120:  raw grayscale        prec = 0.442
+              reduce_colors(4)     prec = 0.342
+```
+
+Plausible reason: training applies `rand_color_swap` *after* quantisation, so the network is
+already invariant to the palette and keys on spatial structure — which raw grayscale supplies
+more of. Leave `test_transforms` empty.
+
+## Also checked and clean (so these aren't re-suspected)
+
+- **NFO frame/label alignment.** Filenames are 0-indexed contiguous (`00000_or.jpg` …); gt keys
+  are 0-based with max = frame count − 1. No off-by-one.
+- **Geometry.** `prep_nfo_data.py` passes the box through the same
+  `scale_and_pad_img_to_square` as the image, so pad+resize keeps them consistent. Visually
+  confirmed by overlaying gt boxes on processed frames.
+- **Config fidelity.** `seq_size=7`, `nth_frame=2` = the paper's best N=7, f=2 cell.
+  Circle radius 0.07 × 224 = 15.7px against τ = 22.4px.
+
+## Remaining divergences from the paper (lower priority than the scale fix)
+
+Both would need a retrain to evaluate, and neither is likely to matter as much as scale:
+
+1. **Running sequences are in the training set** (32 train + 32 val). The paper dropped them:
+   *"class Running comprises sequences of fast motion which reduced the dataset to 225 sequences
+   useful for our needs."* Training on fast motion may teach the net that large inter-frame
+   displacement means "person", which is also what moving vegetation looks like.
+2. **Only 8 of 25 KTH persons are used for training.** `kth_labels.zip` contains 301 labelled
+   sequences across all 25 persons; `data/kth_train` uses 96 of them (~13k samples), with a
+   50/50 person split to `data/kth_val`. The paper labelled all sequences.
+
+## Confirmed: retrained with `rand_zoom_out`, 2026-08-26
+
+```
+Prec. was 0.802289, F1 score was 0.802289
+tp: 2804, fp: 691, fn: 691
+```
+
+(`out/kth_train_20260826_123145`, early-stopped epoch 45, best val loss 0.00643 - config
+verified via `train_cfg.pkl`: `rand_zoom_out` present in both `train_transforms` and
+`eval_transforms`, `seq_size=7`, `nth_frame=2`.) Precision jumped **0.474 → 0.802**, most of the
+way to the paper's 0.96. `fp == fn` exactly and always will under this fixed pipeline: every
+window now has exactly one GT box and one prediction, so a wrong argmax costs one fp and one fn
+on the same frame - `Prec.` and `F1` are now numerically identical by construction, not
+coincidence.
+
+**Remaining gap (0.802 vs. 0.96):** the two lower-priority divergences flagged above are the
+next things to try, in order:
+1. Drop Running-class sequences from `data/kth_train`/`data/kth_val` (paper explicitly excludes
+   fast motion: "reduced the dataset to 225 sequences useful for our needs") - training on large
+   inter-frame displacement may be teaching the net that motion magnitude alone signals "person",
+   which also describes windblown vegetation.
+2. Widen the KTH person split beyond the current 8/25 persons (paper labelled all 25).
+3. If neither closes it, break down `Prec.` per NFO sequence (as before: seq1-4) to check whether
+   the residual gap is still vegetation-density-correlated (expected, matches paper's Fig. 6) or
+   has shifted to a new failure mode now that scale is fixed.
