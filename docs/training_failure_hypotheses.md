@@ -72,6 +72,30 @@ Note this doesn't necessarily explain Hypothesis 2's spurious fixed secondary pe
 per affected frame) - but it should collapse the fp count from noise-contour multiplication,
 which was independent of and much larger than that effect.
 
+**Confirmed - rerun after the fix (2026-08-26, remote GPU, same checkpoint
+`out/kth_train_20260825_160927`):**
+```
+F1 score was 0.307678
+tp: 1657, fp: 5619, fn: 1838
+```
+vs. the original `ThresholdEval` run: `F1 0.03895, tp: 2809, fp: 137934, fn: 686`. fp dropped
+24x (137934 -> 5619) and F1 rose 8x (0.039 -> 0.308) from this one-line change alone - strong
+confirmation that `ThresholdEval`'s multi-contour extraction, not the model itself, was the
+dominant source of the fp explosion.
+
+Still far from the paper's reported ~0.9 F1, and now the residual errors look like genuine
+localization mistakes rather than postprocessing artifacts: `fp` (5619) still exceeds `tp`
+(1657) by ~3.4x, and `fn` roughly tripled (686 -> 1838, since a wrong single argmax now costs
+both a miss and a false alarm on the same frame, instead of being drowned in noise-contours that
+happened to sometimes include a correct hit). This reopens both remaining hypotheses as the next
+real targets, now uncontaminated by extraction noise:
+- Hypothesis 1 (sigmoid/output-scaling) may still affect *which* pixel wins the argmax under an
+  unbounded, non-monotonic-under-noise score field.
+- Hypothesis 2 (persistent spurious secondary peak) is now the more likely dominant explanation
+  for the remaining fp/fn, since with a single-point extractor a competing fixed mode directly
+  costs one wrong prediction per frame it wins on - exactly consistent with a ~3.4:1 fp:tp
+  ratio if that mode wins a large minority of frames.
+
 ## Hypothesis 1 (secondary): the eval pipeline assumes a bounded [0,1] output; logistic-loss output is unbounded and never gets sigmoided
 
 Still worth checking (it affects normalization/argmax stability even under `MaxEval`), but no
@@ -188,13 +212,14 @@ never learned to ignore).
 
 ## Suggested order of attack
 
-1. Revert `eval_method` to `MaxEval` (see correction above) - one-line config change, cheapest
-   possible test, and structurally the most direct explanation for a 19-fp/window average.
-2. Re-run the exact NFO eval (`test_main.py --config nfo_test --load-dir
-   out/kth_train_20260825_160927`) after the change and compare `tp`/`fp`/`fn`/F1 directly against
-   the numbers in this report, not just "does it look better."
-3. If `fp` is still large after that (unlikely, but check), fall back to Hypothesis 1's sigmoid
-   fix.
-4. Whatever's left over, dig into Hypothesis 2 using the spot-check approach already demonstrated
-   in this session's history (load the model, iterate NFO windows, compare `argmax` position to
-   ground truth, look for a recurring fixed wrong location across multiple sequences).
+1. ~~Revert `eval_method` to `MaxEval`~~ - **done, confirmed** (see rerun result above). fp
+   24x lower, F1 0.039 -> 0.308.
+2. Dig into Hypothesis 2 next using the spot-check approach already demonstrated in this
+   session's history (load the model, iterate NFO windows, compare `argmax` position to ground
+   truth, look for a recurring fixed wrong location across multiple sequences) - now the more
+   likely dominant explanation for the remaining fp:tp≈3.4:1 gap.
+3. If that doesn't fully explain the residual gap, revisit Hypothesis 1 (sigmoid/output-scaling)
+   - it's no longer expected to matter for fp *count*, but could still affect argmax stability.
+4. Whatever's left after both, compare against the paper's own reported ~0.9 F1 to judge whether
+   the remaining gap is a training/data issue (e.g. NFO domain shift from KTH) rather than a
+   pipeline bug.
