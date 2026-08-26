@@ -32,7 +32,12 @@ def score_sequence(seq_dir, bbs, model, batch_size):
         chunk = localizable[i:i + batch_size]
         imgs = [cv2.cvtColor(cv2.imread(os.path.join(seq_dir, f'{idx:05d}_or.jpg'), 0),
                              cv2.COLOR_GRAY2BGR) for idx in chunk]
-        results = model(imgs, classes=[PERSON_CLASS], verbose=False)
+        # conf near-zero: we only need raw confidences to *rank* nearby candidate frames
+        # against each other, not a hard yes/no - ultralytics' default conf=0.25 silently
+        # drops every box below that before we ever see it, which is almost certainly why an
+        # initial run came back 0.000 confidence on literally 100% of frames (a real "person
+        # too small" degradation would show some nonzero spread, not an exact, total zero)
+        results = model(imgs, classes=[PERSON_CLASS], conf=0.001, verbose=False)
         for idx, result in zip(chunk, results):
             confs = result.boxes.conf
             scores[idx] = float(confs.max()) if len(confs) else 0.0
