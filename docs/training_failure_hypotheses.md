@@ -35,13 +35,47 @@ Everything below is a hypothesis, not a confirmed root cause. Confirm/refute bef
   for the `n5,2` config). Confirmed correct, not a candidate for the current bug.
 - `lr=1e-3`, `batch_size=16`, `seq_size=7`, `nth_frame=2`, color discretization (`cbest=2`) +
   swapping, geometric augmentation - all matched to the paper's stated values.
-- `eval_method` was previously the wrong class (`MaxEval` instead of `ThresholdEval`) - fixed.
 - `num_workers`/SLURM `--cpus-per-task` mismatch, `conda activate` failing in non-interactive
   SLURM shells - both fixed, unrelated to this issue but mentioned so they're not re-suspected.
 
-## Hypothesis 1 (primary): the eval pipeline assumes a bounded [0,1] output; logistic-loss output is unbounded and never gets sigmoided
+## Correction to a prior "fix": `eval_method` should be `MaxEval`, not `ThresholdEval`
 
-This is the strongest lead, and it's concrete enough to verify quickly.
+Earlier in this investigation `eval_method` was switched from `MaxEval` to `ThresholdEval`,
+believing the paper's phrase "threshold evaluation metric" named this extraction algorithm. On
+rereading `docs/Person_*.md` §3.2 ("Post-Processing"), that's wrong:
+
+> As the method assumes **unimodality** of H by construction, the simplest approach... is to
+> report the image (heatmap) coordinates of the pixel with the largest value. Nuisances might
+> interfere the assumption of unimodality during training and inference. In this case, H has
+> many local maxima that needs careful outlier detection as further post-processing **which is
+> out of the scope of this paper**.
+
+The paper's actual described method is a single global argmax per frame - exactly
+`eval/max_eval.py:MaxEval.extract_centers` (`np.argmax(hm)`, one `BoundingBox`, done). The
+"threshold" in "threshold evaluation metric" (§4.2, τ=0.1) refers to the **distance-tolerance
+matching criterion** used to call a prediction TP/FP (shared by both `MaxEval` and
+`ThresholdEval` via `AbstractEval.max_dist_error`), not to `ThresholdEval`'s Otsu+multi-contour
+*extraction* algorithm - that class name is a coincidental collision with our codebase, not a
+faithful reproduction of the paper's method.
+
+This directly and structurally explains the fp explosion better than Hypothesis 1 below:
+`ThresholdEval` emits 16-25 detections per frame (one per Otsu-surviving contour, no cap), while
+`MaxEval` can never emit more than one detection per frame no matter how noisy/unbounded the
+underlying output is. Recommended first move for the next session: **revert `eval_method` back
+to `MaxEval` in `nfo_test`/`kth_val_test`, rerun, and compare `tp`/`fp`/`fn` before touching
+anything else.** This is a one-line config change and should be tried before Hypothesis 1's
+sigmoid fix - it's cheaper, and the paper itself explicitly disclaims handling multi-modal
+outputs, so reproducing multi-modal *extraction* was never faithful to begin with.
+
+Note this doesn't necessarily explain Hypothesis 2's spurious fixed secondary peak (with
+`MaxEval`, that peak would still occasionally win the argmax and produce one wrong TP/FN pair
+per affected frame) - but it should collapse the fp count from noise-contour multiplication,
+which was independent of and much larger than that effect.
+
+## Hypothesis 1 (secondary): the eval pipeline assumes a bounded [0,1] output; logistic-loss output is unbounded and never gets sigmoided
+
+Still worth checking (it affects normalization/argmax stability even under `MaxEval`), but no
+longer the primary suspect for the fp count - see correction above.
 
 **The paper's own math** (Section 3, method description) defines the logistic-loss branch's
 output explicitly as an *unbounded real-valued utility*: predicted heatmap pixels
@@ -154,14 +188,13 @@ never learned to ignore).
 
 ## Suggested order of attack
 
-1. Hypothesis 1 first - it's cheap to test (one line: sigmoid before eval) and, if confirmed,
-   probably closes most of the F1 gap by itself just by collapsing the fp count to something
-   sane, which would also make it much easier to see clearly whether Hypothesis 2 is real or was
-   partly an artifact of noise drowning out the signal.
+1. Revert `eval_method` to `MaxEval` (see correction above) - one-line config change, cheapest
+   possible test, and structurally the most direct explanation for a 19-fp/window average.
 2. Re-run the exact NFO eval (`test_main.py --config nfo_test --load-dir
-   out/kth_train_20260825_160927`) after any fix and compare `tp`/`fp`/`fn`/F1 directly against
+   out/kth_train_20260825_160927`) after the change and compare `tp`/`fp`/`fn`/F1 directly against
    the numbers in this report, not just "does it look better."
-3. If Hypothesis 1's fix doesn't fully resolve things, dig into Hypothesis 2 using the spot-check
-   approach already demonstrated in this session's history (load the model, iterate NFO windows,
-   compare `argmax` position to ground truth, look for a recurring fixed wrong location across
-   multiple sequences).
+3. If `fp` is still large after that (unlikely, but check), fall back to Hypothesis 1's sigmoid
+   fix.
+4. Whatever's left over, dig into Hypothesis 2 using the spot-check approach already demonstrated
+   in this session's history (load the model, iterate NFO windows, compare `argmax` position to
+   ground truth, look for a recurring fixed wrong location across multiple sequences).

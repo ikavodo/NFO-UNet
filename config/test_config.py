@@ -4,7 +4,7 @@ from config.config import AbstractConfig, available_cpus
 from dataset.abstract_dataset import HeatMap
 from dataset.kth_dataset import KthDataSet
 from dataset.testing_dataset import TestingDataSet
-from eval.threshold_eval import ThresholdEval
+from eval.max_eval import MaxEval
 
 base_config = AbstractConfig({
     # dataset (KthDataSet | MnistDataSet | TestingDataSet)
@@ -34,9 +34,10 @@ base_config = AbstractConfig({
 })
 config = base_config.copy()
 
-# evaluate on the real NFO footage (seq1-4). eval_method matches the publication exactly:
-# ThresholdEval (Otsu-threshold + contour based, not a plain argmax) with a distance error
-# tolerance of 0.1 (10% of the heatmap side length).
+# evaluate on the real NFO footage (seq1-4). eval_method matches the publication's actual
+# post-processing (paper sec. 3.2): single global argmax per frame (unimodality assumed by
+# construction), with a distance error tolerance of 0.1 (10% of the heatmap side length) used
+# only for TP/FP matching, not for extraction.
 nfo_test = {
     'dataset_type': TestingDataSet,
     'test_data': 'data/nfo_processed',
@@ -44,7 +45,7 @@ nfo_test = {
     'batch_size': 16,
     'seq_size': 7,
     'nth_frame': 2,  # match training's frame rate f=2 (see config/train_config.py)
-    'eval_method': ThresholdEval(max_dist_error=0.1),
+    'eval_method': MaxEval(max_dist_error=0.1),
     'num_workers': min(8, available_cpus()),
 }
 
@@ -58,7 +59,7 @@ kth_val_test = {
     'batch_size': 16,
     'seq_size': 7,
     'nth_frame': 2,  # match training's frame rate f=2 (see config/train_config.py)
-    'eval_method': ThresholdEval(max_dist_error=0.1),
+    'eval_method': MaxEval(max_dist_error=0.1),
     'num_workers': min(8, available_cpus()),
 }
 
