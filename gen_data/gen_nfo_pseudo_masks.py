@@ -3,12 +3,18 @@
 A single prompt propagated across a whole continuously-visible segment is not reliable (see
 prototype_sam2_video_segment.py's diagnostic: 41/155 frames came back empty on seq1's longest
 segment, all in one contiguous block, no self-recovery). This uses 3 GT-seeded checkpoints per
-segment at fractions 0.25/0.5/0.75: the middle checkpoint only needs its own native frame (no
-propagation - essentially free), and the two outer checkpoints each propagate outward to their
-segment edge but stop propagating inward once they reach the middle. Net effect: almost every
-frame is covered exactly once (by whichever outer checkpoint owns that half), with agreement only
-checked at the single meeting frame in the middle - roughly 2x the compute of one full-segment
-propagation, not 3x/5x. v1: simplest reasonable check - refine later if needed.
+segment at fractions 0.25/0.5/0.75: the middle checkpoint propagates fully in both directions
+(same as a lone single-checkpoint run would); the two outer checkpoints propagate outward to
+their own segment edge (unbounded) but stop propagating inward once they reach the middle. Net
+effect: [start,mid] is double-covered by the left checkpoint and the middle, [mid,end]
+double-covered by the middle and the right checkpoint - real agreement across both halves, not
+just one meeting frame - at roughly 2x the compute of one full-segment propagation (middle's ~1x
+full pass plus each outer's ~0.5x half-segment pass), not 3x.
+
+Checkpoint frame selection can optionally be refined by a YOLO confidence scan
+(score_frames_yolo.py, --yolo-scores) - searches a small window around each target fraction for
+the frame with the highest person-detection confidence, instead of blindly using the exact
+fractional frame (which might land mid-stride or partially occluded).
 
 Requires a GPU and the sam2 package (not available in this dev environment):
     git clone https://github.com/facebookresearch/sam2.git && cd sam2 && pip install -e .
@@ -33,9 +39,34 @@ CHECKPOINT_FRACS = (0.25, 0.5, 0.75)  # (outer, middle, outer)
 MAX_CONSECUTIVE_EMPTY = 5  # early-stop a direction once it's clearly dead, don't burn compute
 
 
+YOLO_WINDOW_FRAC = 0.1  # search +-10% of segment length around each target fraction
+
+
 def point_from_gt(seq_dir, bbs, raw_idx, img_w, img_h):
     bb = bbs[raw_idx][0]
     return ((bb.x + bb.w / 2) * img_w, (bb.y + bb.h / 2) * img_h)
+
+
+def load_yolo_scores(csv_path):
+    scores = {}
+    with open(csv_path) as f:
+        next(f)  # header
+        for line in f:
+            raw_idx, conf = line.strip().split(',')
+            scores[int(raw_idx)] = float(conf)
+    return scores
+
+
+def refine_checkpoint(target_local_idx, start, n_seg_frames, yolo_scores):
+    """Search a small window around target_local_idx for the highest-confidence frame,
+    falling back to the naive target if no scores are available there."""
+    if yolo_scores is None:
+        return target_local_idx
+    window = max(1, int(round(YOLO_WINDOW_FRAC * n_seg_frames)))
+    lo, hi = max(0, target_local_idx - window), min(n_seg_frames - 1, target_local_idx + window)
+    candidates = [(yolo_scores.get(start + i, -1.0), i) for i in range(lo, hi + 1)]
+    best_conf, best_local_idx = max(candidates)
+    return best_local_idx if best_conf >= 0 else target_local_idx
 
 
 def propagate_one_checkpoint(predictor, frame_dir, checkpoint_local_idx, point, device,
@@ -99,13 +130,20 @@ def combine_checkpoint_masks(per_checkpoint_results, n_seg_frames):
     return combined, diagnostics
 
 
-def process_segment(predictor, seq_dir, bbs, start, end, seg_idx, out_dir_frames, device):
+def process_segment(predictor, seq_dir, bbs, start, end, seg_idx, out_dir_frames, device,
+                    yolo_scores=None):
     n_seg_frames = end - start + 1
     frame_dir = os.path.join(out_dir_frames, f'seg{seg_idx}_frames')
     stage_frames(seq_dir, start, end, frame_dir)
 
     img_h, img_w = cv2.imread(os.path.join(seq_dir, f'{start:05d}_or.jpg'), 0).shape
-    distinct = sorted(set(int(round((n_seg_frames - 1) * f)) for f in CHECKPOINT_FRACS))
+    naive = [int(round((n_seg_frames - 1) * f)) for f in CHECKPOINT_FRACS]
+    distinct = sorted(set(naive))
+    if len(distinct) == 3:
+        refined = [refine_checkpoint(idx, start, n_seg_frames, yolo_scores) for idx in distinct]
+        # only trust the refinement if it preserved strict ordering - a collision means the
+        # search windows overlapped (short segment), fall back to the naive placement
+        distinct = sorted(refined) if len(set(refined)) == 3 and refined == sorted(refined) else distinct
     if len(distinct) < 3:
         # degenerate short segment where 0.25/0.5/0.75 round to the same frame - fall back to
         # a single unbounded checkpoint at the middle, same as the diagnostic script
@@ -120,12 +158,16 @@ def process_segment(predictor, seq_dir, bbs, start, end, seg_idx, out_dir_frames
         return diagnostics
     a_idx, b_idx, c_idx = distinct
 
-    # bounds: A propagates backward unbounded (to segment start) and forward only up to B;
-    # C propagates forward unbounded (to segment end) and backward only up to B; B needs no
-    # propagation at all, just its own native frame - see module docstring.
+    # bounds: B propagates fully in both directions, same as a lone single-checkpoint run
+    # would (unbounded). A propagates backward unbounded (to segment start) and forward only
+    # up to B; C propagates forward unbounded (to segment end) and backward only up to B - so
+    # [start,B] is double-covered by A and B, [B,end] double-covered by B and C, giving real
+    # agreement across both halves rather than a single meeting frame. Total work is roughly
+    # B's full pass (~1x) + A's and C's half-segment passes (~0.5x each) = ~2x one full-segment
+    # propagation, not 3x (which unbounded-both-ways on all three would cost).
     bounds = {
         a_idx: dict(max_forward=b_idx - a_idx, max_backward=None),
-        b_idx: dict(max_forward=0, max_backward=0),
+        b_idx: dict(max_forward=None, max_backward=None),
         c_idx: dict(max_forward=None, max_backward=c_idx - b_idx),
     }
 
@@ -154,6 +196,10 @@ def main():
     parser.add_argument('--model-id', default='facebook/sam2.1-hiera-large')
     parser.add_argument('--tmp-dir', default='tracking/sam2_pseudo_mask_tmp',
                         help='scratch space for staged per-segment frame symlinks')
+    parser.add_argument('--yolo-scores', default=None,
+                        help='optional CSV from score_frames_yolo.py to refine checkpoint '
+                             'frame selection (searches a window around each target fraction '
+                             'for the highest-confidence frame instead of using it blindly)')
     args = parser.parse_args()
 
     seq_dir = os.path.join(IN_DIR, f'{args.seq}_gt')
@@ -161,6 +207,8 @@ def main():
     segments = find_segments(bbs)
     print(f'{args.seq}: {len(segments)} continuously-visible segments, '
           f'lengths {[e - s + 1 for s, e in segments]}')
+
+    yolo_scores = load_yolo_scores(args.yolo_scores) if args.yolo_scores else None
 
     from sam2.sam2_video_predictor import SAM2VideoPredictor
     predictor = SAM2VideoPredictor.from_pretrained(args.model_id)
@@ -172,7 +220,7 @@ def main():
         f.write('segment_idx,local_idx,raw_idx,n_checkpoints_reached,min_pairwise_iou\n')
         for seg_idx, (start, end) in enumerate(segments):
             diagnostics = process_segment(predictor, seq_dir, bbs, start, end, seg_idx,
-                                          out_dir_frames, device)
+                                          out_dir_frames, device, yolo_scores=yolo_scores)
             for local_idx, n_reached, min_iou in diagnostics:
                 f.write(f'{seg_idx},{local_idx},{start + local_idx},{n_reached},{min_iou}\n')
 
