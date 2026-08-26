@@ -200,13 +200,19 @@ def main():
                         help='optional CSV from score_frames_yolo.py to refine checkpoint '
                              'frame selection (searches a window around each target fraction '
                              'for the highest-confidence frame instead of using it blindly)')
+    parser.add_argument('--segment-idx', type=int, default=None,
+                        help='only process this one segment instead of the whole sequence')
     args = parser.parse_args()
 
     seq_dir = os.path.join(IN_DIR, f'{args.seq}_gt')
     bbs = parse_bbs(os.path.join(seq_dir, 'groundtruth.txt'))
     segments = find_segments(bbs)
-    print(f'{args.seq}: {len(segments)} continuously-visible segments, '
-          f'lengths {[e - s + 1 for s, e in segments]}')
+    if args.segment_idx is not None:
+        segments = [segments[args.segment_idx]]
+        print(f'{args.seq} segment {args.segment_idx}: frames {segments[0]}')
+    else:
+        print(f'{args.seq}: {len(segments)} continuously-visible segments, '
+              f'lengths {[e - s + 1 for s, e in segments]}')
 
     yolo_scores = load_yolo_scores(args.yolo_scores) if args.yolo_scores else None
 
@@ -215,7 +221,8 @@ def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     out_dir_frames = os.path.join(args.tmp_dir, args.seq)
-    csv_path = f'{args.seq}_pseudo_mask_diagnostics.csv'
+    suffix = f'_seg{args.segment_idx}' if args.segment_idx is not None else ''
+    csv_path = f'{args.seq}{suffix}_pseudo_mask_diagnostics.csv'
     with open(csv_path, 'w') as f:
         f.write('segment_idx,local_idx,raw_idx,n_checkpoints_reached,min_pairwise_iou\n')
         for seg_idx, (start, end) in enumerate(segments):

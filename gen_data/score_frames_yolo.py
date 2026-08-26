@@ -35,8 +35,9 @@ PERSON_CLASS = 0  # COCO
 UPSCALE_SIZE = 800
 
 
-def score_sequence(seq_dir, bbs, model, batch_size):
-    localizable = sorted(idx for idx in bbs if bbs[idx] and bbs[idx][0].x >= 0)
+def score_sequence(seq_dir, bbs, model, batch_size, start=None, end=None):
+    localizable = sorted(idx for idx in bbs if bbs[idx] and bbs[idx][0].x >= 0
+                         and (start is None or start <= idx <= end))
     scores = {}
     for i in range(0, len(localizable), batch_size):
         chunk = localizable[i:i + batch_size]
@@ -59,6 +60,10 @@ def score_sequence(seq_dir, bbs, model, batch_size):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--seq', required=True, help='e.g. seq1')
+    parser.add_argument('--segment-idx', type=int, default=None,
+                        help='only score this one continuously-visible segment instead of the '
+                             'whole sequence - the checkpoint search windows only touch a small '
+                             'fraction of frames anyway, so this is enough to validate on')
     parser.add_argument('--model', default='yolov8l.pt',
                         help='nano (yolov8n) came back at essentially noise-floor confidence '
                              '(mean 0.001, 0%% of frames above 0.5) on real NFO data - the paper '
@@ -72,15 +77,22 @@ def main():
     seq_dir = os.path.join(IN_DIR, f'{args.seq}_gt')
     bbs = parse_bbs(os.path.join(seq_dir, 'groundtruth.txt'))
     segments = find_segments(bbs)
-    print(f'{args.seq}: {len(segments)} segments, '
-          f'{sum(e - s + 1 for s, e in segments)} localizable frames to score')
+
+    start = end = None
+    if args.segment_idx is not None:
+        start, end = segments[args.segment_idx]
+        print(f'{args.seq} segment {args.segment_idx}: frames [{start}, {end}] to score')
+    else:
+        print(f'{args.seq}: {len(segments)} segments, '
+              f'{sum(e - s + 1 for s, e in segments)} localizable frames to score')
 
     from ultralytics import YOLO
     model = YOLO(args.model)
 
-    scores = score_sequence(seq_dir, bbs, model, args.batch_size)
+    scores = score_sequence(seq_dir, bbs, model, args.batch_size, start, end)
 
-    out_path = f'{args.seq}_yolo_scores.csv'
+    suffix = f'_seg{args.segment_idx}' if args.segment_idx is not None else ''
+    out_path = f'{args.seq}{suffix}_yolo_scores.csv'
     with open(out_path, 'w') as f:
         f.write('raw_idx,person_conf\n')
         for idx in sorted(scores):
