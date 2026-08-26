@@ -113,11 +113,11 @@ Two things follow.
 
 **The floor moved, not just the mean.** Worst sequence went 0.250 → 0.667; three of four now sit
 within 0.016 of each other. There is no weak sequence hiding beneath the aggregate, so a single
-headline number is a fair summary. **Quote `Prec. 0.802` with a 0.667 floor.** Window-weighting
-these samples over all 3,495 windows gives 0.751 — ~1.6σ from 0.802 at n=60/sequence on different
-sampled frames, so it corroborates the reported figure. That matters because
-`out/kth_train_20260826_123145` has no `test.log`: 0.802 is transcribed from elsewhere, and this
-is the only local evidence for it.
+headline number is a fair summary. **Quote `Prec. 0.802` with a 0.667 floor.** `0.802` is now
+confirmed directly from `out/kth_train_20260826_123145/test.log` (full run, all 3,495 annotated
+windows: `tp: 2804, fp: 691, fn: 691`), not just the n=60/sequence sample - the sample's
+window-weighted estimate (0.751) undershot the true figure by ~0.05, which is a sampling-noise
+gap, not a discrepancy to chase.
 
 **The vegetation-density correlation is gone.** Pre-fix the ordering was monotone
 (0.25 < 0.45 < 0.53 < 0.65), tracking scene clutter as the paper's Fig. 6 would predict. Post-fix
@@ -128,12 +128,20 @@ gap needs to start by identifying what that mode actually is.
 
 ### Part of the gap cannot be closed by training
 
-Our NFO ground truth has **3,507** boxes; the paper states **3,379**. Different annotation set,
-and the paper disclaims its own (§4.1): *"there are cases of video frames, where a correct
-setting of the bounding box is difficult which makes this annotation inaccurate. A sufficient
-methodology is left for future research."* Those hard frames are exactly the heavily-occluded
-ones where precision is worst, so some of the residual is annotation disagreement. 0.96 is
-defined against labels we do not have.
+Our NFO ground truth has **3,507** boxes; the paper states **3,379**. Traced this as far as it
+goes: the raw downloaded annotation files (`data/nfo_final/nfo_final/seq*/groundtruth_norm*.txt`,
+per-sequence non-sentinel row counts 892/888/800/927 = 3507 exactly) already contain this count
+*before* any of our processing touches them - not a pipeline bug on our side. The NFO dataset is
+not version-controlled in either this fork or the original `jonasauer/NFO-UNet` repo; both
+READMEs point at the same single, unversioned owncloud download link. There is no commit history
+to diff, so the discrepancy can't be traced further than "our download and whatever the authors
+scored against are not byte-identical." Plausible explanation: the shared drive was edited
+(re-annotated/corrected) at some point after publication, with no version history since it's a
+mutable link rather than a release artifact. The paper disclaims its own annotation quality
+(§4.1): *"there are cases of video frames, where a correct setting of the bounding box is
+difficult which makes this annotation inaccurate. A sufficient methodology is left for future
+research."* Those hard frames are exactly the heavily-occluded ones where precision is worst, so
+some of the residual is annotation disagreement. 0.96 is defined against labels we do not have.
 
 ### If the number is ever wanted anyway
 
