@@ -6,6 +6,12 @@ nearby frame with a clean, high-confidence YOLO detection is a better place to s
 from. This script only produces the confidence scores; gen_nfo_pseudo_masks.py optionally
 consumes them (--yolo-scores) to search a small window around each target fraction.
 
+Frames are upscaled 224x224 -> 800x800 before detection, matching the paper's own YOLO baseline
+(docs/Person_*.md): "The MS Coco trained detector was fed at test time with a 3.5 multiple
+(800x800) in size of the original 224x224 images, as the detector is likely to produce false
+negatives due to the small person scales in the original images." Same fix, same reasoning -
+an initial run without this came back exactly 0.000 confidence on 100% of frames.
+
 Requires a GPU and the ultralytics package (not available in this dev environment):
     pip install ultralytics
 
@@ -23,6 +29,10 @@ from utils.bb_utils import parse_bbs
 
 IN_DIR = 'data/nfo_processed'
 PERSON_CLASS = 0  # COCO
+# the paper's own YOLO baseline (docs/Person_*.md) upscales 224x224 NFO frames 3.5x to 800x800
+# before running an MS-COCO-trained detector, "as the detector is likely to produce false
+# negatives due to the small person scales in the original images" - same fix, same reasoning.
+UPSCALE_SIZE = 800
 
 
 def score_sequence(seq_dir, bbs, model, batch_size):
@@ -30,8 +40,10 @@ def score_sequence(seq_dir, bbs, model, batch_size):
     scores = {}
     for i in range(0, len(localizable), batch_size):
         chunk = localizable[i:i + batch_size]
-        imgs = [cv2.cvtColor(cv2.imread(os.path.join(seq_dir, f'{idx:05d}_or.jpg'), 0),
-                             cv2.COLOR_GRAY2BGR) for idx in chunk]
+        imgs = [cv2.resize(cv2.cvtColor(cv2.imread(os.path.join(seq_dir, f'{idx:05d}_or.jpg'), 0),
+                                        cv2.COLOR_GRAY2BGR),
+                           (UPSCALE_SIZE, UPSCALE_SIZE), interpolation=cv2.INTER_CUBIC)
+                for idx in chunk]
         # conf near-zero: we only need raw confidences to *rank* nearby candidate frames
         # against each other, not a hard yes/no - ultralytics' default conf=0.25 silently
         # drops every box below that before we ever see it, which is almost certainly why an
@@ -48,7 +60,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--seq', required=True, help='e.g. seq1')
     parser.add_argument('--model', default='yolov8n.pt')
-    parser.add_argument('--batch-size', type=int, default=32)
+    parser.add_argument('--batch-size', type=int, default=16,
+                        help='lower than a 224x224 pipeline would use - each upscaled 800x800 '
+                             'image is ~13x the pixel count')
     args = parser.parse_args()
 
     seq_dir = os.path.join(IN_DIR, f'{args.seq}_gt')
