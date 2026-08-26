@@ -86,7 +86,9 @@ def evaluate(device, net, dl, criterion):
                 visualize_eval_output(img, batch[1], out, out_processed, hm)
 
     f1 = tp / (tp + 0.5 * (fp + fn))
-    logging.info(f'F1 score was {round(f1, 6)}')
+    # the paper reports Prec. = tp/(tp+fp) and the raw tp count (sec. 4.2, tables 2/3), not F1
+    prec = tp / (tp + fp) if tp + fp else 0.0
+    logging.info(f'Prec. was {round(prec, 6)} (paper metric), F1 score was {round(f1, 6)}')
     logging.info(f'tp: {tp}, fp: {fp}, fn: {fn}')
     # logging.info(f'Mean loss was {round(sum(ma) / len(ma), 8)}')
 

@@ -5,7 +5,8 @@ from dataset.abstract_dataset import HeatMap
 from dataset.kth_dataset import KthDataSet
 from logistic_loss import LogisticLoss
 from utils.fs_utils import ensure_dir
-from utils.transform_utils import rand_h_flip, rand_v_flip, rand_rot_90, reduce_colors, rand_color_swap
+from utils.transform_utils import rand_h_flip, rand_v_flip, rand_rot_90, reduce_colors, rand_color_swap, \
+    rand_zoom_out
 
 base_config = AbstractConfig({
     # dataset
@@ -81,7 +82,15 @@ kth_train = {
     'nth_frame': 2,
     'lr': 1e-3,
     'num_epochs': 100,
-    'train_transforms': [rand_h_flip(), rand_v_flip(), rand_rot_90(), reduce_colors(4), rand_color_swap()],
+    # rand_zoom_out: KTH persons are 71-144px tall at 224px (median 109), NFO's are 45-64px
+    # (median 54) - disjoint distributions. Feeding the trained net a 2x-upscaled NFO frame
+    # lifts precision 0.52 -> 0.98, so this scale gap *is* the KTH->NFO gap (see
+    # docs/training_failure_hypotheses.md). Zooming out during training covers NFO's range.
+    'train_transforms': [rand_h_flip(), rand_v_flip(), rand_rot_90(), rand_zoom_out(0.4, 1.0),
+                         reduce_colors(4), rand_color_swap()],
+    # validate on the same distribution we train on, so the two losses are comparable and
+    # early stopping is driven by a like-for-like signal (was []: raw 256-level frames)
+    'eval_transforms': [rand_zoom_out(0.4, 1.0), reduce_colors(4)],
     # scale to whichever machine actually runs training (e.g. a remote GPU box)
     'num_workers': min(8, available_cpus()),
 }

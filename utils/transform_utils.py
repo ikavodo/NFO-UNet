@@ -135,3 +135,34 @@ def resolve_transform(trans_list: List[Transform]) -> Transform:
     trans_list = list(filter(lambda x: type(x) != to_tensor, trans_list))
     trans_list.append(to_tensor())
     return chain(trans_list)
+
+
+def rand_zoom_out(min_scale: float, max_scale: float) -> Transform:
+    """Shrink the frame by a random factor and pad back to size with replicated borders.
+
+    KTH persons are 71-144px tall at 224px (median 109); NFO persons are 45-64px (median 54)
+    - the two scale distributions do not overlap at all, and that alone costs ~0.46 precision
+    (see docs/training_failure_hypotheses.md). This puts KTH persons into NFO's range during
+    training. min_scale=0.4 maps the KTH median to ~44px, max_scale=1.0 keeps the original.
+    """
+    def t(imgs, hm, bbs):
+        s = np.random.uniform(min_scale, max_scale)
+        h, w = imgs.shape[0], imgs.shape[1]
+        nh, nw = max(1, int(round(h * s))), max(1, int(round(w * s)))
+        top, left = (h - nh) // 2, (w - nw) // 2
+
+        def shrink(a):
+            # cv2.resize caps at 4 channels, and these stacks are seq_size deep - go per channel
+            a = np.stack([cv2.resize(a[..., c], (nw, nh), interpolation=cv2.INTER_AREA)
+                          for c in range(a.shape[2])], axis=2)
+            return cv2.copyMakeBorder(a, top, h - nh - top, left, w - nw - left, cv2.BORDER_REPLICATE)
+
+        imgs = shrink(imgs)
+        hm = shrink(hm) if hm is not None else None
+        # same affine on the boxes, using the realised (rounded) scale, then re-centre.
+        # bbs are normalised to [0, 1] here (cf. rand_h_flip's img_width=1.0 default), so the
+        # translation has to be normalised too - scale factors are already unitless.
+        bbs = [bb.scale((nw / w, nh / h)).translate((left / w, top / h)) for bb in bbs] if bbs else bbs
+        return imgs, hm, bbs
+
+    return t
