@@ -24,13 +24,23 @@ def anchor_for_frame(winner, t):
     return coef[0] * t + coef[1], ys.mean()
 
 
-def restrict_to_nearby(mask, detections_at_frame, ax, ay, merge_radius):
-    nearby = [d for d in detections_at_frame if np.hypot(d['x'] - ax, d['y'] - ay) <= merge_radius]
-    keep = np.zeros_like(mask)
-    for d in nearby:
-        x1, y1, x2, y2 = d['bbox']
-        keep[y1:y2, x1:x2] = 1
-    return mask * keep
+def restrict_to_nearby(img, frame_mask, detections_at_frame, ax, ay, merge_radius):
+    """Zero out every pixel of img not belonging to a connected component of frame_mask
+    near (ax, ay). Uses the actual per-pixel blob shape (via connectedComponents on
+    frame_mask), not a bbox rectangle - a bbox-based version was tried first and produced
+    a visible box-collage artifact once differently-sized/positioned per-frame bboxes were
+    aligned and overlaid (hard rectangular seams, not a clean silhouette)."""
+    binary = (frame_mask > 0).astype(np.uint8)
+    _, labels = cv2.connectedComponents(binary, connectivity=8)
+    keep = np.zeros_like(frame_mask, dtype=np.uint8)
+    for d in detections_at_frame:
+        if np.hypot(d['x'] - ax, d['y'] - ay) <= merge_radius:
+            cx, cy = int(round(d['x'])), int(round(d['y']))
+            if 0 <= cy < labels.shape[0] and 0 <= cx < labels.shape[1]:
+                lbl = labels[cy, cx]
+                if lbl != 0:
+                    keep[labels == lbl] = 1
+    return img * keep
 
 
 def align_frames(frames: np.ndarray, winner: dict, crop_size: int = 220) -> np.ndarray:
@@ -77,8 +87,8 @@ def fuse(aligned: np.ndarray, method: str = 'median', gaussian_sigma: float = No
 
 
 def integrate(frames: np.ndarray, winner: dict, detections=None, merge_radius: float = None,
-             crop_size: int = 220, method: str = 'median', gaussian_sigma: float = None,
-             mask_background: bool = False) -> np.ndarray:
+             frame_masks: np.ndarray = None, crop_size: int = 220, method: str = 'median',
+             gaussian_sigma: float = None, mask_background: bool = False) -> np.ndarray:
     """End-to-end: align frames to the winning track's motion, optionally restrict each
     frame to only the person's own nearby detection(s) (mask_background=True), then fuse
     into one image.
@@ -87,15 +97,17 @@ def integrate(frames: np.ndarray, winner: dict, detections=None, merge_radius: f
     off-the-shelf detector (YOLO etc.), since full-frame integration naturally blurs the
     background while keeping the aligned subject sharp, closer to natural image
     statistics than a cutout-on-blank-background. mask_background=True requires
-    detections and merge_radius.
+    detections, merge_radius, and frame_masks (the [T,H,W] filter_by_shape output for
+    these same frames - used to find each blob's actual per-pixel shape via connected
+    components, not just its bbox).
     """
     if mask_background:
-        if detections is None or merge_radius is None:
-            raise ValueError("mask_background=True requires detections and merge_radius")
+        if detections is None or merge_radius is None or frame_masks is None:
+            raise ValueError("mask_background=True requires detections, merge_radius, and frame_masks")
         frames = frames.copy()
         for t in range(frames.shape[0]):
             ax, ay = anchor_for_frame(winner, t)
-            frames[t] = restrict_to_nearby(frames[t], detections[t], ax, ay, merge_radius)
+            frames[t] = restrict_to_nearby(frames[t], frame_masks[t], detections[t], ax, ay, merge_radius)
 
     aligned = align_frames(frames, winner, crop_size)
     return fuse(aligned, method=method, gaussian_sigma=gaussian_sigma)

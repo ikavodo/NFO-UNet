@@ -33,7 +33,7 @@ def main(seq='seq1', center=17):
     unaligned, aligned = [], []
     for t in range(T):
         ax, ay = anchor_for_frame(winner, t)
-        person_mask = restrict_to_nearby(masks[t], detections[t], ax, ay, MERGE_RADIUS)
+        person_mask = restrict_to_nearby(masks[t], masks[t], detections[t], ax, ay, MERGE_RADIUS)
         unaligned.append(crop_at(person_mask, ax, ay, CROP))
         # aligned: shift the crop center by -vx*dt so every frame samples the same
         # real-world point as the center frame (this tracker's motion model is

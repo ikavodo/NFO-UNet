@@ -33,7 +33,7 @@ def main(seq='seq1', center=17):
     fig, axes = plt.subplots(2, 3, figsize=(12, 8))
     for (method, mask_bg), ax in zip(configs, axes.flat):
         img = integrate(frames, winner, detections=detections, merge_radius=MERGE_RADIUS,
-                        method=method, gaussian_sigma=1.5, mask_background=mask_bg)
+                        frame_masks=masks, method=method, gaussian_sigma=1.5, mask_background=mask_bg)
         ax.imshow(img, cmap='gray', vmin=0, vmax=255)
         ax.set_title(f"{method}, {'masked' if mask_bg else 'full-frame'}", fontsize=10)
         ax.axis('off')

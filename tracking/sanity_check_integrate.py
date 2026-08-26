@@ -30,7 +30,7 @@ def main():
     for method in ['median', 'mean']:
         for mask_bg in [False, True]:
             img = integrate(frames, winner, detections=detections, merge_radius=MERGE_RADIUS,
-                            method=method, mask_background=mask_bg)
+                            frame_masks=masks, method=method, mask_background=mask_bg)
             assert img.shape == (220, 220)
             assert img.dtype == frames.dtype
             print(f"method={method} mask_background={mask_bg}: "
