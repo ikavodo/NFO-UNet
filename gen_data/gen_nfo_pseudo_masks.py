@@ -2,10 +2,13 @@
 
 A single prompt propagated across a whole continuously-visible segment is not reliable (see
 prototype_sam2_video_segment.py's diagnostic: 41/155 frames came back empty on seq1's longest
-segment, all in one contiguous block, no self-recovery). This spreads N_CHECKPOINTS independent
-prompts (seeded from ground truth) across each segment, propagates each in both directions, and
-combines the overlapping per-frame masks by simple per-pixel majority vote. v1: simplest
-reasonable combination rule - refine later if the false-negative rate is still too high.
+segment, all in one contiguous block, no self-recovery). This uses 3 GT-seeded checkpoints per
+segment at fractions 0.25/0.5/0.75: the middle checkpoint only needs its own native frame (no
+propagation - essentially free), and the two outer checkpoints each propagate outward to their
+segment edge but stop propagating inward once they reach the middle. Net effect: almost every
+frame is covered exactly once (by whichever outer checkpoint owns that half), with agreement only
+checked at the single meeting frame in the middle - roughly 2x the compute of one full-segment
+propagation, not 3x/5x. v1: simplest reasonable check - refine later if needed.
 
 Requires a GPU and the sam2 package (not available in this dev environment):
     git clone https://github.com/facebookresearch/sam2.git && cd sam2 && pip install -e .
@@ -26,7 +29,7 @@ from utils.bb_utils import parse_bbs
 
 IN_DIR = 'data/nfo_processed'
 OUT_TAG = 'sammask'
-CHECKPOINT_FRACS = (0.1, 0.3, 0.5, 0.7, 0.9)
+CHECKPOINT_FRACS = (0.25, 0.5, 0.75)  # (outer, middle, outer)
 MAX_CONSECUTIVE_EMPTY = 5  # early-stop a direction once it's clearly dead, don't burn compute
 
 
@@ -35,19 +38,24 @@ def point_from_gt(seq_dir, bbs, raw_idx, img_w, img_h):
     return ((bb.x + bb.w / 2) * img_w, (bb.y + bb.h / 2) * img_h)
 
 
-def propagate_one_checkpoint(predictor, frame_dir, checkpoint_local_idx, point, n_seg_frames, device):
-    """Returns {local_idx: bool_mask} for every frame this checkpoint's forward+backward
-    propagation reached before either direction was early-stopped."""
+def propagate_one_checkpoint(predictor, frame_dir, checkpoint_local_idx, point, device,
+                             max_forward=None, max_backward=None):
+    """Returns {local_idx: bool_mask}. max_forward/max_backward cap how many frames to track
+    in each direction (None = unbounded, subject only to the empty-run early-stop; 0 = just the
+    checkpoint's own frame, used for the middle checkpoint which needs no propagation at all)."""
     results = {}
     with torch.inference_mode(), torch.autocast(device, dtype=torch.bfloat16, enabled=(device == 'cuda')):
         state = predictor.init_state(frame_dir)
         predictor.add_new_points_or_box(state, frame_idx=checkpoint_local_idx, obj_id=1,
                                         points=[point], labels=[1])
 
-        for reverse in (False, True):
+        for reverse, max_num in ((False, max_forward), (True, max_backward)):
+            if max_num == 0 and checkpoint_local_idx in results:
+                continue  # already have the checkpoint's own frame from the other direction
             consecutive_empty = 0
             for frame_idx, _, masks in predictor.propagate_in_video(
-                    state, start_frame_idx=checkpoint_local_idx, reverse=reverse):
+                    state, start_frame_idx=checkpoint_local_idx,
+                    max_frame_num_to_track=max_num, reverse=reverse):
                 mask = (masks[0] > 0).cpu().numpy().squeeze()
                 if mask.sum() == 0:
                     consecutive_empty += 1
@@ -97,15 +105,38 @@ def process_segment(predictor, seq_dir, bbs, start, end, seg_idx, out_dir_frames
     stage_frames(seq_dir, start, end, frame_dir)
 
     img_h, img_w = cv2.imread(os.path.join(seq_dir, f'{start:05d}_or.jpg'), 0).shape
-    checkpoints = sorted(set(int(round((n_seg_frames - 1) * f)) for f in CHECKPOINT_FRACS))
+    distinct = sorted(set(int(round((n_seg_frames - 1) * f)) for f in CHECKPOINT_FRACS))
+    if len(distinct) < 3:
+        # degenerate short segment where 0.25/0.5/0.75 round to the same frame - fall back to
+        # a single unbounded checkpoint at the middle, same as the diagnostic script
+        mid = distinct[len(distinct) // 2]
+        raw_idx = start + mid
+        point = point_from_gt(seq_dir, bbs, raw_idx, img_w, img_h)
+        per_checkpoint_results = [propagate_one_checkpoint(predictor, frame_dir, mid, point, device)]
+        combined, diagnostics = combine_checkpoint_masks(per_checkpoint_results, n_seg_frames)
+        for local_idx, mask in combined.items():
+            out_path = os.path.join(seq_dir, f'{start + local_idx:05d}_{OUT_TAG}.png')
+            cv2.imwrite(out_path, (mask * 255).astype(np.uint8))
+        return diagnostics
+    a_idx, b_idx, c_idx = distinct
+
+    # bounds: A propagates backward unbounded (to segment start) and forward only up to B;
+    # C propagates forward unbounded (to segment end) and backward only up to B; B needs no
+    # propagation at all, just its own native frame - see module docstring.
+    bounds = {
+        a_idx: dict(max_forward=b_idx - a_idx, max_backward=None),
+        b_idx: dict(max_forward=0, max_backward=0),
+        c_idx: dict(max_forward=None, max_backward=c_idx - b_idx),
+    }
 
     per_checkpoint_results = []
-    for cp_local_idx in checkpoints:
+    for cp_local_idx in (a_idx, b_idx, c_idx):
         raw_idx = start + cp_local_idx
         point = point_from_gt(seq_dir, bbs, raw_idx, img_w, img_h)
         print(f'  segment {seg_idx}: checkpoint at local {cp_local_idx} (raw {raw_idx})')
         per_checkpoint_results.append(
-            propagate_one_checkpoint(predictor, frame_dir, cp_local_idx, point, n_seg_frames, device))
+            propagate_one_checkpoint(predictor, frame_dir, cp_local_idx, point, device,
+                                     **bounds[cp_local_idx]))
 
     combined, diagnostics = combine_checkpoint_masks(per_checkpoint_results, n_seg_frames)
 
