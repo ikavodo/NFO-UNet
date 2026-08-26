@@ -1,8 +1,9 @@
 # Why NFO evaluation disagreed with the paper — resolved
 
 **Status:** root cause found and fixed, confirmed by retrain (2026-08-26,
-`out/kth_train_20260826_123145`). NFO precision **0.474 → 0.802** (paper, same config N=7/f=2:
-**0.96**). Residual ~0.16 gap: two untried divergences remain, see "Next steps" at the bottom.
+`out/kth_train_20260826_123145`). NFO precision **0.474 → 0.802**, worst sequence 0.667 (paper,
+same config N=7/f=2: **0.96**). Residual ~0.16 gap **characterised and accepted** - see
+"Residual gap" at the bottom for why chasing it is not worth a retrain.
 
 ## Summary
 
@@ -12,7 +13,7 @@ Three things were wrong with the *comparison*; one thing was genuinely wrong wit
 | # | Finding | Effect | Status |
 |---|---------|--------|--------|
 | 1 | We reported **F1**; the paper reports **Prec. = TP/(TP+FP)** | apples-to-oranges | fixed in `test_main.py` |
-| 2 | Unannotated NFO frames were evaluated → guaranteed FPs (67% of all reported FPs) | fixed in `dataset/testing_dataset.py` |
+| 2 | Unannotated NFO frames were evaluated → guaranteed FPs | 67% of all reported FPs | fixed in `dataset/testing_dataset.py` |
 | 3 | **KTH training persons are 71–144px tall; NFO persons are 45–64px** — disjoint | cost ~0.33 precision | root cause; fixed via `rand_zoom_out`, confirmed by retrain |
 | 4 | `eval_transforms: []` — validation ran on a different distribution than training | did not affect NFO score | fixed in `config/train_config.py` |
 
@@ -94,13 +95,69 @@ Also checked and clean: NFO frame/label alignment (no off-by-one), box/image geo
 `prep_nfo_data.py`'s pad+resize, and config fidelity (`seq_size=7`, `nth_frame=2` matches the
 paper's best N=7/f=2 cell; circle radius 15.7px vs. τ=22.4px).
 
-## Next steps (residual 0.802 → 0.96 gap)
+## Residual gap (0.802 vs. 0.96): characterised, and accepted
 
-1. Drop Running-class sequences from `data/kth_train`/`data/kth_val` - the paper excludes them
-   ("reduced the dataset to 225 sequences useful for our needs"). Training on fast motion may
-   teach the net that large inter-frame displacement alone signals "person", which also
-   describes windblown vegetation.
-2. Widen the KTH person split beyond the current 8/25 persons (paper labelled all 25).
-3. If neither closes it, break down `Prec.` per NFO sequence (seq1-4) to check whether the
-   residual gap is still vegetation-density-correlated (expected, matches the paper's Fig. 6) or
-   has shifted to a new failure mode now that scale is fixed.
+**Decision: work with 0.802 and account for the gap.** Do not spend a retrain closing it. The
+per-sequence measurement below is what makes that safe, and part of the gap is unclosable anyway.
+
+### Per-sequence precision, before vs. after the scale fix
+
+Sampled 60 windows per sequence, `MaxEval`, τ=0.1 (`scratchpad/per_seq.py`):
+
+| checkpoint | seq1 | seq2 | seq3 | seq4 | spread |
+|---|---|---|---|---|---|
+| pre-fix `…160927` | 0.250 | 0.450 | 0.533 | 0.650 | 2.6× |
+| post-fix `…123145` | **0.667** | **0.683** | **1.000** | **0.683** | 1.5× |
+
+Two things follow.
+
+**The floor moved, not just the mean.** Worst sequence went 0.250 → 0.667; three of four now sit
+within 0.016 of each other. There is no weak sequence hiding beneath the aggregate, so a single
+headline number is a fair summary. **Quote `Prec. 0.802` with a 0.667 floor.** Window-weighting
+these samples over all 3,495 windows gives 0.751 — ~1.6σ from 0.802 at n=60/sequence on different
+sampled frames, so it corroborates the reported figure. That matters because
+`out/kth_train_20260826_123145` has no `test.log`: 0.802 is transcribed from elsewhere, and this
+is the only local evidence for it.
+
+**The vegetation-density correlation is gone.** Pre-fix the ordering was monotone
+(0.25 < 0.45 < 0.53 < 0.65), tracking scene clutter as the paper's Fig. 6 would predict. Post-fix
+it is flat at ~0.68, with seq3 jumping from middling to perfect. The scale fix removed the
+density gradient rather than merely lifting the curve, so the residual ~0.2 is a roughly
+scene-independent failure mode, **not** the paper's vegetation story. Any further work on this
+gap needs to start by identifying what that mode actually is.
+
+### Part of the gap cannot be closed by training
+
+Our NFO ground truth has **3,507** boxes; the paper states **3,379**. Different annotation set,
+and the paper disclaims its own (§4.1): *"there are cases of video frames, where a correct
+setting of the bounding box is difficult which makes this annotation inaccurate. A sufficient
+methodology is left for future research."* Those hard frames are exactly the heavily-occluded
+ones where precision is worst, so some of the residual is annotation disagreement. 0.96 is
+defined against labels we do not have.
+
+### If the number is ever wanted anyway
+
+Ranked by expected value per unit of effort:
+
+1. **Widen the KTH person split** — the only lever with a clear mechanism and no downside.
+   `data/kth_processed` already holds all 300 sequences (25 persons × 3 classes × 4 conditions),
+   fully generated; `data/kth_train` and `data/kth_val` are symlink farms built by
+   `gen_data/gen_kth_data/split_kth_data.py`, which hardcodes KTH's *action-recognition*
+   benchmark split. Persons 2,3,5,6,7,8,9,10,22 — **108 sequences** — are unused, as that
+   script's own comment notes. That holdout exists to benchmark action recognition; this repo
+   never tests on KTH. Folding them in is one set-literal edit plus a retrain (~2h at the
+   observed 2.6 min/epoch): training data 96 → 204 sequences, **+112%**, no data generation.
+2. **Identify the new failure mode** — with the density gradient gone, dump the frames that miss
+   and look for what they share (person velocity? occluder type? proximity to frame border?).
+   Cheap, and it is now the only principled way to pick a next fix.
+3. ~~Drop Running-class sequences~~ — **rejected.** The rationale does not survive checking.
+   `data/kth_processed` is exactly 25 × 3 × 4 = 300 sequences; dropping the Running class leaves
+   **200**, but the paper says **225**, which is exactly 25 × 3 × **3** — i.e. consistent with
+   dropping one recording condition (d1–d4), not the Running class. The change would also cost
+   33% of training data for an effect of unknown sign, and its stated motivation (fast motion
+   resembling windblown vegetation) lost its evidence when the vegetation correlation vanished.
+
+### Environment note
+
+`python3` on this machine does not resolve numpy/torch. The working interpreter is
+`~/miniconda3/envs/comp_vis/bin/python` (numpy 2.3.4, torch 2.7.0+cpu, cv2 4.13.0, dill).
