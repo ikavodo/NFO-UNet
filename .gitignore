@@ -8,10 +8,10 @@ model.pt
 temp/
 data/
 # paywalled/copyrighted reference papers (and their docling-converted text) - keep local
-# only, never commit or push. docs/superpowers/ (our own specs/plans) is unaffected, since
-# * doesn't match across directories.
+# only, never commit or push. Named narrowly (not docs/*.md) so our own reports/notes in
+# docs/ aren't accidentally excluded too.
 docs/*.pdf
-docs/*.md
+docs/Person_Localisation_under_Fragmented_Occlusion.md
 
 
 ########################################################################################################################
