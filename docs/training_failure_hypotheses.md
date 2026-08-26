@@ -6,11 +6,13 @@
 
 ## Summary
 
-Training itself looks healthy: `out/kth_train_20260825_160927/train.log` shows smooth,
-monotonically-decreasing train/val loss, early-stopping at epoch 54 (paper's own logistic-loss
-runs stop at 38-44/100, so this is in a plausible range), best val loss 0.00663. The model is
-not garbage - spot-checking raw predictions against ground truth shows it genuinely finds the
-correct location on many individual frames. But the aggregate NFO eval result is:
+Training looks superficially healthy (smooth train loss, no NaNs/divergence, early-stopping at
+epoch 54 - paper's own logistic-loss runs stop at 38-44/100, a plausible range) but **does not
+reach the paper's claimed loss floor**: paper reports logistic loss `<5e-5` by epoch 40; ours
+plateaus at best val loss `0.00663`, ~100x higher (see Hypothesis 3 below - this may be the
+actual root cause, not just a downstream symptom). The model is not garbage - spot-checking raw
+predictions against ground truth shows it genuinely finds the correct location on many
+individual frames. But the aggregate NFO eval result was originally:
 
 ```
 F1 score was 0.03895
@@ -95,6 +97,48 @@ real targets, now uncontaminated by extraction noise:
   for the remaining fp/fn, since with a single-point extractor a competing fixed mode directly
   costs one wrong prediction per frame it wins on - exactly consistent with a ~3.4:1 fp:tp
   ratio if that mode wins a large minority of frames.
+
+## Hypothesis 3 (new, possibly more fundamental): training loss plateaus ~100x above the paper's reported floor
+
+The paper states logistic loss drops below `5e-5` by epoch 40. Our actual run
+(`out/kth_train_20260825_160927/train.log`) does not get remotely close:
+
+```
+[40/100] Training mean loss was 0.00430695     [40/100] Validation mean loss was 0.00718401
+[54/100] Training mean loss was 0.0036214       [54/100] Validation mean loss was 0.00761981
+```
+
+Train loss is still slowly decreasing at epoch 54 (early-stop trigger), but validation loss has
+plateaued/is noisily flat from ~epoch 20 onward (0.0068-0.008, no clear downward trend) - this is
+not "still converging, just slower than the paper," it looks like a genuine plateau roughly 2
+orders of magnitude above their reported floor.
+
+`generate_circle` (`utils/gauss_utils.py`) produces a **hard-edged binary** disc (0/255, radius
+`0.07 * img_height ≈ 15.7px` at 224px), which after `LogisticLoss`'s `2*t-1` mapping is exactly
+the `{-1, 1}` label the loss expects - so the label side looks correct, not an obvious culprit by
+itself. But a hard step edge is an intrinsically hard target for a smooth conv net's continuous
+output to represent - boundary-adjacent pixels may keep contributing non-trivial loss
+indefinitely, which could explain a real (if unwanted) non-zero floor, though likely not 100x
+worth of one on its own (the boundary is a small fraction of total pixels).
+
+This needs verifying, not just theorizing:
+1. Check whether the *paper's own* config (`nth_frame`, `seq_size`, `hm_circle_radius`, batch
+   size, optimizer/lr schedule, weight decay) for the specific run reporting `<5e-5` actually
+   matches ours exactly - Table 3 may have per-config variations we haven't cross-checked for
+   the loss curve claim specifically, only for the paper's *final* F1 comparisons.
+2. Check whether the paper specifies an LR schedule/decay (ours is a flat `lr=1e-3`, no
+   scheduler) - a flat high LR plateauing rather than continuing to descend is a classic sign a
+   schedule is missing.
+3. Check batch normalization / weight init / optimizer choice (Adam vs. SGD, momentum, weight
+   decay) - none of this is documented as verified against the paper in this report yet.
+4. If the loss genuinely can't go lower with current hyperparameters, that would independently
+   explain why NFO F1 (0.308) is far below the paper's (~0.9) even after the eval_method fix -
+   an undertrained model producing less-confident/less-separated heatmap peaks is exactly what
+   would let a persistent spurious secondary peak (Hypothesis 2) win the argmax more often.
+
+This may be the *actual* root cause behind both the F1 gap and Hypothesis 2's competing peak,
+with Hypotheses 1/2 as downstream symptoms rather than independent bugs. Recommend investigating
+this before further chasing Hypothesis 1/2 in isolation.
 
 ## Hypothesis 1 (secondary): the eval pipeline assumes a bounded [0,1] output; logistic-loss output is unbounded and never gets sigmoided
 
@@ -214,12 +258,11 @@ never learned to ignore).
 
 1. ~~Revert `eval_method` to `MaxEval`~~ - **done, confirmed** (see rerun result above). fp
    24x lower, F1 0.039 -> 0.308.
-2. Dig into Hypothesis 2 next using the spot-check approach already demonstrated in this
-   session's history (load the model, iterate NFO windows, compare `argmax` position to ground
-   truth, look for a recurring fixed wrong location across multiple sequences) - now the more
-   likely dominant explanation for the remaining fp:tp≈3.4:1 gap.
-3. If that doesn't fully explain the residual gap, revisit Hypothesis 1 (sigmoid/output-scaling)
-   - it's no longer expected to matter for fp *count*, but could still affect argmax stability.
-4. Whatever's left after both, compare against the paper's own reported ~0.9 F1 to judge whether
-   the remaining gap is a training/data issue (e.g. NFO domain shift from KTH) rather than a
-   pipeline bug.
+2. Investigate Hypothesis 3 (training loss plateau ~100x above paper's reported floor) next -
+   it's plausibly upstream of both remaining hypotheses, not just an independent third issue.
+   Cross-check lr schedule, optimizer, weight decay, and batch norm details against the paper.
+3. Dig into Hypothesis 2 (persistent spurious secondary peak) using the spot-check approach
+   already demonstrated in this session's history - may turn out to be a direct symptom of
+   Hypothesis 3 rather than a separate bug.
+4. Revisit Hypothesis 1 (sigmoid/output-scaling) last - no longer expected to matter for fp
+   *count*, but could still affect argmax stability.
