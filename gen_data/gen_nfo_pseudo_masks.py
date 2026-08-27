@@ -35,6 +35,9 @@ from utils.bb_utils import parse_bbs
 IN_DIR = 'data/nfo_processed'
 OUT_TAG = 'sammask'
 MAX_CONSECUTIVE_EMPTY = 5  # early-stop a direction once it's clearly dead, don't burn compute
+STATIC_THRESHOLD_PX = 2.0  # centroid movement below this counts as "not moving"
+MAX_CONSECUTIVE_STATIC = 5  # the person is always in motion in this dataset - this many
+                            # consecutive near-static frames is treated as a stuck tracker
 
 
 def point_and_box_from_gt(bbs, raw_idx, img_w, img_h):
@@ -65,7 +68,17 @@ def compute_bounds(checkpoints):
 def propagate_one_checkpoint(predictor, frame_dir, checkpoint_local_idx, point, box, device,
                              max_forward=None, max_backward=None):
     """Returns {local_idx: bool_mask}. max_forward/max_backward cap how many frames to track
-    in each direction (None = unbounded, subject only to the empty-run early-stop)."""
+    in each direction (None = unbounded, subject only to the empty-run and stuck-tracker
+    early-stops).
+
+    Stuck-tracker check: the person is continuously in motion throughout this dataset, so a
+    mask whose centroid barely moves for several consecutive frames is itself evidence of a
+    stuck tracker - independent of where that position sits relative to the GT box (unlike the
+    union-stage distance filter, which only rejects drift once it's traveled far enough away;
+    a mask stuck near the true trajectory can survive that check indefinitely). This runs here,
+    per checkpoint, in temporal propagation order - the point where the signal is cleanest,
+    before combination loses the clean per-stream frame ordering it depends on.
+    """
     results = {}
     with torch.inference_mode(), torch.autocast(device, dtype=torch.bfloat16, enabled=(device == 'cuda')):
         state = predictor.init_state(frame_dir)
@@ -76,17 +89,34 @@ def propagate_one_checkpoint(predictor, frame_dir, checkpoint_local_idx, point, 
             if max_num == 0 and checkpoint_local_idx in results:
                 continue  # already have the checkpoint's own frame from the other direction
             consecutive_empty = 0
+            consecutive_static = 0
+            prev_centroid = None
+            frame_order = []  # in-order frame_idx yielded this direction, to trim a stuck tail
             for frame_idx, _, masks in predictor.propagate_in_video(
                     state, start_frame_idx=checkpoint_local_idx,
                     max_frame_num_to_track=max_num, reverse=reverse):
                 mask = (masks[0] > 0).cpu().numpy().squeeze()
                 if mask.sum() == 0:
                     consecutive_empty += 1
+                    consecutive_static = 0
+                    prev_centroid = None
                     if consecutive_empty >= MAX_CONSECUTIVE_EMPTY:
                         break
                 else:
                     consecutive_empty = 0
+                    centroid = np.argwhere(mask).mean(axis=0)
+                    if prev_centroid is not None and \
+                            np.linalg.norm(centroid - prev_centroid) < STATIC_THRESHOLD_PX:
+                        consecutive_static += 1
+                        if consecutive_static >= MAX_CONSECUTIVE_STATIC:
+                            for stuck_idx in frame_order[-consecutive_static:]:
+                                results.pop(stuck_idx, None)
+                            break
+                    else:
+                        consecutive_static = 0
+                    prev_centroid = centroid
                 results[frame_idx] = mask
+                frame_order.append(frame_idx)
     return results
 
 
