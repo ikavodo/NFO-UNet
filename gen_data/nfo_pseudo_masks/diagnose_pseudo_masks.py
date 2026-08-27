@@ -7,7 +7,7 @@ background). This just aggregates the existing diagnostics CSVs per segment and 
 it does not touch the masks themselves.
 
 Usage:
-    python3 -m gen_data.diagnose_pseudo_masks --diagnostics-dir out
+    python3 -m gen_data.nfo_pseudo_masks.diagnose_pseudo_masks --diagnostics-dir out
 """
 import argparse
 import csv

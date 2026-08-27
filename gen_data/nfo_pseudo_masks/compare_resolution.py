@@ -11,7 +11,7 @@ masks already on disk.
 Requires a GPU and the sam2 package (not available in this dev environment).
 
 Usage:
-    python3 -m gen_data.compare_resolution --seq seq1 --segment-idx 3
+    python3 -m gen_data.nfo_pseudo_masks.compare_resolution --seq seq1 --segment-idx 3
 """
 import argparse
 import os
@@ -21,10 +21,10 @@ import numpy as np
 import torch
 
 from gen_data.gen_kth_data.kth_utils import scale_and_pad_img_to_square
-from gen_data.gen_nfo_pseudo_masks import (combine_checkpoint_masks_union_gt_outlier,
-                                           compute_bounds, propagate_one_checkpoint)
-from gen_data.nfo_segment_utils import find_segments
-from gen_data.nfo_visibility import default_clear_regions, geometric_checkpoints
+from gen_data.nfo_pseudo_masks.gen_nfo_pseudo_masks import (
+    combine_checkpoint_masks_union_gt_outlier, compute_bounds, propagate_one_checkpoint)
+from gen_data.nfo_pseudo_masks.nfo_segment_utils import find_segments
+from gen_data.nfo_pseudo_masks.nfo_visibility import default_clear_regions, geometric_checkpoints
 from utils.bb_utils import BoundingBox, parse_bbs
 
 NATIVE_DIR = 'data/nfo_final/nfo_final'

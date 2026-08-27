@@ -18,7 +18,7 @@ import os
 import cv2
 import numpy as np
 
-from gen_data.nfo_segment_utils import find_segments
+from gen_data.nfo_pseudo_masks.nfo_segment_utils import find_segments
 
 MERGE_GAP = 10  # px of occluder between two clear runs small enough to treat as one corridor
 BG_SAMPLES = 40  # no-person frames to median-combine into the background image

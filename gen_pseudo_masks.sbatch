@@ -27,5 +27,5 @@ SEQ=${SEQS[$SLURM_ARRAY_TASK_ID]}
 
 pwd; hostname; date
 nvidia-smi
-srun "$PYTHON" -m gen_data.gen_nfo_pseudo_masks --seq "$SEQ" \
+srun "$PYTHON" -m gen_data.nfo_pseudo_masks.gen_nfo_pseudo_masks --seq "$SEQ" \
     --combine-method union_gt_outlier

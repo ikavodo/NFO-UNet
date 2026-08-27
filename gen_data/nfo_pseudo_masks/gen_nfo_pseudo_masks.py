@@ -18,7 +18,7 @@ Requires a GPU and the sam2 package (not available in this dev environment):
     git clone https://github.com/facebookresearch/sam2.git && cd sam2 && pip install -e .
 
 Usage (one sequence per process - run seq1..seq4 in parallel, see module docstring below):
-    python3 -m gen_data.gen_nfo_pseudo_masks --seq seq1
+    python3 -m gen_data.nfo_pseudo_masks.gen_nfo_pseudo_masks --seq seq1
 """
 import argparse
 import itertools
@@ -29,8 +29,8 @@ import numpy as np
 import torch
 
 from gen_data.gen_kth_data.kth_utils import scale_and_pad_img_to_square
-from gen_data.nfo_segment_utils import find_segments, stage_frames
-from gen_data.nfo_visibility import default_clear_regions, geometric_checkpoints
+from gen_data.nfo_pseudo_masks.nfo_segment_utils import find_segments, stage_frames
+from gen_data.nfo_pseudo_masks.nfo_visibility import default_clear_regions, geometric_checkpoints
 from utils.bb_utils import BoundingBox, parse_bbs
 
 IN_DIR = 'data/nfo_processed'

@@ -39,14 +39,14 @@ is fixed for the whole sequence; only the person moves.
 
 ### 1. Segment continuously-visible spans
 
-`gen_data/nfo_segment_utils.py:find_segments` - a person's GT box has a sentinel row (`x=-1`)
+`gen_data/nfo_pseudo_masks/nfo_segment_utils.py:find_segments` - a person's GT box has a sentinel row (`x=-1`)
 in `groundtruth.txt` on frames where they're not visible at all. Contiguous runs with no
 sentinel are "segments." Measured: NFO's 4 sequences have exactly 8 segments each, lengths
 74-155 frames (median ~110).
 
 ### 2. Find geometric "clear corridors" per sequence
 
-`gen_data/nfo_visibility.py` - since the camera and occluders are static, build a clean
+`gen_data/nfo_pseudo_masks/nfo_visibility.py` - since the camera and occluders are static, build a clean
 background image (median of the many no-person frames every sequence has), then find x-ranges
 where the background is unoccluded across the walking-path height band (derived from the GT box
 y-center range). No single automated thresholding formula (column-mean, column-min,
@@ -79,7 +79,7 @@ curated regions.
 
 ### 4. Multi-checkpoint SAM2 video propagation, neighbor-bounded, native resolution
 
-`gen_data/gen_nfo_pseudo_masks.py` - each checkpoint is seeded with **both** a point prompt (GT
+`gen_data/nfo_pseudo_masks/gen_nfo_pseudo_masks.py` - each checkpoint is seeded with **both** a point prompt (GT
 box center) and a box prompt (the full GT box) into `SAM2VideoPredictor`, then propagated in both
 directions via `propagate_in_video`, at native (800x600) resolution - frames are staged directly
 from the native source, not the project's usual 224x224 training resolution (see "Native vs. 224
@@ -135,7 +135,7 @@ visually (full-segment video render).
 ## Native vs. 224 resolution
 
 The pipeline originally ran at the project's standard 224x224 training resolution throughout.
-`gen_data/compare_resolution.py` reran the same checkpoint/propagation/combination logic
+`gen_data/nfo_pseudo_masks/compare_resolution.py` reran the same checkpoint/propagation/combination logic
 unchanged on one segment (seq1 seg3) at native (800x600) resolution instead, downsampling only
 the final masks to 224 for comparison. Two conflicting signals came out of that:
 
@@ -151,16 +151,16 @@ runs natively by default. This also required rescaling several pixel-space const
 now scaled by `img_w / 224` at the point of use.
 
 That single-segment, no-real-GT comparison (the IoU-vs-visual disagreement is itself a sign the
-evidence there was thin) motivated a second check with actual ground truth:
-`gen_data/kth_occlusion_resolution_experiment.py` takes a short KTH segment that already has a
-real per-frame mask (`gen_sam_masks.py`'s `_sammask.png`, computed by single-image SAM2 on the
-*unoccluded* frame - reliable there, since KTH scenes are clean, so treated as ground truth),
-synthetically composites in an occluder, then runs the same propagation+combination core on the
-occluded sequence at two resolutions and scores each directly against that real mask (rather than
-a bounding-box proxy). Note KTH's own native resolution (160x120) is *lower* than 224, the
-opposite relationship to NFO's native 800x600 - so this tests 224 vs. a further-downsampled 112,
-not "native vs. 224" in the NFO sense; the underlying question (does a coarser pixel grid hurt
-SAM2 mask quality) is the same either way.
+evidence there was thin) motivated a second, one-off check with actual ground truth: a script
+(since removed - its job was done, this was a point-in-time validation, not a maintained tool)
+took a short KTH segment that already has a real per-frame mask (`gen_sam_masks.py`'s
+`_sammask.png`, computed by single-image SAM2 on the *unoccluded* frame - reliable there, since
+KTH scenes are clean, so treated as ground truth), synthetically composited in an occluder, then
+ran the same propagation+combination core on the occluded sequence at two resolutions and scored
+each directly against that real mask (rather than a bounding-box proxy). Note KTH's own native
+resolution (160x120) is *lower* than 224, the opposite relationship to NFO's native 800x600 - so
+this tested 224 vs. a further-downsampled 112, not "native vs. 224" in the NFO sense; the
+underlying question (does a coarser pixel grid hurt SAM2 mask quality) is the same either way.
 
 Result on one 24-frame segment: 224 mean IoU 0.771 vs. 112 mean IoU 0.759 - higher resolution
 won against real ground truth, consistent with the NFO visual read and inconsistent only with
