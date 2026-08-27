@@ -219,3 +219,76 @@ composited frames.
   smoke test only) - not validated against real NFO occluder coverage statistics (what fraction
   of a person's bbox is actually occluded on average in real footage), which would be the right
   reference point for choosing `density` values in the kill test.
+
+## Step 1 result: the kill test ran. Scale sensitivity CONFIRMED - learned-scorer motivation NOT confirmed
+
+Implemented in `tracking/eval/kill_test_scale.py` (run: `python -m tracking.eval.kill_test_scale`,
+~4 min). 6 KTH `d1` sequences (person01-03 walking + jogging), 853 windows per bucket,
+`seq_size=7`/`nth_frame=2` as in the training config. Buckets are whole-frame resizes of
+`kth_processed`'s 224x224 (0.5x / 1x / 2x -> person height ~59 / 119 / 237px, bracketing NFO's
+measured 195px). Occluder: one *static* `generate_occlusion_branch` mask per sequence at
+`density=0.35`, restricted to the union of that sequence's real per-frame GT boxes, with occluded
+pixels filled from the sequence's own per-pixel temporal median. Measured effect: ~36% of each
+frame's real GT box covered, person mask fill inside the GT box drops 0.31 -> 0.16 (0.5x) /
+0.23 -> 0.15 (1x) / 0.21 -> 0.15 (2x) - i.e. the occluder really does erase and fragment the
+person, which is the point.
+
+Metric: frame-normalized centroid residual (same definition as `eval_nfo.py`) and hit rate at
+the eval pipeline's 0.1 threshold, with no-track counted as a miss.
+
+| bucket | person px | (a) per-scale-correct | (b) fixed 1x constants | no-track (a) -> (b) |
+|--------|-----------|-----------------------|------------------------|---------------------|
+| 0.5x   | 59        | hit 37.0%, med 0.078  | hit **79.8%**, med 0.048 | 38.1% -> 0.8%     |
+| 1.0x   | 119       | hit 61.5%, med 0.054  | hit 61.5% (identical by construction) | 15.5% -> 15.5% |
+| 2.0x   | 237       | hit **74.4%**, med 0.035 | hit 2.7%, med 0.091 | 11.8% -> **95.2%** |
+
+**(b) craters in the "people bigger than calibration" direction**: -71.7pp hit rate, no-track goes
+11.8% -> 95.2%. The tracker essentially stops producing tracks at all. Repeating the run with
+morphology/`min_area` frozen at their defaults instead of scaled per bucket (`--frozen-preprocess`)
+gives the same picture, slightly stronger (-84.3pp, no-track 4.2% -> 83.2%), so the effect is not
+an artifact of how the segmentation front-end was scaled. **The scale-sensitivity claim in this doc
+is confirmed, and it is not a mild degradation - it is total failure.**
+
+**But the leave-one-in ablation says the damage is entirely in the association gate, not in the
+scoring formula.** Correcting exactly one constant per bucket and leaving the rest fixed:
+
+| corrected constant | 0.5x (gap -42.8pp) | 2.0x (gap +71.7pp) |
+|--------------------|--------------------|--------------------|
+| `MAX_DIST`         | 66% of gap         | **72% of gap**     |
+| `MERGE_RADIUS`     | 47% of gap         | 2% of gap          |
+| `EXPECTED_HEIGHT`  | **0% of gap**      | **0% of gap**      |
+| Kalman `P`/`Q`/`R` | **0% of gap**      | **0% of gap**      |
+
+`EXPECTED_HEIGHT` is the *only* part of `score_and_fit`'s hand-picked formula that this test can
+break by mis-scaling, and mis-scaling it by 2x in either direction changes nothing at all -
+because it multiplies every candidate track's score by a near-identical Gaussian factor when all
+candidates are fragments of the same person, so the `argmax` is unchanged. Kalman `Q`/`R` likewise
+contribute nothing: the filter is only used for one-step prediction inside a gate that a wrong
+`MAX_DIST` has already opened or closed.
+
+**Go/no-go for step 2: no-go as motivated.** The failure this test found is a 1-line-fixable
+absolute-pixel gate (`MAX_DIST` should be a fraction of detected person height, doc item 3), not a
+weakness in the score. Training a learned temporal-feature scorer would not have fixed any of the
+71.7pp. Two things follow:
+
+1. **Do doc item 3 (scale-relative constants) first, and specifically `MAX_DIST`** - and note the
+   0.5x row before copying `eval_nfo.py`'s recipe: at 0.5x the *"correctly recomputed"* p99-GT-
+   displacement `MAX_DIST` was **worse than the wrong one** (38.1% no-track vs 0.8%). Blob-centroid
+   jitter under fragmented occlusion does not shrink with the person - mask noise stays roughly
+   constant in pixels - so measured GT displacement underestimates the gate needed at small scale.
+   A scale-relative gate needs a jitter floor: `max_dist = max(k * person_height, floor)`.
+2. **This test is under-powered on the scoring question, so step 2 is not dead, it is unmotivated
+   by *this* evidence.** KTH + branch occlusion contains no competing non-person mover, which is
+   exactly the failure mode the height term (and any learned replacement) exists for - the
+   documented "swaying foliage outscored the person" case. To get a real go/no-go on step 2, the
+   synthetic data needs an independent moving distractor of non-person size/shape, not just an
+   occluder. That is a data-generation change, and it should come before any training.
+
+Notes on fidelity, for the record: `_Track`'s previously-inline `50.0`/`2.0`/`9.0` covariance
+constants are now `_Track.P_VAR`/`Q_VAR`/`R_VAR` class attributes with those same values (no
+behavior change - the 1x bucket reproduces byte-identically across both arms, asserted in the
+script) purely so the test could rescale them. `score_and_fit`/`track_blobs` logic is untouched.
+Scale is simulated by resizing the whole frame, so the person's *fraction* of the frame is
+constant; a real camera-distance change would keep frame size fixed and shrink the person within
+it, which needs person/background compositing this test does not do. Occluder density 0.35 is
+still uncalibrated against real NFO coverage statistics (pre-existing documented gap).

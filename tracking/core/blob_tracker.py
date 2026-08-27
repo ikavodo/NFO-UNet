@@ -30,14 +30,23 @@ def _bbox_height(bbox):
 class _Track:
     """Constant-velocity Kalman filter, position/motion state only. Ported from
     master_thesis/experiments/prototypes/motion_via_blob_tracking.py (numpy/scipy only,
-    no torch dependency in the original either)."""
+    no torch dependency in the original either).
+
+    P_VAR/Q_VAR/R_VAR are the initial-covariance / process-noise / measurement-noise
+    variances, previously hardcoded inline. Exposed as class attributes (same values, same
+    behavior by default) purely so a caller can rescale them with pixel scale - they are
+    absolute-pixel-variance constants, so they are wrong by scale^2 on a scene where people
+    appear at a different pixel size. See tracking/eval/kill_test_scale.py."""
     _next_id = 0
+    P_VAR = 50.0
+    Q_VAR = 2.0
+    R_VAR = 9.0
 
     def __init__(self, x, y, t0, height=None):
         self.id = _Track._next_id
         _Track._next_id += 1
         self.state = np.array([x, y, 0.0, 0.0])
-        self.P = np.eye(4) * 50.0
+        self.P = np.eye(4) * self.P_VAR
         self.history = {t0: (x, y, height)}
         self.first_frame = t0
         self.last_frame = t0
@@ -45,14 +54,14 @@ class _Track:
 
     def predict(self):
         F = np.array([[1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=float)
-        Q = np.eye(4) * 2.0
+        Q = np.eye(4) * self.Q_VAR
         self.state = F @ self.state
         self.P = F @ self.P @ F.T + Q
         return self.state[:2]
 
     def update(self, x, y, t, height=None):
         H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=float)
-        R = np.eye(2) * 9.0
+        R = np.eye(2) * self.R_VAR
         z = np.array([x, y])
         y_res = z - H @ self.state
         S = H @ self.P @ H.T + R
