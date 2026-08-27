@@ -28,11 +28,19 @@ import cv2
 import numpy as np
 import torch
 
+from gen_data.gen_kth_data.kth_utils import scale_and_pad_img_to_square
 from gen_data.nfo_segment_utils import find_segments, stage_frames
 from gen_data.nfo_visibility import default_clear_regions, geometric_checkpoints
-from utils.bb_utils import parse_bbs
+from utils.bb_utils import BoundingBox, parse_bbs
 
 IN_DIR = 'data/nfo_processed'
+NATIVE_DIR = 'data/nfo_final/nfo_final'  # SAM2 runs at native (800x600) resolution - a visual
+# comparison (compare_resolution.py --save-masks, seq1 seg3) against the pipeline's original
+# 224x224 masks showed native-resolution masks are visibly cleaner despite a lower box-recovery
+# IoU (0.434 vs 0.545) - IoU-of-a-downsampled-mask's-bbox is a coarse proxy and was misleading
+# here, so it's trusted less than the direct visual check. Final masks are still downsampled to
+# OUT_SIZE for storage, matching the 224x224 _or.jpg frames the rest of the pipeline expects.
+OUT_SIZE = 224
 OUT_TAG = 'sammask'
 MAX_CONSECUTIVE_EMPTY = 5  # early-stop a direction once it's clearly dead, don't burn compute
 # STATIC_THRESHOLD_PX was 2.0 - measured against real GT centroid displacement (see
@@ -74,7 +82,8 @@ def compute_bounds(checkpoints):
 
 
 def propagate_one_checkpoint(predictor, frame_dir, checkpoint_local_idx, point, box, device,
-                             max_forward=None, max_backward=None):
+                             max_forward=None, max_backward=None,
+                             static_threshold_px=STATIC_THRESHOLD_PX):
     """Returns {local_idx: bool_mask}. max_forward/max_backward cap how many frames to track
     in each direction (None = unbounded, subject only to the empty-run and stuck-tracker
     early-stops).
@@ -114,7 +123,7 @@ def propagate_one_checkpoint(predictor, frame_dir, checkpoint_local_idx, point, 
                     consecutive_empty = 0
                     centroid = np.argwhere(mask).mean(axis=0)
                     if prev_centroid is not None and \
-                            np.linalg.norm(centroid - prev_centroid) < STATIC_THRESHOLD_PX:
+                            np.linalg.norm(centroid - prev_centroid) < static_threshold_px:
                         consecutive_static += 1
                         if consecutive_static >= MAX_CONSECUTIVE_STATIC:
                             for stuck_idx in frame_order[-consecutive_static:]:
@@ -230,11 +239,18 @@ def combine_checkpoint_masks_union_gt_outlier(per_checkpoint_results, n_seg_fram
 def process_segment(predictor, seq_dir, bbs, start, end, seg_idx, out_dir_frames, device,
                     clear_regions, combine_method='majority'):
     n_seg_frames = end - start + 1
+    seq_name = os.path.basename(seq_dir).removesuffix('_gt')
+    native_dir = os.path.join(NATIVE_DIR, seq_name)
     frame_dir = os.path.join(out_dir_frames, f'seg{seg_idx}_frames')
-    stage_frames(seq_dir, start, end, frame_dir)
-    img_h, img_w = cv2.imread(os.path.join(seq_dir, f'{start:05d}_or.jpg'), 0).shape
+    stage_frames(seq_dir, start, end, frame_dir,
+                src_path_fn=lambda raw_idx: os.path.join(native_dir, f'{raw_idx:05d}.jpg'))
+    img_h, img_w = cv2.imread(os.path.join(native_dir, f'{start:05d}.jpg'), 0).shape
 
-    geo_raw = geometric_checkpoints(bbs, start, end, clear_regions, img_w)
+    # clear_regions are curated in 224-space (see nfo_visibility.py); checkpoint *selection* is
+    # resolution-independent (normalized GT position vs. those regions), only prompting/masking
+    # below runs at native resolution - so this one call still needs the 224 width, not img_w.
+    img_w_224 = cv2.imread(os.path.join(seq_dir, f'{start:05d}_or.jpg'), 0).shape[1]
+    geo_raw = geometric_checkpoints(bbs, start, end, clear_regions, img_w_224)
     if geo_raw:
         checkpoints = sorted(idx - start for idx in geo_raw)
         print(f'  segment {seg_idx}: {len(checkpoints)} geometric checkpoint(s) at local {checkpoints}')
@@ -243,6 +259,10 @@ def process_segment(predictor, seq_dir, bbs, start, end, seg_idx, out_dir_frames
         print(f'  segment {seg_idx}: no confirmed-clear frame found, falling back to naive '
               f'middle at local {checkpoints[0]}')
 
+    # STATIC_THRESHOLD_PX was calibrated against real GT motion (1.4-1.7px/frame) at 224-space
+    # resolution; scale it up to native pixels so it stays below real motion here too.
+    static_threshold_px = STATIC_THRESHOLD_PX * (img_w / OUT_SIZE)
+
     bounds = compute_bounds(checkpoints)
     per_checkpoint_results = []
     for cp_local_idx in checkpoints:
@@ -250,18 +270,25 @@ def process_segment(predictor, seq_dir, bbs, start, end, seg_idx, out_dir_frames
         point, box = point_and_box_from_gt(bbs, raw_idx, img_w, img_h)
         per_checkpoint_results.append(
             propagate_one_checkpoint(predictor, frame_dir, cp_local_idx, point, box, device,
+                                     static_threshold_px=static_threshold_px,
                                      **bounds[cp_local_idx]))
 
     if combine_method == 'union_gt_outlier':
+        # box_dilate_px/min_width_px defaults were also calibrated at 224-space resolution -
+        # scale them the same way as static_threshold_px above.
+        res_scale = img_w / OUT_SIZE
         combined, diagnostics = combine_checkpoint_masks_union_gt_outlier(
-            per_checkpoint_results, n_seg_frames, bbs, start, img_w, img_h)
+            per_checkpoint_results, n_seg_frames, bbs, start, img_w, img_h,
+            box_dilate_px=round(3 * res_scale), min_width_px=round(4 * res_scale))
     else:
         combined, diagnostics = combine_checkpoint_masks(per_checkpoint_results, n_seg_frames)
 
     for local_idx, mask in combined.items():
         raw_idx = start + local_idx
         out_path = os.path.join(seq_dir, f'{raw_idx:05d}_{OUT_TAG}.png')
-        cv2.imwrite(out_path, (mask * 255).astype(np.uint8))
+        mask_224, _ = scale_and_pad_img_to_square(
+            (mask * 255).astype(np.uint8), BoundingBox(0, 0, 0, 0), OUT_SIZE)
+        cv2.imwrite(out_path, mask_224)
 
     return diagnostics
 

@@ -22,12 +22,17 @@ def find_segments(bbs):
     return segments
 
 
-def stage_frames(seq_dir, start, end, frame_dir):
+def stage_frames(seq_dir, start, end, frame_dir, src_path_fn=None):
+    """src_path_fn(raw_idx) -> source jpg path; defaults to seq_dir's 224-resolution _or.jpg
+    frames. Pass a different one (e.g. into data/nfo_final for native resolution) to stage from
+    elsewhere without duplicating the staging logic itself."""
+    if src_path_fn is None:
+        src_path_fn = lambda raw_idx: os.path.join(seq_dir, f'{raw_idx:05d}_or.jpg')
     # SAM2's video loader sorts by int(filename) - sequential local names avoid depending
     # on the original zero-padded, sequence-relative _or.jpg indexing
     if os.path.exists(frame_dir):
         shutil.rmtree(frame_dir)
     os.makedirs(frame_dir)
     for local_idx, raw_idx in enumerate(range(start, end + 1)):
-        src = os.path.abspath(os.path.join(seq_dir, f'{raw_idx:05d}_or.jpg'))
+        src = os.path.abspath(src_path_fn(raw_idx))
         os.symlink(src, os.path.join(frame_dir, f'{local_idx}.jpg'))

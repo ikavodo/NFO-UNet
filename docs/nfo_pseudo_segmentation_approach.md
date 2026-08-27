@@ -1,20 +1,25 @@
 # Generating pseudo-segmentation masks for NFO — current approach, and a request for a second opinion
 
-**Status:** working, iteratively patched, functional but not yet validated at scale.
+**Status:** working, iteratively patched on visually-inspected real segments, about to be run to
+completion across all 4 sequences at native resolution.
 
 **Goal, precisely stated:** the masks don't need to be pixel-perfect - they need to be close
 enough to serve as usable pseudo-ground-truth (weak training signal / a "good enough" stand-in
-for real annotation). Keep that bar in mind when judging whether the current approach, or any
-alternative, is sufficient - the target is "close enough," not perfection.
+for real annotation). Keep that bar in mind when judging the approach below.
 
-**Ask:** review the approach below - the pipeline, the failure modes found and how each was
-patched, and the list of tunable constants and how each was actually arrived at - and give an
-independent assessment. This is explicitly an invitation to disagree with the current direction,
-not just to suggest refinements to it: is this a sound strategy to continue patching, or would a
-different approach be preferable? One specific alternative already under consideration: using a
-stronger model (e.g. SAM3) with a **text prompt** ("person walking/running/jogging behind
-foliage") instead of, or in addition to, the bounding-box-driven approach below - but other
-alternatives are equally welcome if they better fit the stated goal.
+**Ask:** two things.
+
+1. **Pipeline-complexity judgment call.** The approach below has grown by iterative patching -
+   each new filter/threshold/prompt-format change fixed a specific artifact found by visually
+   inspecting a segment. Given the "good enough, not perfect" bar above, is this the right amount
+   of machinery, or has it drifted past the point of diminishing returns for what's actually
+   needed? The tension: more filters/checkpoints/tuning can push mask quality up, but each one
+   also makes the pipeline harder to reason about and re-tune when it inevitably meets a new
+   sequence or failure mode - is the current balance defensible, or should some of it be cut in
+   favor of a simpler, more interpretable pipeline even at some cost to raw quality?
+2. **A concrete way to validate the native-vs-224 resolution decision below with real ground
+   truth**, not just a proxy metric or one segment's visual inspection - see that section for the
+   specific proposal.
 
 ## Why this exists
 
@@ -38,213 +43,157 @@ is fixed for the whole sequence; only the person moves.
 `gen_data/nfo_segment_utils.py:find_segments` - a person's GT box has a sentinel row (`x=-1`)
 in `groundtruth.txt` on frames where they're not visible at all. Contiguous runs with no
 sentinel are "segments." Measured: NFO's 4 sequences have exactly 8 segments each, lengths
-74-155 frames (median ~110) - i.e. long, continuous visibility spans separated by a handful of
-full-occlusion gaps, not constant flickering.
+74-155 frames (median ~110).
 
 ### 2. Find geometric "clear corridors" per sequence
 
 `gen_data/nfo_visibility.py` - since the camera and occluders are static, build a clean
-background image (median of the many no-person frames every sequence has - NFO has hundreds
-available), then find x-ranges where the background is unoccluded across the walking-path
-height band (derived from the GT box y-center range). Several thresholding strategies were
-tried (column-mean, column-min, fraction-occluded) and each worked for some sequences and
-failed for others (seq1/seq3 have discrete bare-branch trunks with real gaps; seq2/seq4 have
-denser, more continuous foliage with no clean discrete gap structure). **No single automated
-formula worked across all 4 sequences** - settled on a manually curated per-sequence region
-list, each picked by eyeballing whichever automated attempt looked best, plus one
-manually-identified corridor a human found that every automated width threshold missed:
+background image (median of the many no-person frames every sequence has), then find x-ranges
+where the background is unoccluded across the walking-path height band (derived from the GT box
+y-center range). No single automated thresholding formula (column-mean, column-min,
+fraction-occluded were all tried) worked across all 4 sequences - seq1/seq3 have discrete
+bare-branch trunks with real gaps, seq2/seq4 have denser, more continuous foliage. Settled on a
+manually curated per-sequence region list:
 
 ```python
 CURATED_CLEAR_REGIONS = {
-    'seq1': [(3, 30), (44, 91), (106, 141), (152, 223)],
+    'seq1': [(44, 85), (154, 203)],
     'seq2': [(2, 38), (56, 117), (153, 174)],
     'seq3': [(2, 30), (110, 166)],
     'seq4': [(18, 49), (151, 181)],
 }
 ```
-(raw pixel x-ranges, 224px-wide frames)
-
-Note: the region-finding step required human-in-the-loop tuning per sequence, not a single
-generalizable formula.
+(raw pixel x-ranges, 224px-wide frames - clear-region finding and checkpoint selection stay in
+224-space even though propagation itself now runs at native resolution, see below; this step
+only decides *which frame* to seed from normalized GT position, not any pixel coordinates that
+get passed to SAM2). seq1 was briefly widened to 4 regions to reduce unlabeled tail coverage,
+then reverted back to 2 - more checkpoints means more independent propagation runs, each an
+independent chance for one to get stuck near an occluder, which the coverage gain didn't offset.
 
 ### 3. Cross-reference GT trajectory against clear corridors → checkpoints
 
 `geometric_checkpoints()`: for each segment, find frames where the GT box is *fully* contained
-in one of the clear corridors (not just centroid-in-region - full-body containment). Group
-consecutive such frames into "visibility bursts," take the middle frame of each burst as a
-checkpoint. A segment ends up with 0 (fallback to naive middle-frame), 1, or several
-checkpoints - typically 2-5 with the current curated regions.
+in one of the clear corridors (not just centroid-in-region). Group consecutive such frames into
+"visibility bursts," take the middle frame of each burst as a checkpoint. A segment ends up with
+0 (fallback to naive middle-frame), 1, or several checkpoints - typically 2-3 with the current
+curated regions.
 
-### 4. Multi-checkpoint SAM2 video propagation, neighbor-bounded
+### 4. Multi-checkpoint SAM2 video propagation, neighbor-bounded, native resolution
 
-`gen_data/gen_nfo_pseudo_masks.py` - each checkpoint is seeded with **both** a point prompt
-(GT box center) and a box prompt (the full GT box) into `SAM2VideoPredictor`, then propagated
-in both directions via `propagate_in_video`. Bounding rule: checkpoint *i* propagates outward
-unbounded on the side with no neighboring checkpoint, and only as far as the neighbor on the
-side that has one. This means every frame between two consecutive checkpoints gets **double
-coverage** (two independent propagation runs), while frames beyond the outermost checkpoints get
-single coverage. A direction is early-stopped after 5 consecutive empty-mask frames (a dead
-run doesn't self-recover - confirmed empirically, see "Failure modes" below).
+`gen_data/gen_nfo_pseudo_masks.py` - each checkpoint is seeded with **both** a point prompt (GT
+box center) and a box prompt (the full GT box) into `SAM2VideoPredictor`, then propagated in both
+directions via `propagate_in_video`, at native (800x600) resolution - frames are staged directly
+from the native source, not the project's usual 224x224 training resolution (see "Native vs. 224
+resolution" below for why). Bounding rule: checkpoint *i* propagates outward unbounded on the
+side with no neighboring checkpoint, and only as far as the neighbor on the side that has one -
+every frame between two consecutive checkpoints gets double coverage (two independent
+propagation runs), frames beyond the outermost checkpoints get single coverage. A direction is
+early-stopped after 5 consecutive empty-mask frames (confirmed empirically: a dead run doesn't
+self-recover) or 5 consecutive near-static frames (a mask whose centroid barely moves is treated
+as a stuck tracker, since the person is continuously in motion throughout this dataset by
+construction).
 
-Rationale for box+point (not point-only): a point-only prompt has to grow into low-contrast
-regions via appearance similarity; this failed specifically on **feet/pants that are the same
-color as foliage** - the model had no reason to extend the mask down into a texturally
-indistinguishable region. The box prompt tells it explicitly where the object's known extent is.
-**This fix is unverified on real data as of this report** - implemented and unit-tested (pixel
-math only), not yet run on GPU.
+Box+point (not point-only) prompting exists because a point-only prompt has to grow into
+low-contrast regions via appearance similarity alone, which failed specifically on feet/pants the
+same color as the foliage background - the box prompt tells SAM2 explicitly where the object's
+known extent is.
 
 ### 5. Combine multiple checkpoints' masks per frame
 
-Two strategies exist, selectable via `--combine-method`:
-
-- **`majority`** (default): per-pixel majority vote across whichever checkpoints reached a given
-  frame. At n=2 (the common case), this is intersection-like - high precision, but a lot of real
-  person-pixels get dropped whenever the two masks don't perfectly agree (observed: very sparse
-  masks, sometimes just a few dozen pixels of a person that should occupy hundreds).
-- **`union_gt_outlier`** (current working direction): union of all available masks, then reject
-  outlier connected components using the **GT box as an anchor** (not a statistic derived from
-  the masks themselves, which is unreliable at n=2) - a component survives if its centroid is
-  within `1.25 × GT-box-width` of the GT box center, **and** its bounding-box width is ≥4px.
+Production default (`union_gt_outlier`): union of all available masks per frame, then clip to the
+GT box (dilated a few px) and reject connected components narrower than a few px (real fragments
+are always wider than a stray trunk-edge sliver). A simpler majority-vote alternative
+(`majority`) also exists in code for comparison - intersection-like at the common n=2 case, much
+higher precision but noticeably sparser coverage (real person-pixels dropped whenever two masks
+don't perfectly agree).
 
 ## Failure modes found, and how each was patched
 
-Each item below was discovered by visually inspecting individual segments (rendering a
-contact-sheet overlay and looking at it) and patching the specific artifact seen.
+Discovered by visually inspecting individual segments (contact-sheet overlays, then full-segment
+videos) and patching the specific artifact seen:
 
-1. **Total mask collapse over long unaided propagation.** A single prompt propagated across a
-   full ~150-frame segment: 41/155 frames came back completely empty, all in one contiguous
-   block, never self-recovering. → led to the whole multi-checkpoint architecture (step 4).
-2. **Confidently-wrong blob locked onto background**, not the person, surviving because a lone
-   propagation has no independent check. → led to using multiple checkpoints for cross-agreement
-   in the first place.
-3. **Large unlabeled tails** whenever the GT trajectory spent an extended stretch outside the
-   (initially too-narrow) clear corridors. → widened the curated region set for seq1 specifically
-   (more human-in-the-loop tuning).
-4. **Persistent thin vertical sliver** (a trunk edge one checkpoint's mask kept including, 1-3px
-   wide even where tall) inflating disagreement metrics without reflecting real quality loss. →
-   added a bounding-box-width filter (reject components <4px wide) to `union_gt_outlier`.
-5. **SAM2's memory-based tracking getting "stuck"** on a frozen spatial location after the person
-   walks past it, retained for several frames after the tracker has actually lost the real
-   target. → tightened the GT-distance outlier filter (2.0× → 1.25×), and re-derived the
-   distance metric itself: it was scaling tolerance by `max(box_width, box_height)`, which for a
-   standing person (height ≫ width) made the *effective* tolerance in pixels much larger than
-   the multiplier suggested, since drift is a horizontal phenomenon. Switched to width-only
-   scaling.
-6. **Feet/pants same color as foliage** - point-only prompting had no appearance signal to grow
-   into that region. → switched to point+box prompting (step 4). Unverified on real data yet.
+1. **Total mask collapse over long unaided propagation** - a single prompt propagated across a
+   full ~150-frame segment came back completely empty for 41/155 frames, one contiguous block,
+   never self-recovering. → the whole multi-checkpoint architecture (step 4).
+2. **Confidently-wrong blob locked onto background**, surviving because a lone propagation has no
+   independent check. → multiple checkpoints for cross-agreement.
+3. **Persistent thin vertical sliver** (a trunk edge one checkpoint kept including) inflating
+   disagreement metrics without reflecting real quality loss. → bounding-box-width filter.
+4. **SAM2's memory-based tracking getting "stuck"** on a frozen spatial location after the person
+   walked past it. → clip-to-GT-box (directly removes anything outside the box, replacing an
+   earlier, weaker centroid-distance-based filter), plus a separate temporal-staticness check
+   (mask centroid barely moving for several consecutive frames, independent of position relative
+   to GT) since a stuck mask near the true trajectory could otherwise survive the distance check
+   indefinitely.
+5. **Feet/pants same color as foliage** - point-only prompting had no appearance signal to grow
+   into that region. → point+box prompting (step 4).
 
-The `min_pairwise_iou` diagnostic (computed from checkpoint agreement) catches some of these
-automatically - notably #2's total-disagreement signature - but #4, #5, and #6 required visual
-inspection to notice; they don't show up distinctly in that metric.
+Verified on the two previously-worst segments (seq1 segments 3 and 7, originally 100%/86%
+low-IoU checkpoint disagreement): both dropped to 34%/35% after the fixes above, in the same
+range as segments never flagged as problematic - confirmed both numerically (diagnostics CSV) and
+visually (full-segment video render).
 
-## Question for review
+## Native vs. 224 resolution
 
-The pattern above is: discover an artifact by visual inspection, add a targeted
-filter/threshold/prompt-format change, repeat. Some observations relevant to assessing whether
-to continue with this approach or reconsider it:
+The pipeline originally ran at the project's standard 224x224 training resolution throughout.
+`gen_data/compare_resolution.py` reran the same checkpoint/propagation/combination logic
+unchanged on one segment (seq1 seg3) at native (800x600) resolution instead, downsampling only
+the final masks to 224 for comparison. Two conflicting signals came out of that:
 
-- Region-finding (step 2) required manual per-sequence curation rather than one generalizable
-  formula.
-- The threshold values chosen (1.25× vs 2.0× for the distance filter, 4px for the width filter)
-  were calibrated by inspecting one or two segments, not validated against a broader sample.
-- The underlying failure modes (drift, stuck-tracking, low-contrast-region growth) are general,
-  known characteristics of memory-based video segmentation trackers, not something specific to
-  this dataset.
+- **Box-recovery IoU** (bbox of the final mask vs. GT box - a free, no-extra-annotation proxy)
+  came back *worse* at native resolution: 0.434 (native) vs 0.545 (224).
+- **Direct visual comparison** (overlaying both mask sets frame-by-frame) showed the opposite -
+  native-resolution masks looked visibly cleaner, with less spurious background inclusion.
 
-**One specific alternative to weigh in on:** SAM3 (if available/appropriate) with a **text
-prompt** describing the scene ("person walking/running/jogging behind foliage"), used instead of
-or alongside the GT bounding box. If SAM3 supports strong per-frame language-grounded
-segmentation, re-grounding from a semantic description at every frame (rather than propagating
-memory forward from a seed frame) would have no drift/stuck-tracking failure mode, since there's
-no accumulating state to drift - each frame's segmentation would be independent. Open questions
-about this alternative: per-frame detection reliability/consistency, whether text-grounding is
-precise enough to avoid also including nearby vegetation that's plausibly "near a person," and
-the computational cost of running per-frame inference on potentially thousands of frames instead
-of a handful of checkpoints per segment.
+The visual read was trusted over the metric (box-recovery IoU only checks bounding-rectangle
+alignment, not actual mask boundary quality, so it's a coarse proxy at best) and the pipeline now
+runs natively by default. This also required rescaling several pixel-space constants
+(`STATIC_THRESHOLD_PX`, `box_dilate_px`, `min_width_px`) that had been calibrated at 224-space -
+now scaled by `img_w / 224` at the point of use.
 
-Caveat: this report's author has read SAM2's actual source in depth this session (video
-predictor API, `propagate_in_video`, point/box prompting) but has no verified hands-on knowledge
-of SAM3's actual capabilities, API, or whether/how it supports text-grounded video segmentation -
-that part of this report is a hypothesis to be evaluated, not a researched claim.
+**This is still only validated on one 83-frame segment with no real ground-truth mask to check
+against (NFO has none) - the IoU-vs-visual disagreement itself is a red flag that the current
+evidence is too thin to fully trust either signal.** A stronger validation, if this can be
+prioritized: use the **KTH** dataset instead, which is a synthetic/semi-synthetic dataset with
+**real ground-truth segmentation masks** already available in this project. Concretely:
 
-## Update: box+point prompting and filter tuning, verified on real data
+1. Take a KTH sequence (already has GT masks per frame).
+2. Synthetically composite in an occluder (matching NFO's fragmented-occlusion setup, e.g. a
+   foreground foliage/branch pattern) over the person.
+3. Run the same checkpoint/propagation/combination pipeline at both native and downsampled
+   (224) resolution on the occluded sequence.
+4. Score both against KTH's real GT masks directly (IoU, boundary F-score, etc.) - a real
+   ground-truth comparison instead of a proxy metric or unaided visual read.
 
-Box+point prompting (item 6), the width filter (item 4), and the tightened/width-scaled
-distance filter (item 5) were run on the two previously-worst segments (seq1 segments 3 and 7,
-100% and 86% low-IoU disagreement respectively under the earlier version). Result: 34% and 35%
-low-IoU respectively - both now in the same range as segments that were never flagged as
-problematic. Confirmed both numerically (the diagnostics CSV) and visually (per-frame video
-render of both full segments).
-
-**One remaining issue found via the full-segment videos** (not visible in the earlier sparse
-contact-sheet sampling): a mask staying fixed near a tree for a sustained stretch of frames -
-i.e. SAM2's tracking getting stuck, similar to failure mode #5, but not caught by the current
-distance filter because the stuck position happened to stay within tolerance of the GT
-trajectory for a while. In response, the number of checkpoints for seq1 was reduced back from 4
-regions to 2 (more checkpoints means more independent propagation runs, each an independent
-chance for one to get stuck near an occluder with no current mechanism to catch it before the
-union/outlier-rejection step).
-
-## Proposed refinement: temporal-staticness rejection (not yet implemented)
-
-A further idea, motivated directly by the "stuck near a tree" observation above: since the
-person is continuously in motion throughout this dataset (walking/jogging/running by
-construction, never stationary), a checkpoint's mask staying in nearly the same position across
-several consecutive frames is itself evidence of a stuck tracker - independent of where that
-position is relative to the GT box. This is a different signal than the existing distance
-filter, which only rejects a stuck mask once it has drifted far enough from the true position;
-a mask stuck near the true trajectory can survive that check indefinitely.
-
-Proposed implementation location: inside `propagate_one_checkpoint`'s existing per-direction
-loop (which already visits frames in temporal propagation order, and already has a structurally
-identical `consecutive_empty` early-stop counter) - track each frame's mask centroid, and if it
-moves less than a small threshold (on the order of 1.5-2px, to be calibrated against actual
-raw-frame-to-frame GT displacement) for several consecutive frames, discard those trailing
-frames and end that direction's propagation there, the same way a run of empty masks is already
-handled. This check needs no GT reference at all (unlike the distance filter), and operates on
-a single checkpoint's own temporal stream before combination - the point at which the signal is
-cleanest, since union-ing checkpoints together loses the clean per-stream frame ordering this
-check depends on.
-
-This would complement, not replace, the existing GT-distance/width filters: staticness catches
-"frozen at any location," the distance filter catches "moving, but toward the wrong thing."
-
-**Update:** implemented (mirrors `consecutive_empty`'s structure exactly). Verified with a fake
-predictor across three synthetic cases: a clean transition from 10 legitimately-moving frames
-into 10 frozen frames (all 10 moving frames kept, the entire stuck run discarded with no
-leakage), a case with an accidental position coincidence (handled correctly, confirmed the logic
-doesn't misfire on edge cases), and 30 frames of continuous motion with no stuck segment at all
-(all 30 kept, no false-positive early-stop). Not yet run on real GPU data.
+The author's hunch, going in, is that native resolution is genuinely better and this would mostly
+confirm rather than overturn the current decision - but a real-GT check across more than one
+segment would settle it properly instead of relying on a single conflicting-signal spot check.
 
 ## Every tunable constant in the pipeline, and how each was actually arrived at
 
 None of these were derived from a systematic measurement or sweep over the dataset. For
-comparison, `MAX_DIST=25px` in `tracking/eval_nfo.py` (a different part of this project, the
-classical tracker baseline) *was* derived that way - measured directly from real GT centroid
-displacement across the dataset. Nothing below got that treatment.
+comparison, `MAX_DIST=25px` in `tracking/eval_nfo.py` (the classical tracker baseline elsewhere
+in this project) *was* derived that way - measured directly from real GT centroid displacement.
+Nothing below got that treatment.
 
 | constant | value | basis |
 |---|---|---|
 | `MAX_CONSECUTIVE_EMPTY` | 5 frames | reasoned default, not measured |
-| `STATIC_THRESHOLD_PX` | 2.0px | reasoned ("should be well below real motion"), not checked against actual measured frame-to-frame GT displacement |
+| `STATIC_THRESHOLD_PX` | 0.5px (224-space), scaled by `img_w/224` at native resolution | tightened from an initial 2.0px after measuring real GT motion (1.4-1.7px/frame in 224-space) and finding 2.0px sat above it, triggering on legitimately-moving frames |
 | `MAX_CONSECUTIVE_STATIC` | 5 frames | arbitrary, chosen by analogy with `MAX_CONSECUTIVE_EMPTY` |
 | `MERGE_GAP` | 10px | tuned by eye across several rendered images |
 | `BG_SAMPLES` | 40 frames | arbitrary "enough for a stable median," no convergence check |
 | `MIN_WIDTH_FRAC` | 0.85x median box width | derived from recovering one specific missing region in seq2, not validated elsewhere |
 | `CURATED_CLEAR_REGIONS` | per-sequence, hand-picked | fully manual, eyeballed per sequence |
-| `gt_dist_factor` | 1.25x box width | reasoned ("~one body-width"), adjusted after observing one segment (seq1 segment 7) |
-| `min_width_px` | 4px | reasoned + verified only on synthetic data, not a real-artifact-width distribution |
+| `box_dilate_px` | 3px (224-space), scaled by `img_w/224` at native resolution | reasoned small margin |
+| `min_width_px` | 4px (224-space), scaled by `img_w/224` at native resolution | reasoned + verified only on synthetic data, not a real-artifact-width distribution |
 
 ## What's NOT yet done / open
 
-- `union_gt_outlier` is marked TEMPORARY in code, not yet the default - still being compared
-  against `majority` on real segments.
-- Temporal-staticness rejection is implemented and unit-tested but not yet run on real GPU data.
-- No held-out quality metric exists beyond the `min_pairwise_iou`/coverage diagnostics computed
-  from the pipeline's own intermediate outputs - there is no independent ground truth to check
-  final mask quality against (by definition - that's the problem being solved). Quality
-  assessment so far has been visual/manual, on specifically-flagged segments (now including
-  full-video review, not just sparse sampling), not a representative sample of the dataset.
-- The pipeline has never been run to completion + validated across all 4 sequences with the
-  current (post-patches) code version.
+- The pipeline has not yet been run to completion across all 4 sequences with the current
+  (native-resolution, post-patches) code version.
+- No held-out quality metric exists beyond the diagnostics computed from the pipeline's own
+  intermediate outputs (checkpoint agreement) - there's no independent ground truth to check
+  final NFO mask quality against, which is the whole reason the KTH validation idea above exists.
 - None of the constants above were systematically measured or swept (see table above).
+- The pipeline-complexity question posed at the top is still open.
