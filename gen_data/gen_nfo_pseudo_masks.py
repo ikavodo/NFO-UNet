@@ -302,11 +302,12 @@ def main():
     parser.add_argument('--segment-idx', type=int, default=None,
                         help='only process this one segment instead of the whole sequence')
     parser.add_argument('--combine-method', choices=['majority', 'union_gt_outlier'],
-                        default='majority',
-                        help='majority: intersection-like agreement (default, high precision, '
-                             'sparse coverage). union_gt_outlier: TEMPORARY comparison method - '
-                             'union of masks, GT-box-anchored outlier rejection (more coverage, '
-                             'trades on trusting GT-anchored connected components)')
+                        default='union_gt_outlier',
+                        help='union_gt_outlier: production default - union of masks, GT-box-'
+                             'anchored outlier rejection (more coverage, trades on trusting '
+                             'GT-anchored connected components). majority: simpler intersection-'
+                             'like agreement, kept for comparison - high precision, sparse '
+                             'coverage')
     args = parser.parse_args()
 
     seq_dir = os.path.join(IN_DIR, f'{args.seq}_gt')

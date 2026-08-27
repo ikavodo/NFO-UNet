@@ -185,7 +185,7 @@ Nothing below got that treatment.
 | `MIN_WIDTH_FRAC` | 0.85x median box width | derived from recovering one specific missing region in seq2, not validated elsewhere |
 | `CURATED_CLEAR_REGIONS` | per-sequence, hand-picked | fully manual, eyeballed per sequence |
 | `box_dilate_px` | 3px (224-space), scaled by `img_w/224` at native resolution | reasoned small margin |
-| `min_width_px` | 4px (224-space), scaled by `img_w/224` at native resolution | reasoned + verified only on synthetic data, not a real-artifact-width distribution |
+| `min_width_px` | 4px (224-space), scaled by `img_w/224` at native resolution | reasoned + verified only on synthetic data, not a real-artifact-width distribution. **Known bias, flagged by review:** median GT box width is 22-25px (224-space) / 77-90px (native), so 4px→14px-native rejects anything narrower than ~17% of body width - above the 1-3px sliver it was built to catch, meaning it likely also deletes genuinely narrow *visible* fragments during occlusion, which is exactly the regime this dataset is named for. Not changed yet (would force a re-run of the in-flight full pipeline pass) - see "What's NOT yet done" below. |
 
 ## What's NOT yet done / open
 
@@ -196,4 +196,13 @@ Nothing below got that treatment.
   truth to check final NFO mask quality against (unlike the KTH experiment above, which is a
   proxy scene, not NFO itself).
 - None of the constants above were systematically measured or swept (see table above).
-- The pipeline-complexity question posed at the top is still open.
+- `min_width_px` likely over-rejects narrow-but-real occlusion fragments (see table) - worth
+  lowering and re-running once there's time, not blocking today's run.
+- Independent review verdict on the pipeline-complexity question: keep the current filters as-is
+  (each traces to a distinct observed failure, no redundant pair) - the actual interpretability
+  risk is `CURATED_CLEAR_REGIONS` (the one fully-manual, non-generalizing piece, which filter
+  changes don't touch) and the `--combine-method` default previously disagreeing with the code's
+  own docstring and this doc about which method is production (now fixed: `union_gt_outlier` is
+  the default). Later, not now: log what `min_width_px` and the staticness stop actually reject
+  per segment - staticness is the one filter partly subsumed by clip-to-GT-box and worth
+  revisiting once that's visible.
