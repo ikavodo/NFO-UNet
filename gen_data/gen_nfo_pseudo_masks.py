@@ -116,7 +116,7 @@ def combine_checkpoint_masks(per_checkpoint_results, n_seg_frames):
 
 
 def combine_checkpoint_masks_union_gt_outlier(per_checkpoint_results, n_seg_frames, bbs, start,
-                                              img_w, img_h, gt_dist_factor=2.0, min_width_px=4):
+                                              img_w, img_h, gt_dist_factor=1.25, min_width_px=4):
     """TEMPORARY alternate combination strategy for comparison against the majority-vote
     default: union of all available masks per frame (maximizes recall/coverage instead of the
     default's intersection-like behavior, which trades recall for precision) - then reject
@@ -126,6 +126,14 @@ def combine_checkpoint_masks_union_gt_outlier(per_checkpoint_results, n_seg_fram
     at this sample size. A component survives if its centroid is within gt_dist_factor times
     the GT box's own size of the GT box center; anything farther is almost certainly drift onto
     the wrong object, not the person.
+
+    gt_dist_factor was 2.0 initially; tightened to 1.25 after visual review of real seq1 output
+    (segment 7) showed SAM2's memory-based tracking getting "stuck" on a frozen spatial location
+    after the person walks past - since the filter compares against the *current frame's* GT
+    position (not a fixed reference), it does eventually reject a stuck blob once the person has
+    walked far enough away, but 2.0x box-size was generous enough to let it survive for several
+    frames after the tracker had already lost the real target. 1.25x (roughly one body-width of
+    tolerance) catches this faster while still allowing normal partial-visibility offset.
 
     Also rejects components narrower than min_width_px (bounding-box width, not area) - a
     recurring artifact (visually confirmed on real seq1 output) is a persistent thin vertical
