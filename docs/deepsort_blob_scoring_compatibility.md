@@ -20,10 +20,17 @@ Association Metric") extends the original SORT (Bewley et al., 2016) with three 
    single scalar `max_dist`).
 3. A learned **appearance embedding** (cosine distance in a Re-ID feature space), combined with
    the motion gate to disambiguate visually-distinct objects at similar predicted positions
-   (**absent**: `blob_tracker.py`'s detections carry only `{x, y, area, bbox}` - no appearance
-   descriptor at all. This isn't a small gap: NFO's foreground detections come from
-   background-subtraction masks (MOG2, in `preprocess.py`), which are binary silhouettes with no
-   color/texture signal to embed - there is no pixel content to run a Re-ID CNN on).
+   (**absent, but recoverable**: `blob_tracker.py`'s detections carry only `{x, y, area, bbox}` -
+   no appearance descriptor. `foreground_mask`/`refine_mask`/`filter_by_shape` do re-binarize the
+   mask at every stage (`preprocess.py`), so the *mask itself* is a pure 0/255 silhouette with no
+   surviving intensity signal - correction from an earlier draft of this doc, which claimed no
+   appearance signal exists at all. That's wrong: `detect_blobs` only ever reads the mask, never
+   the raw grayscale frame the mask was computed from. `raw_frame` cropped/masked by the blob's
+   own binary region (`frame[y1:y2, x1:x2] * mask[y1:y2, x1:x2]`) has real intensity variation -
+   clothing texture, shading gradient - currently discarded entirely, not fundamentally absent.
+   A small shape/intensity descriptor (mean/std masked intensity, gradient histogram) is
+   available cheaply without a CNN; a learned Re-ID embedding is still overkill for this data,
+   but "no appearance signal" was the wrong reason to rule it out).
 
 **Verdict: structurally compatible, and closer to already-there than expected.** The
 architecture skeleton (per-track Kalman filter, frame-by-frame Hungarian assignment on a cost
@@ -104,6 +111,60 @@ complementary, not substitutes for each other.
   accordingly, same as this project's current `eval_nfo.py` constants. This matches the
   conclusion above: scale robustness is a separate, unsolved problem from association quality,
   not something DeepSORT already solves as a side effect.
+
+## Update: appearance/scoring feature plan, occluder domain-fidelity, and a kill test before training anything
+
+Three follow-up threads, in order of how much they should actually be built before the next one.
+
+**1. Temporal blob-dimension features (recommended first, cheapest, most interpretable).**
+`_Track.history` already stores `(x, y, height)` per frame - the raw material for a scale-
+*invariant* shape descriptor is already there, unused beyond `mean_height`. Concretely:
+aspect-ratio mean/variance over the track, frame-to-frame size growth rate (not absolute size),
+and size normalized by the track's own running median (so the descriptor's *shape*, not
+magnitude, is what's compared - the actual scale-invariance trick). This is a drop-in
+replacement target for `score_and_fit`'s existing hand-picked formula (same inputs, same scalar
+output, learned instead of derived) - much lower risk than a fresh architecture, and targets the
+exact documented failure mode (swaying-foliage track outscoring the real person).
+
+**2. Real appearance signal exists, just needs plumbing (do second, if #1 isn't enough).**
+Correction to this doc's earlier "no appearance signal" claim: the *mask* is genuinely binary at
+every pipeline stage, but `detect_blobs` never reads the raw grayscale frame the mask came from.
+`raw_frame` cropped/masked by the blob's own region has real intensity variation (texture,
+shading) - a cheap, non-CNN shape/intensity descriptor (masked mean/std intensity, gradient
+histogram) is available without new infrastructure. A learned CNN-embedding-with-residual-toward-
+clean-KTH-features approach (regressing occluded-blob features toward the same frame's
+unoccluded-KTH CNN features - feasible since KTH's synthetic occlusion gives exact clean/occluded
+pairs for free) is a real, coherent escalation, but meaningfully heavier - full backbone, feature
+pipeline, training loop - and still carries the trained-on-synthetic → deployed-on-real-NFO
+domain-gap risk every learned component in this project has carried. Treat as escalation, not a
+starting point.
+
+**3. Occluder domain fidelity - adopted.** `generate_occlusion_branch` added to
+`utils/occlusion_utils.py`, ported from `master_thesis/src/occluders.py:occ_branch` (geometric/
+motion core only - branch line segments with sinusoidally-swaying tips, fixed bases; dropped the
+torch video-tensor plumbing and RGB light-canvas shading, neither applicable here). This closes a
+real domain gap in the KTH validation already run for the native-vs-224 resolution decision: that
+experiment applied one *static* occlusion mask across an entire sequence, but NFO's real
+occluders (wind-blown branches) move independently of the camera and the person. Any future
+KTH-based training/eval for the scale-robustness work below should use this, not
+`generate_occlusion_morph`, for that reason.
+
+**Kill test, before building any training pipeline.** Before training anything (feature-based
+scorer or otherwise), run the *existing*, unmodified `score_and_fit`/`track_blobs` heuristic
+against synthetic KTH+`generate_occlusion_branch` sequences resized to 2-3 different pixel-height
+buckets (simulating different camera distances), using:
+- (a) constants (`MAX_DIST`/`EXPECTED_HEIGHT`/`MERGE_RADIUS`/`Q`/`R`) correctly recomputed per
+  scale bucket (no learning - just measuring the equivalent of `eval_nfo.py`'s constants at each
+  scale), vs.
+- (b) one fixed scale's constants applied to all buckets (mimicking today's actual deployment:
+  calibrated once, run everywhere).
+
+If (b) craters relative to (a), that confirms the scale-sensitivity problem is real and worth
+solving (with either scale-relative normalization or a learned scorer). **If (b) doesn't degrade
+much, that kills the motivation for building anything further** - it would mean the existing
+heuristic is already tolerant enough across scale in practice, without any new machinery. This
+test requires no training and is the cheapest possible falsification step - it should run before,
+not after, committing to item 1 above.
 
 ## Open questions / not yet done
 

@@ -40,6 +40,39 @@ def generate_occlusion_morph(shape: Tuple[int, int], init_occ_prob: float = 0.05
     return occlusion
 
 
+def generate_occlusion_branch(shape: Tuple[int, int], n_frames: int, num_branches: int = 210,
+                              thickness: int = 5, movement_x: int = 6, seed: int = 42) -> np.ndarray:
+    """[T, H, W] bool occlusion mask stack of branch-like line occluders whose tips sway
+    sinusoidally (freq t/3) while their bases stay fixed - a structurally accurate model of
+    wind-blown foliage, and temporally coherent (the same branches move) rather than one
+    static occlusion pattern repeated across every frame.
+
+    Ported from master_thesis/src/occluders.py:occ_branch - keeps only the geometric/motion
+    core (branch line segments + sway); drops that function's torch [T,C,H,W] video-tensor
+    plumbing and its separately-drifting RGB light/shading canvas, neither of which applies
+    here (this project's occlusion masks are plain booleans - color/shading is applied
+    separately via augment_imgs_with_constant_occlusion/augment_imgs_with_noisy_occlusion).
+
+    Re-seeds every frame like the original: branch base positions stay identical across
+    frames (real branches don't relocate their trunk), only the sway offset changes what
+    moves.
+    """
+    H, W = shape
+    masks = np.zeros((n_frames, H, W), dtype=bool)
+    for t in range(n_frames):
+        current_movement = round(movement_x * np.sin(t / 3))
+        np.random.seed(seed)
+        branch_layer = np.zeros((H, W), dtype=np.uint8)
+        for _ in range(num_branches):
+            pt1 = (np.random.randint(0, W), np.random.randint(max(H - 50, 0), H))
+            pt2 = (pt1[0] + np.random.randint(-50, 50) - current_movement,
+                   pt1[1] + np.random.randint(-int(H * 1.3), H // 10))
+            thick = np.random.randint(max(thickness - 1, 1), thickness + 2)
+            cv2.line(branch_layer, pt1, pt2, 1, thick)
+        masks[t] = branch_layer > 0
+    return masks
+
+
 def save_occlusion(file_path: str, occlusion: np.ndarray):
     ensure_dir(file_path)
     cv2.imwrite(file_path, occlusion * 255)
