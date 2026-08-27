@@ -115,8 +115,63 @@ def combine_checkpoint_masks(per_checkpoint_results, n_seg_frames):
     return combined, diagnostics
 
 
+def combine_checkpoint_masks_union_gt_outlier(per_checkpoint_results, n_seg_frames, bbs, start,
+                                              img_w, img_h, gt_dist_factor=2.0):
+    """TEMPORARY alternate combination strategy for comparison against the majority-vote
+    default: union of all available masks per frame (maximizes recall/coverage instead of the
+    default's intersection-like behavior, which trades recall for precision) - then reject
+    outlier connected components using the GT box as an anchor, since we actually have ground
+    truth for every frame in these labeled segments (that's what seeds the checkpoints in the
+    first place) - a much stronger reference than a statistic like "median of 2 masks" would be
+    at this sample size. A component survives if its centroid is within gt_dist_factor times
+    the GT box's own size of the GT box center; anything farther is almost certainly drift onto
+    the wrong object, not the person.
+
+    Returns (combined, diagnostics) with the same shape as combine_checkpoint_masks.
+    """
+    combined = {}
+    diagnostics = []
+    for local_idx in range(n_seg_frames):
+        masks = [r[local_idx] for r in per_checkpoint_results if local_idx in r and r[local_idx].sum() > 0]
+        n_reached = len(masks)
+        if n_reached == 0:
+            diagnostics.append((local_idx, 0, float('nan')))
+            continue
+
+        union = np.zeros(masks[0].shape, dtype=bool)
+        for m in masks:
+            union |= m
+
+        raw_idx = start + local_idx
+        gt_list = bbs.get(raw_idx)
+        if gt_list and gt_list[0].x >= 0:
+            bb = gt_list[0]
+            gt_cx, gt_cy = (bb.x + bb.w / 2) * img_w, (bb.y + bb.h / 2) * img_h
+            max_dist = gt_dist_factor * max(bb.w * img_w, bb.h * img_h)
+            n_labels, labels, _, centroids = cv2.connectedComponentsWithStats(union.astype(np.uint8))
+            keep = np.zeros_like(union)
+            for lbl in range(1, n_labels):  # 0 is background
+                cx, cy = centroids[lbl]
+                if np.hypot(cx - gt_cx, cy - gt_cy) <= max_dist:
+                    keep |= (labels == lbl)
+            combined[local_idx] = keep
+        else:
+            combined[local_idx] = union  # no GT available - trust the union as-is
+
+        if n_reached >= 2:
+            ious = []
+            for a, b in itertools.combinations(masks, 2):
+                inter = np.logical_and(a, b).sum()
+                u = np.logical_or(a, b).sum()
+                ious.append(inter / u if u else 1.0)
+            diagnostics.append((local_idx, n_reached, min(ious)))
+        else:
+            diagnostics.append((local_idx, n_reached, float('nan')))
+    return combined, diagnostics
+
+
 def process_segment(predictor, seq_dir, bbs, start, end, seg_idx, out_dir_frames, device,
-                    clear_regions):
+                    clear_regions, combine_method='majority'):
     n_seg_frames = end - start + 1
     frame_dir = os.path.join(out_dir_frames, f'seg{seg_idx}_frames')
     stage_frames(seq_dir, start, end, frame_dir)
@@ -140,7 +195,11 @@ def process_segment(predictor, seq_dir, bbs, start, end, seg_idx, out_dir_frames
             propagate_one_checkpoint(predictor, frame_dir, cp_local_idx, point, device,
                                      **bounds[cp_local_idx]))
 
-    combined, diagnostics = combine_checkpoint_masks(per_checkpoint_results, n_seg_frames)
+    if combine_method == 'union_gt_outlier':
+        combined, diagnostics = combine_checkpoint_masks_union_gt_outlier(
+            per_checkpoint_results, n_seg_frames, bbs, start, img_w, img_h)
+    else:
+        combined, diagnostics = combine_checkpoint_masks(per_checkpoint_results, n_seg_frames)
 
     for local_idx, mask in combined.items():
         raw_idx = start + local_idx
@@ -158,6 +217,12 @@ def main():
                         help='scratch space for staged per-segment frame symlinks')
     parser.add_argument('--segment-idx', type=int, default=None,
                         help='only process this one segment instead of the whole sequence')
+    parser.add_argument('--combine-method', choices=['majority', 'union_gt_outlier'],
+                        default='majority',
+                        help='majority: intersection-like agreement (default, high precision, '
+                             'sparse coverage). union_gt_outlier: TEMPORARY comparison method - '
+                             'union of masks, GT-box-anchored outlier rejection (more coverage, '
+                             'trades on trusting GT-anchored connected components)')
     args = parser.parse_args()
 
     seq_dir = os.path.join(IN_DIR, f'{args.seq}_gt')
@@ -186,7 +251,8 @@ def main():
         f.write('segment_idx,local_idx,raw_idx,n_checkpoints_reached,min_pairwise_iou\n')
         for seg_idx, (start, end) in enumerate(segments):
             diagnostics = process_segment(predictor, seq_dir, bbs, start, end, seg_idx,
-                                          out_dir_frames, device, clear_regions)
+                                          out_dir_frames, device, clear_regions,
+                                          combine_method=args.combine_method)
             for local_idx, n_reached, min_iou in diagnostics:
                 f.write(f'{seg_idx},{local_idx},{start + local_idx},{n_reached},{min_iou}\n')
 
