@@ -35,7 +35,15 @@ from utils.bb_utils import parse_bbs
 IN_DIR = 'data/nfo_processed'
 OUT_TAG = 'sammask'
 MAX_CONSECUTIVE_EMPTY = 5  # early-stop a direction once it's clearly dead, don't burn compute
-STATIC_THRESHOLD_PX = 2.0  # centroid movement below this counts as "not moving"
+# STATIC_THRESHOLD_PX was 2.0 - measured against real GT centroid displacement (see
+# docs/nfo_pseudo_segmentation_approach.md review) that turned out to be ABOVE median real
+# motion (1.4-1.7px/frame across seq1-4), meaning the check would trigger on the actual,
+# correctly-moving person for runs up to 159 consecutive frames. 0.5px sits comfortably below
+# all measured real motion while still catching genuinely-frozen masks, which repeat the
+# identical prediction at ~0.0px movement, not just "slow." Interim value - the reviewer's
+# suggested fix (compare mask travel to GT travel over a window, not an absolute px threshold)
+# is the more robust long-term approach and doesn't need re-calibration at a different resolution.
+STATIC_THRESHOLD_PX = 0.5
 MAX_CONSECUTIVE_STATIC = 5  # the person is always in motion in this dataset - this many
                             # consecutive near-static frames is treated as a stuck tracker
 
