@@ -7,19 +7,18 @@ completion across all 4 sequences at native resolution.
 enough to serve as usable pseudo-ground-truth (weak training signal / a "good enough" stand-in
 for real annotation). Keep that bar in mind when judging the approach below.
 
-**Ask:** two things.
+**Ask: a pipeline-complexity judgment call.** The approach below has grown by iterative
+patching - each new filter/threshold/prompt-format change fixed a specific artifact found by
+visually inspecting a segment. Given the "good enough, not perfect" bar above, is this the right
+amount of machinery, or has it drifted past the point of diminishing returns for what's actually
+needed? The tension: more filters/checkpoints/tuning can push mask quality up, but each one also
+makes the pipeline harder to reason about and re-tune when it inevitably meets a new sequence or
+failure mode - is the current balance defensible, or should some of it be cut in favor of a
+simpler, more interpretable pipeline even at some cost to raw quality?
 
-1. **Pipeline-complexity judgment call.** The approach below has grown by iterative patching -
-   each new filter/threshold/prompt-format change fixed a specific artifact found by visually
-   inspecting a segment. Given the "good enough, not perfect" bar above, is this the right amount
-   of machinery, or has it drifted past the point of diminishing returns for what's actually
-   needed? The tension: more filters/checkpoints/tuning can push mask quality up, but each one
-   also makes the pipeline harder to reason about and re-tune when it inevitably meets a new
-   sequence or failure mode - is the current balance defensible, or should some of it be cut in
-   favor of a simpler, more interpretable pipeline even at some cost to raw quality?
-2. **A concrete way to validate the native-vs-224 resolution decision below with real ground
-   truth**, not just a proxy metric or one segment's visual inspection - see that section for the
-   specific proposal.
+(A related resolution question - native vs. 224 - came up during development and was checked
+against real ground truth via a KTH-based experiment; see "Native vs. 224 resolution" below for
+the result. That one's considered settled, included here for context rather than as an open ask.)
 
 ## Why this exists
 
@@ -151,23 +150,23 @@ runs natively by default. This also required rescaling several pixel-space const
 (`STATIC_THRESHOLD_PX`, `box_dilate_px`, `min_width_px`) that had been calibrated at 224-space -
 now scaled by `img_w / 224` at the point of use.
 
-**This is still only validated on one 83-frame segment with no real ground-truth mask to check
-against (NFO has none) - the IoU-vs-visual disagreement itself is a red flag that the current
-evidence is too thin to fully trust either signal.** A stronger validation, if this can be
-prioritized: use the **KTH** dataset instead, which is a synthetic/semi-synthetic dataset with
-**real ground-truth segmentation masks** already available in this project. Concretely:
+That single-segment, no-real-GT comparison (the IoU-vs-visual disagreement is itself a sign the
+evidence there was thin) motivated a second check with actual ground truth:
+`gen_data/kth_occlusion_resolution_experiment.py` takes a short KTH segment that already has a
+real per-frame mask (`gen_sam_masks.py`'s `_sammask.png`, computed by single-image SAM2 on the
+*unoccluded* frame - reliable there, since KTH scenes are clean, so treated as ground truth),
+synthetically composites in an occluder, then runs the same propagation+combination core on the
+occluded sequence at two resolutions and scores each directly against that real mask (rather than
+a bounding-box proxy). Note KTH's own native resolution (160x120) is *lower* than 224, the
+opposite relationship to NFO's native 800x600 - so this tests 224 vs. a further-downsampled 112,
+not "native vs. 224" in the NFO sense; the underlying question (does a coarser pixel grid hurt
+SAM2 mask quality) is the same either way.
 
-1. Take a KTH sequence (already has GT masks per frame).
-2. Synthetically composite in an occluder (matching NFO's fragmented-occlusion setup, e.g. a
-   foreground foliage/branch pattern) over the person.
-3. Run the same checkpoint/propagation/combination pipeline at both native and downsampled
-   (224) resolution on the occluded sequence.
-4. Score both against KTH's real GT masks directly (IoU, boundary F-score, etc.) - a real
-   ground-truth comparison instead of a proxy metric or unaided visual read.
-
-The author's hunch, going in, is that native resolution is genuinely better and this would mostly
-confirm rather than overturn the current decision - but a real-GT check across more than one
-segment would settle it properly instead of relying on a single conflicting-signal spot check.
+Result on one 24-frame segment: 224 mean IoU 0.771 vs. 112 mean IoU 0.759 - higher resolution
+won against real ground truth, consistent with the NFO visual read and inconsistent only with
+NFO's box-recovery IoU proxy. Native resolution is being kept as the pipeline default on the
+strength of this. Caveat: still a single short segment, one occluder pattern, one resolution
+pair - not a systematic sweep.
 
 ## Every tunable constant in the pipeline, and how each was actually arrived at
 
@@ -192,8 +191,9 @@ Nothing below got that treatment.
 
 - The pipeline has not yet been run to completion across all 4 sequences with the current
   (native-resolution, post-patches) code version.
-- No held-out quality metric exists beyond the diagnostics computed from the pipeline's own
-  intermediate outputs (checkpoint agreement) - there's no independent ground truth to check
-  final NFO mask quality against, which is the whole reason the KTH validation idea above exists.
+- No held-out quality metric exists for NFO itself beyond the diagnostics computed from the
+  pipeline's own intermediate outputs (checkpoint agreement) - there's no independent ground
+  truth to check final NFO mask quality against (unlike the KTH experiment above, which is a
+  proxy scene, not NFO itself).
 - None of the constants above were systematically measured or swept (see table above).
 - The pipeline-complexity question posed at the top is still open.
