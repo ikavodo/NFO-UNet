@@ -1,11 +1,11 @@
 # Generating pseudo-segmentation masks for NFO — current approach, and a request for a second opinion
 
 **Status:** working, iteratively patched, functional but not yet validated at scale.
-**Ask:** is this the right *strategy*, or are we optimizing the wrong layer of the problem?
-The specific alternative under consideration is using a stronger model (e.g. SAM3) with a
-**text prompt** ("person walking/running/jogging behind foliage") instead of, or in addition to,
-the bounding-box-driven approach below. This report is written for a fresh, stronger model to
-critique the approach - not to justify it.
+**Ask:** review the approach below and its list of found/patched failure modes, and weigh in on
+whether this is a sound strategy to continue, or whether a different approach would be
+preferable. One specific alternative under consideration: using a stronger model (e.g. SAM3)
+with a **text prompt** ("person walking/running/jogging behind foliage") instead of, or in
+addition to, the bounding-box-driven approach below.
 
 ## Why this exists
 
@@ -55,9 +55,8 @@ CURATED_CLEAR_REGIONS = {
 ```
 (raw pixel x-ranges, 224px-wide frames)
 
-This is already a flag worth raising to a reviewer: **the region-finding step required
-human-in-the-loop tuning per sequence**, not a generalizable formula. That's a strong signal
-this whole approach may not scale to a 5th sequence, let alone a different dataset.
+Note: the region-finding step required human-in-the-loop tuning per sequence, not a single
+generalizable formula.
 
 ### 3. Cross-reference GT trajectory against clear corridors → checkpoints
 
@@ -98,10 +97,10 @@ Two strategies exist, selectable via `--combine-method`:
   the masks themselves, which is unreliable at n=2) - a component survives if its centroid is
   within `1.25 × GT-box-width` of the GT box center, **and** its bounding-box width is ≥4px.
 
-## Failure modes found, and how each was patched (this is the part worth scrutinizing)
+## Failure modes found, and how each was patched
 
-This is the crux of the concern driving this report: **every fix so far has been reactive,
-discovered by visually inspecting individual segments and patching the specific artifact seen.**
+Each item below was discovered by visually inspecting individual segments (rendering a
+contact-sheet overlay and looking at it) and patching the specific artifact seen.
 
 1. **Total mask collapse over long unaided propagation.** A single prompt propagated across a
    full ~150-frame segment: 41/155 frames came back completely empty, all in one contiguous
@@ -125,43 +124,39 @@ discovered by visually inspecting individual segments and patching the specific 
 6. **Feet/pants same color as foliage** - point-only prompting had no appearance signal to grow
    into that region. → switched to point+box prompting (step 4). Unverified on real data yet.
 
-**Every one of these was found by rendering a contact-sheet overlay and eyeballing it**, not by
-a metric flagging it automatically (the `min_pairwise_iou` diagnostic catches *some* of these -
-notably #2's total-disagreement signature - but not #4, #5, or #6, which required visual
-inspection to even notice).
+The `min_pairwise_iou` diagnostic (computed from checkpoint agreement) catches some of these
+automatically - notably #2's total-disagreement signature - but #4, #5, and #6 required visual
+inspection to notice; they don't show up distinctly in that metric.
 
-## The core question for review
+## Question for review
 
-Is this the right level to be solving this problem at? The pattern above - discover an artifact
-visually, add a targeted filter/threshold/prompt-format tweak, repeat - has a real chance of
-being a whack-a-mole process that never converges, especially given:
+The pattern above is: discover an artifact by visual inspection, add a targeted
+filter/threshold/prompt-format change, repeat. Some observations relevant to assessing whether
+to continue with this approach or reconsider it:
 
-- Region-finding already required manual per-sequence curation (step 2) - the foundation isn't
-  even fully automated.
-- Several of the "fixes" are threshold tunings (1.25× vs 2.0×, 4px vs some other width) chosen
-  by eyeballing one or two segments, not validated against a broader sample.
-- The underlying failure modes (drift, stuck-tracking, low-contrast-region growth) are known,
-  general weaknesses of memory-based video segmentation trackers - not NFO-specific quirks. It's
-  plausible a fundamentally different tool sidesteps the whole class of problems rather than
-  requiring per-symptom patches.
+- Region-finding (step 2) required manual per-sequence curation rather than one generalizable
+  formula.
+- The threshold values chosen (1.25× vs 2.0× for the distance filter, 4px for the width filter)
+  were calibrated by inspecting one or two segments, not validated against a broader sample.
+- The underlying failure modes (drift, stuck-tracking, low-contrast-region growth) are general,
+  known characteristics of memory-based video segmentation trackers, not something specific to
+  this dataset.
 
-**The specific alternative on the table:** SAM3 (if available/appropriate) with a **text
+**One specific alternative to weigh in on:** SAM3 (if available/appropriate) with a **text
 prompt** describing the scene ("person walking/running/jogging behind foliage"), used instead of
-or alongside the GT bounding box. The appeal: if SAM3 supports strong per-frame
-language-grounded segmentation, re-grounding from a semantic description at every frame (rather
-than propagating memory forward from a seed frame) would have no drift/stuck-tracking failure
-mode at all, since there's no accumulating state to drift - each frame's segmentation would be
-independent. This trades the current problem class (propagation artifacts) for a different one
-(per-frame detection reliability/consistency, whether text-grounding is precise enough to avoid
-grabbing nearby vegetation that's also plausibly "near a person," computational cost of running
-heavy per-frame inference on potentially thousands of frames instead of a handful of
-checkpoints).
+or alongside the GT bounding box. If SAM3 supports strong per-frame language-grounded
+segmentation, re-grounding from a semantic description at every frame (rather than propagating
+memory forward from a seed frame) would have no drift/stuck-tracking failure mode, since there's
+no accumulating state to drift - each frame's segmentation would be independent. Open questions
+about this alternative: per-frame detection reliability/consistency, whether text-grounding is
+precise enough to avoid also including nearby vegetation that's plausibly "near a person," and
+the computational cost of running per-frame inference on potentially thousands of frames instead
+of a handful of checkpoints per segment.
 
-Honest caveat: this report's author has read SAM2's actual source in depth this session (video
-predictor API, `propagate_in_video`, point/box prompting) but has **no verified hands-on
-knowledge of SAM3's actual capabilities, API, or whether/how it supports text-grounded video
-segmentation** - that part of this report is the user's hypothesis, not a researched claim, and
-is exactly what needs an informed second opinion.
+Caveat: this report's author has read SAM2's actual source in depth this session (video
+predictor API, `propagate_in_video`, point/box prompting) but has no verified hands-on knowledge
+of SAM3's actual capabilities, API, or whether/how it supports text-grounded video segmentation -
+that part of this report is a hypothesis to be evaluated, not a researched claim.
 
 ## What's NOT yet done / open
 
