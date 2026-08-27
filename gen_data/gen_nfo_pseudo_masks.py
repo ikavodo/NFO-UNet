@@ -116,7 +116,7 @@ def combine_checkpoint_masks(per_checkpoint_results, n_seg_frames):
 
 
 def combine_checkpoint_masks_union_gt_outlier(per_checkpoint_results, n_seg_frames, bbs, start,
-                                              img_w, img_h, gt_dist_factor=2.0):
+                                              img_w, img_h, gt_dist_factor=2.0, min_width_px=4):
     """TEMPORARY alternate combination strategy for comparison against the majority-vote
     default: union of all available masks per frame (maximizes recall/coverage instead of the
     default's intersection-like behavior, which trades recall for precision) - then reject
@@ -126,6 +126,13 @@ def combine_checkpoint_masks_union_gt_outlier(per_checkpoint_results, n_seg_fram
     at this sample size. A component survives if its centroid is within gt_dist_factor times
     the GT box's own size of the GT box center; anything farther is almost certainly drift onto
     the wrong object, not the person.
+
+    Also rejects components narrower than min_width_px (bounding-box width, not area) - a
+    recurring artifact (visually confirmed on real seq1 output) is a persistent thin vertical
+    sliver, likely a trunk edge one checkpoint's mask keeps including, 1-3px wide even where
+    it's tall. A real person fragment - even a partial one, occluded by branches - has
+    meaningfully more width than that; this only removes hairline slivers, not body parts (see
+    the module's test for the calibration check on synthetic near/far/thin cases).
 
     Returns (combined, diagnostics) with the same shape as combine_checkpoint_masks.
     """
@@ -148,11 +155,12 @@ def combine_checkpoint_masks_union_gt_outlier(per_checkpoint_results, n_seg_fram
             bb = gt_list[0]
             gt_cx, gt_cy = (bb.x + bb.w / 2) * img_w, (bb.y + bb.h / 2) * img_h
             max_dist = gt_dist_factor * max(bb.w * img_w, bb.h * img_h)
-            n_labels, labels, _, centroids = cv2.connectedComponentsWithStats(union.astype(np.uint8))
+            n_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(union.astype(np.uint8))
             keep = np.zeros_like(union)
             for lbl in range(1, n_labels):  # 0 is background
                 cx, cy = centroids[lbl]
-                if np.hypot(cx - gt_cx, cy - gt_cy) <= max_dist:
+                width = stats[lbl, cv2.CC_STAT_WIDTH]
+                if width >= min_width_px and np.hypot(cx - gt_cx, cy - gt_cy) <= max_dist:
                     keep |= (labels == lbl)
             combined[local_idx] = keep
         else:
