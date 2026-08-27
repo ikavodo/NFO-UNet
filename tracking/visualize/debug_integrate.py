@@ -4,10 +4,10 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 
-from tracking.blob_tracker import detect_blobs, score_and_fit, track_blobs
-from tracking.eval_nfo import BG_FRAMES, EXPECTED_HEIGHT, MAX_DIST, MERGE_RADIUS, NTH_FRAME, SPAN
-from tracking.integrate_image import align_frames, anchor_for_frame, crop_at, fuse, restrict_to_nearby
-from tracking.preprocess import filter_by_shape, foreground_mask, refine_mask
+from tracking.core.blob_tracker import detect_blobs, score_and_fit, track_blobs
+from tracking.eval.eval_nfo import BG_FRAMES, EXPECTED_HEIGHT, MAX_DIST, MERGE_RADIUS, NTH_FRAME, SPAN
+from tracking.core.integrate_image import align_frames, anchor_for_frame, crop_at, fuse, restrict_to_nearby
+from tracking.core.preprocess import filter_by_shape, foreground_mask, refine_mask
 
 CROP = 220
 
@@ -71,7 +71,7 @@ def main(seq='seq2', center=355):
     axes[3][T // 2 + 1].set_title('fused mask (max)', fontsize=9)
 
     plt.tight_layout()
-    out_path = 'tracking/debug_integrate.png'
+    out_path = 'tracking/visualize/debug_integrate.png'
     plt.savefig(out_path, dpi=110)
     print(f"saved to {out_path}")
 

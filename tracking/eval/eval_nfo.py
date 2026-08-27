@@ -3,7 +3,7 @@ import os
 import cv2
 import numpy as np
 
-from tracking.track_sequence import track_windows_in_sequence
+from tracking.core.track_sequence import track_windows_in_sequence
 
 IN_DIR = 'data/nfo_final/nfo_final'
 SEQ_SIZE = 7  # matches config/train_config.py's seq_size=7

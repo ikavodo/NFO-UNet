@@ -4,10 +4,10 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 
-from tracking.blob_tracker import detect_blobs, score_and_fit, track_blobs
-from tracking.eval_nfo import BG_FRAMES, EXPECTED_HEIGHT, MAX_DIST, MERGE_RADIUS, NTH_FRAME, SPAN
-from tracking.integrate_image import integrate
-from tracking.preprocess import filter_by_shape, foreground_mask, refine_mask
+from tracking.core.blob_tracker import detect_blobs, score_and_fit, track_blobs
+from tracking.eval.eval_nfo import BG_FRAMES, EXPECTED_HEIGHT, MAX_DIST, MERGE_RADIUS, NTH_FRAME, SPAN
+from tracking.core.integrate_image import integrate
+from tracking.core.preprocess import filter_by_shape, foreground_mask, refine_mask
 
 
 def load_sequence_prefix(seq, up_to):
@@ -38,7 +38,7 @@ def main(seq='seq1', center=17):
         ax.set_title(f"{method}, {'masked' if mask_bg else 'full-frame'}", fontsize=10)
         ax.axis('off')
     plt.tight_layout()
-    out_path = 'tracking/integrated_image_comparison.png'
+    out_path = 'tracking/visualize/integrated_image_comparison.png'
     plt.savefig(out_path, dpi=110)
     print(f"saved to {out_path}")
 

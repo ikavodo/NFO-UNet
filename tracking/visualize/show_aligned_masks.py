@@ -4,10 +4,10 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 
-from tracking.blob_tracker import detect_blobs, score_and_fit, track_blobs
-from tracking.preprocess import filter_by_shape, foreground_mask, refine_mask
-from tracking.eval_nfo import BG_FRAMES, EXPECTED_HEIGHT, MAX_DIST, MERGE_RADIUS, NTH_FRAME, SPAN
-from tracking.integrate_image import crop_at, anchor_for_frame, restrict_to_nearby
+from tracking.core.blob_tracker import detect_blobs, score_and_fit, track_blobs
+from tracking.core.preprocess import filter_by_shape, foreground_mask, refine_mask
+from tracking.eval.eval_nfo import BG_FRAMES, EXPECTED_HEIGHT, MAX_DIST, MERGE_RADIUS, NTH_FRAME, SPAN
+from tracking.core.integrate_image import crop_at, anchor_for_frame, restrict_to_nearby
 
 CROP = 220  # roughly the measured NFO person height (~195px) plus margin
 
@@ -59,7 +59,7 @@ def main(seq='seq1', center=17):
     axes[2][T // 2].set_title('merged (max over aligned masks)', fontsize=9)
 
     plt.tight_layout()
-    out_path = 'tracking/aligned_masks.png'
+    out_path = 'tracking/visualize/aligned_masks.png'
     plt.savefig(out_path, dpi=110)
     print(f"vx={winner['vx']:.2f}px/frame, saved to {out_path}")
 

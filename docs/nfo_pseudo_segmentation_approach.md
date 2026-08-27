@@ -171,7 +171,7 @@ pair - not a systematic sweep.
 ## Every tunable constant in the pipeline, and how each was actually arrived at
 
 None of these were derived from a systematic measurement or sweep over the dataset. For
-comparison, `MAX_DIST=25px` in `tracking/eval_nfo.py` (the classical tracker baseline elsewhere
+comparison, `MAX_DIST=25px` in `tracking/eval/eval_nfo.py` (the classical tracker baseline elsewhere
 in this project) *was* derived that way - measured directly from real GT centroid displacement.
 Nothing below got that treatment.
 

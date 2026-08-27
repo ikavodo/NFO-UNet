@@ -1,7 +1,7 @@
 import numpy as np
 
-from tracking.preprocess import foreground_mask, refine_mask, filter_by_shape
-from tracking.blob_tracker import detect_blobs
+from tracking.core.preprocess import foreground_mask, refine_mask, filter_by_shape
+from tracking.core.blob_tracker import detect_blobs
 
 
 SEQ_SIZE = 7  # matches config/train_config.py's seq_size=7

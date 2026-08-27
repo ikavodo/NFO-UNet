@@ -2,7 +2,7 @@ import numpy as np
 import cv2
 
 from gen_data.gen_kth_data.main import extract_bbs
-from tracking.track_window import track_window
+from tracking.core.track_window import track_window
 from utils.fs_utils import File
 
 SEQ_DIR = 'data/kth_staged/person01_walking_d1_uncomp'

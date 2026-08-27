@@ -4,9 +4,9 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 
-from tracking.blob_tracker import detect_blobs, score_and_fit, track_blobs
-from tracking.eval_nfo import MAX_DIST, MERGE_RADIUS, NTH_FRAME, SPAN, parse_normalized_bbs
-from tracking.preprocess import filter_by_shape, foreground_mask, refine_mask
+from tracking.core.blob_tracker import detect_blobs, score_and_fit, track_blobs
+from tracking.eval.eval_nfo import MAX_DIST, MERGE_RADIUS, NTH_FRAME, SPAN, parse_normalized_bbs
+from tracking.core.preprocess import filter_by_shape, foreground_mask, refine_mask
 
 GT_COLOR = (255, 0, 0)      # red - ground truth
 EST_COLOR = (0, 255, 0)     # green - tracker's estimate
@@ -101,7 +101,7 @@ def main():
           axes[2:4, :], expected_height=EXPECTED_HEIGHT)
 
     plt.tight_layout()
-    out_path = 'tracking/merge_visualization.png'
+    out_path = 'tracking/visualize/merge_visualization.png'
     plt.savefig(out_path, dpi=110)
     print(f"saved to {out_path}")
 

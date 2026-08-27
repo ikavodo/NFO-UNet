@@ -1,8 +1,8 @@
 import numpy as np
 
-from tracking.preprocess import foreground_mask, refine_mask, filter_by_shape
-from tracking.blob_tracker import detect_blobs
-from tracking.track_window import _result_from_detections
+from tracking.core.preprocess import foreground_mask, refine_mask, filter_by_shape
+from tracking.core.blob_tracker import detect_blobs
+from tracking.core.track_window import _result_from_detections
 
 
 def track_windows_in_sequence(all_frames: np.ndarray, window_centers, span: int, nth_frame: int,

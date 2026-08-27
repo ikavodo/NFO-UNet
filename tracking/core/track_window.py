@@ -1,7 +1,7 @@
 import numpy as np
 
-from tracking.preprocess import foreground_mask, refine_mask, filter_by_shape
-from tracking.blob_tracker import detect_blobs, track_blobs, score_and_fit, merged_center
+from tracking.core.preprocess import foreground_mask, refine_mask, filter_by_shape
+from tracking.core.blob_tracker import detect_blobs, track_blobs, score_and_fit, merged_center
 
 
 def _result_from_detections(window_detections, min_track_length, expected_height, height_tolerance,

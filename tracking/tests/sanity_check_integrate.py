@@ -3,10 +3,10 @@ import os
 import cv2
 import numpy as np
 
-from tracking.blob_tracker import detect_blobs, score_and_fit, track_blobs
-from tracking.eval_nfo import BG_FRAMES, EXPECTED_HEIGHT, MAX_DIST, MERGE_RADIUS, NTH_FRAME, SPAN
-from tracking.integrate_image import integrate
-from tracking.preprocess import filter_by_shape, foreground_mask, refine_mask
+from tracking.core.blob_tracker import detect_blobs, score_and_fit, track_blobs
+from tracking.eval.eval_nfo import BG_FRAMES, EXPECTED_HEIGHT, MAX_DIST, MERGE_RADIUS, NTH_FRAME, SPAN
+from tracking.core.integrate_image import integrate
+from tracking.core.preprocess import filter_by_shape, foreground_mask, refine_mask
 
 
 def load_sequence_prefix(seq, up_to):
