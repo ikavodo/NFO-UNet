@@ -37,9 +37,16 @@ OUT_TAG = 'sammask'
 MAX_CONSECUTIVE_EMPTY = 5  # early-stop a direction once it's clearly dead, don't burn compute
 
 
-def point_from_gt(seq_dir, bbs, raw_idx, img_w, img_h):
+def point_and_box_from_gt(bbs, raw_idx, img_w, img_h):
+    """Returns (center_point, box) in pixel coords. Passing the full box (not just its center
+    point) to SAM2 lets it use the GT's known vertical extent directly - a point-only prompt has
+    to grow into low-contrast regions (e.g. pants the same color as foliage) via appearance
+    similarity alone, which is exactly where it can fail to reach the feet; a box prompt tells
+    it explicitly where the object's extent actually is."""
     bb = bbs[raw_idx][0]
-    return ((bb.x + bb.w / 2) * img_w, (bb.y + bb.h / 2) * img_h)
+    point = ((bb.x + bb.w / 2) * img_w, (bb.y + bb.h / 2) * img_h)
+    box = [bb.x * img_w, bb.y * img_h, (bb.x + bb.w) * img_w, (bb.y + bb.h) * img_h]
+    return point, box
 
 
 def compute_bounds(checkpoints):
@@ -55,7 +62,7 @@ def compute_bounds(checkpoints):
     return bounds
 
 
-def propagate_one_checkpoint(predictor, frame_dir, checkpoint_local_idx, point, device,
+def propagate_one_checkpoint(predictor, frame_dir, checkpoint_local_idx, point, box, device,
                              max_forward=None, max_backward=None):
     """Returns {local_idx: bool_mask}. max_forward/max_backward cap how many frames to track
     in each direction (None = unbounded, subject only to the empty-run early-stop)."""
@@ -63,7 +70,7 @@ def propagate_one_checkpoint(predictor, frame_dir, checkpoint_local_idx, point, 
     with torch.inference_mode(), torch.autocast(device, dtype=torch.bfloat16, enabled=(device == 'cuda')):
         state = predictor.init_state(frame_dir)
         predictor.add_new_points_or_box(state, frame_idx=checkpoint_local_idx, obj_id=1,
-                                        points=[point], labels=[1])
+                                        points=[point], labels=[1], box=box)
 
         for reverse, max_num in ((False, max_forward), (True, max_backward)):
             if max_num == 0 and checkpoint_local_idx in results:
@@ -162,7 +169,11 @@ def combine_checkpoint_masks_union_gt_outlier(per_checkpoint_results, n_seg_fram
         if gt_list and gt_list[0].x >= 0:
             bb = gt_list[0]
             gt_cx, gt_cy = (bb.x + bb.w / 2) * img_w, (bb.y + bb.h / 2) * img_h
-            max_dist = gt_dist_factor * max(bb.w * img_w, bb.h * img_h)
+            # width, not max(w,h): drift/stuck-tracker artifacts are horizontal (the person
+            # walks sideways), so tolerance should scale with the horizontal body size, not
+            # height (~2.5x larger for a standing person, which made the old max(w,h) version
+            # far looser than the "1.25x" multiplier suggested - see gt_dist_factor docstring)
+            max_dist = gt_dist_factor * bb.w * img_w
             n_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(union.astype(np.uint8))
             keep = np.zeros_like(union)
             for lbl in range(1, n_labels):  # 0 is background
@@ -206,9 +217,9 @@ def process_segment(predictor, seq_dir, bbs, start, end, seg_idx, out_dir_frames
     per_checkpoint_results = []
     for cp_local_idx in checkpoints:
         raw_idx = start + cp_local_idx
-        point = point_from_gt(seq_dir, bbs, raw_idx, img_w, img_h)
+        point, box = point_and_box_from_gt(bbs, raw_idx, img_w, img_h)
         per_checkpoint_results.append(
-            propagate_one_checkpoint(predictor, frame_dir, cp_local_idx, point, device,
+            propagate_one_checkpoint(predictor, frame_dir, cp_local_idx, point, box, device,
                                      **bounds[cp_local_idx]))
 
     if combine_method == 'union_gt_outlier':
