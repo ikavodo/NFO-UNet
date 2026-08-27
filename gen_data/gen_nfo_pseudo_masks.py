@@ -286,13 +286,21 @@ def main():
     bbs = parse_bbs(os.path.join(seq_dir, 'groundtruth.txt'))
     n_frames = max(bbs.keys()) + 1
     img_h, img_w = cv2.imread(os.path.join(seq_dir, '00000_or.jpg'), 0).shape
-    segments = find_segments(bbs)
+    all_segments = find_segments(bbs)
     if args.segment_idx is not None:
-        segments = [segments[args.segment_idx]]
-        print(f'{args.seq} segment {args.segment_idx}: frames {segments[0]}')
+        # keep the real segment index for naming (staging dir, diagnostics rows) - using an
+        # enumerate-based index here instead would make every --segment-idx call for the same
+        # sequence write to the SAME staging directory (e.g. always "seg0_frames"), causing
+        # concurrent SLURM tasks for different segments of the same sequence to race each
+        # other's stage_frames() rmtree+repopulate - this caused 9/32 tasks to fail outright
+        # in the first full run (real symptom: FileNotFoundError reading a frame that a
+        # different, concurrently-running task's directory reset had just deleted)
+        indexed_segments = [(args.segment_idx, all_segments[args.segment_idx])]
+        print(f'{args.seq} segment {args.segment_idx}: frames {all_segments[args.segment_idx]}')
     else:
-        print(f'{args.seq}: {len(segments)} continuously-visible segments, '
-              f'lengths {[e - s + 1 for s, e in segments]}')
+        indexed_segments = list(enumerate(all_segments))
+        print(f'{args.seq}: {len(all_segments)} continuously-visible segments, '
+              f'lengths {[e - s + 1 for s, e in all_segments]}')
 
     clear_regions = default_clear_regions(seq_dir, bbs, n_frames, img_h, img_w)
     print(f'{args.seq}: clear regions {clear_regions}')
@@ -306,7 +314,7 @@ def main():
     csv_path = f'{args.seq}{suffix}_pseudo_mask_diagnostics.csv'
     with open(csv_path, 'w') as f:
         f.write('segment_idx,local_idx,raw_idx,n_checkpoints_reached,min_pairwise_iou\n')
-        for seg_idx, (start, end) in enumerate(segments):
+        for seg_idx, (start, end) in indexed_segments:
             diagnostics = process_segment(predictor, seq_dir, bbs, start, end, seg_idx,
                                           out_dir_frames, device, clear_regions,
                                           combine_method=args.combine_method)
