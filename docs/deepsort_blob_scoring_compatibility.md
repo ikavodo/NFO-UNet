@@ -166,11 +166,51 @@ heuristic is already tolerant enough across scale in practice, without any new m
 test requires no training and is the cheapest possible falsification step - it should run before,
 not after, committing to item 1 above.
 
+## Start here (for whoever picks this up next, e.g. a fresh session)
+
+Build in this order - each step is a go/no-go gate for the next one, do not skip ahead:
+
+1. **Kill test first, no training.** Run the existing, *unmodified* `score_and_fit`/
+   `track_blobs` heuristic on synthetic multi-scale KTH+`generate_occlusion_branch` sequences:
+   per-scale-correct constants vs. one fixed scale's constants applied everywhere (today's
+   actual deployment pattern). If the fixed-constant version doesn't meaningfully degrade
+   relative to the per-scale-correct one, **the whole learned-scorer motivation dies right
+   there** - stop, report that, don't proceed to step 2.
+2. **Only if step 1 shows real degradation:** build the temporal blob-dimension feature scorer
+   (aspect ratio, size-growth-rate, running-median-normalized size - see "Temporal blob-
+   dimension features" above) as a drop-in replacement for `score_and_fit`'s hand-picked
+   formula. Cheap, interpretable, targets the documented swaying-foliage-outscores-person
+   failure mode directly.
+3. **Only if step 2 turns out insufficient:** CNN-embedding-with-residual-toward-clean-KTH-
+   features. Real and coherent (KTH's synthetic occlusion gives exact clean/occluded pairs for
+   free), but meaningfully heavier - full backbone, feature pipeline, training loop - and
+   carries the same synthetic→real domain-gap risk every learned component in this project has
+   carried. Treat as escalation, not a starting point.
+
+Before any of the above: `generate_occlusion_branch` (`utils/occlusion_utils.py`) currently
+produces flat-color occlusion (no per-branch intensity variation, no Perlin-like light-canvas
+modulation like the original `occ_branch` has) - fine for pure mask/geometry use (steps 1-2
+above only consume mask geometry), not yet sufficient if step 3's appearance work needs
+realistic-looking composited frames. Also unresolved: `occ_branch`'s sinusoidal sway may be
+*more* motion than this project's own documented NFO model assumes (`docs/
+nfo_pseudo_segmentation_approach.md`'s "Key constraint": occluder geometry is fixed per
+sequence, only the person moves) - worth a deliberate decision, not an inherited default,
+before relying on it for anything beyond step 1's mask-only kill test.
+
 ## Open questions / not yet done
 
-- No code changes made yet - this is a compatibility/planning doc only.
+- No code changes made yet beyond `generate_occlusion_branch` (mask geometry only) - this is
+  still primarily a compatibility/planning doc.
 - ByteTrack's low-confidence-detection handling hasn't been compared against the current
   `min_area` hard cutoff in `detect_blobs` - possibly a more directly relevant fix than
   Mahalanobis gating, given the fragmented-blob domain.
-- Scale-relative constant normalization (item 3 above) is unimplemented and unvalidated - this
-  doc only confirms the current constants are scale-specific, not fixes it.
+- Scale-relative constant normalization is unimplemented and unvalidated - this doc only
+  confirms the current constants are scale-specific, not fixes it.
+- Whether `generate_occlusion_branch`'s sway matches or over-models this project's own static-
+  occluder assumption is unresolved (see "Start here" above).
+- A classical patch-based texture-synthesis occluder (Efros-Leung/image-quilting, sampling real
+  occluder texture from NFO's own no-person frames instead of a synthetic line/noise model) was
+  discussed as a cheaper, no-training alternative to a learned generative occluder model, but is
+  unimplemented and unspec'd beyond this note - real advantage (uses actual NFO texture
+  statistics) traded against needing a first-pass occluder/background separation step on those
+  reference frames.
