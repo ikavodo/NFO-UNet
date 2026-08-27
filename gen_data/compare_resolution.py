@@ -58,6 +58,10 @@ def main():
     parser.add_argument('--segment-idx', type=int, required=True)
     parser.add_argument('--model-id', default='facebook/sam2.1-hiera-large')
     parser.add_argument('--tmp-dir', default='tracking/compare_resolution_tmp')
+    parser.add_argument('--save-masks', action='store_true',
+                        help='write native-res and 224-downsampled masks to <tmp-dir>/'
+                             '<seq>_seg<idx>_masks/ for visual comparison against the real '
+                             'pipeline output')
     args = parser.parse_args()
 
     processed_dir = os.path.join(PROCESSED_DIR, f'{args.seq}_gt')
@@ -101,6 +105,11 @@ def main():
     combined, _ = combine_checkpoint_masks_union_gt_outlier(
         per_checkpoint_results, n_seg_frames, bbs, start, native_w, native_h)
 
+    mask_dir = os.path.join(args.tmp_dir, f'{args.seq}_seg{args.segment_idx}_masks')
+    if args.save_masks:
+        os.makedirs(os.path.join(mask_dir, 'native'), exist_ok=True)
+        os.makedirs(os.path.join(mask_dir, '224'), exist_ok=True)
+
     ious = []
     for local_idx, mask in combined.items():
         raw_idx = start + local_idx
@@ -110,6 +119,10 @@ def main():
         # pipeline's frames/boxes are prepared, for a fair comparison against the 224-based GT
         mask_224, _ = scale_and_pad_img_to_square(
             (mask * 255).astype(np.uint8), BoundingBox(0, 0, 0, 0), OUT_SIZE)
+        if args.save_masks:
+            cv2.imwrite(os.path.join(mask_dir, 'native', f'{raw_idx:05d}.png'),
+                       (mask * 255).astype(np.uint8))
+            cv2.imwrite(os.path.join(mask_dir, '224', f'{raw_idx:05d}.png'), mask_224)
         m = mask_224 > 127
         if not m.any():
             ious.append(0.0)
@@ -123,6 +136,9 @@ def main():
     ious = np.array(ious)
     print(f'native-resolution box-recovery IoU: n={len(ious)} mean={ious.mean():.3f} '
           f'median={np.median(ious):.3f} frac_zero={(ious == 0).mean():.3f}')
+    if args.save_masks:
+        print(f'masks saved to {mask_dir}/native/ (native-res) and {mask_dir}/224/ '
+              f'(downsampled, directly comparable to data/nfo_processed/{args.seq}_gt/*_sammask.png)')
 
 
 if __name__ == '__main__':
