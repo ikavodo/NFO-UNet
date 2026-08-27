@@ -158,15 +158,57 @@ predictor API, `propagate_in_video`, point/box prompting) but has no verified ha
 of SAM3's actual capabilities, API, or whether/how it supports text-grounded video segmentation -
 that part of this report is a hypothesis to be evaluated, not a researched claim.
 
+## Update: box+point prompting and filter tuning, verified on real data
+
+Box+point prompting (item 6), the width filter (item 4), and the tightened/width-scaled
+distance filter (item 5) were run on the two previously-worst segments (seq1 segments 3 and 7,
+100% and 86% low-IoU disagreement respectively under the earlier version). Result: 34% and 35%
+low-IoU respectively - both now in the same range as segments that were never flagged as
+problematic. Confirmed both numerically (the diagnostics CSV) and visually (per-frame video
+render of both full segments).
+
+**One remaining issue found via the full-segment videos** (not visible in the earlier sparse
+contact-sheet sampling): a mask staying fixed near a tree for a sustained stretch of frames -
+i.e. SAM2's tracking getting stuck, similar to failure mode #5, but not caught by the current
+distance filter because the stuck position happened to stay within tolerance of the GT
+trajectory for a while. In response, the number of checkpoints for seq1 was reduced back from 4
+regions to 2 (more checkpoints means more independent propagation runs, each an independent
+chance for one to get stuck near an occluder with no current mechanism to catch it before the
+union/outlier-rejection step).
+
+## Proposed refinement: temporal-staticness rejection (not yet implemented)
+
+A further idea, motivated directly by the "stuck near a tree" observation above: since the
+person is continuously in motion throughout this dataset (walking/jogging/running by
+construction, never stationary), a checkpoint's mask staying in nearly the same position across
+several consecutive frames is itself evidence of a stuck tracker - independent of where that
+position is relative to the GT box. This is a different signal than the existing distance
+filter, which only rejects a stuck mask once it has drifted far enough from the true position;
+a mask stuck near the true trajectory can survive that check indefinitely.
+
+Proposed implementation location: inside `propagate_one_checkpoint`'s existing per-direction
+loop (which already visits frames in temporal propagation order, and already has a structurally
+identical `consecutive_empty` early-stop counter) - track each frame's mask centroid, and if it
+moves less than a small threshold (on the order of 1.5-2px, to be calibrated against actual
+raw-frame-to-frame GT displacement) for several consecutive frames, discard those trailing
+frames and end that direction's propagation there, the same way a run of empty masks is already
+handled. This check needs no GT reference at all (unlike the distance filter), and operates on
+a single checkpoint's own temporal stream before combination - the point at which the signal is
+cleanest, since union-ing checkpoints together loses the clean per-stream frame ordering this
+check depends on.
+
+This would complement, not replace, the existing GT-distance/width filters: staticness catches
+"frozen at any location," the distance filter catches "moving, but toward the wrong thing."
+
 ## What's NOT yet done / open
 
 - `union_gt_outlier` is marked TEMPORARY in code, not yet the default - still being compared
   against `majority` on real segments.
-- Box+point prompting (item 6's fix) is implemented but **not yet run on real GPU data**.
+- Temporal-staticness rejection (above) is a proposal, not implemented.
 - No held-out quality metric exists beyond the `min_pairwise_iou`/coverage diagnostics computed
   from the pipeline's own intermediate outputs - there is no independent ground truth to check
-  final mask quality against (by definition - that's the problem being solved). All quality
-  assessment so far has been visual/manual, on a handful of specifically-flagged segments, not a
-  representative sample.
+  final mask quality against (by definition - that's the problem being solved). Quality
+  assessment so far has been visual/manual, on specifically-flagged segments (now including
+  full-video review, not just sparse sampling), not a representative sample of the dataset.
 - The pipeline has never been run to completion + validated across all 4 sequences with the
   current (post-patches) code version.
