@@ -1,11 +1,20 @@
 # Generating pseudo-segmentation masks for NFO — current approach, and a request for a second opinion
 
 **Status:** working, iteratively patched, functional but not yet validated at scale.
-**Ask:** review the approach below and its list of found/patched failure modes, and weigh in on
-whether this is a sound strategy to continue, or whether a different approach would be
-preferable. One specific alternative under consideration: using a stronger model (e.g. SAM3)
-with a **text prompt** ("person walking/running/jogging behind foliage") instead of, or in
-addition to, the bounding-box-driven approach below.
+
+**Goal, precisely stated:** the masks don't need to be pixel-perfect - they need to be close
+enough to serve as usable pseudo-ground-truth (weak training signal / a "good enough" stand-in
+for real annotation). Keep that bar in mind when judging whether the current approach, or any
+alternative, is sufficient - the target is "close enough," not perfection.
+
+**Ask:** review the approach below - the pipeline, the failure modes found and how each was
+patched, and the list of tunable constants and how each was actually arrived at - and give an
+independent assessment. This is explicitly an invitation to disagree with the current direction,
+not just to suggest refinements to it: is this a sound strategy to continue patching, or would a
+different approach be preferable? One specific alternative already under consideration: using a
+stronger model (e.g. SAM3) with a **text prompt** ("person walking/running/jogging behind
+foliage") instead of, or in addition to, the bounding-box-driven approach below - but other
+alternatives are equally welcome if they better fit the stated goal.
 
 ## Why this exists
 
@@ -200,11 +209,37 @@ check depends on.
 This would complement, not replace, the existing GT-distance/width filters: staticness catches
 "frozen at any location," the distance filter catches "moving, but toward the wrong thing."
 
+**Update:** implemented (mirrors `consecutive_empty`'s structure exactly). Verified with a fake
+predictor across three synthetic cases: a clean transition from 10 legitimately-moving frames
+into 10 frozen frames (all 10 moving frames kept, the entire stuck run discarded with no
+leakage), a case with an accidental position coincidence (handled correctly, confirmed the logic
+doesn't misfire on edge cases), and 30 frames of continuous motion with no stuck segment at all
+(all 30 kept, no false-positive early-stop). Not yet run on real GPU data.
+
+## Every tunable constant in the pipeline, and how each was actually arrived at
+
+None of these were derived from a systematic measurement or sweep over the dataset. For
+comparison, `MAX_DIST=25px` in `tracking/eval_nfo.py` (a different part of this project, the
+classical tracker baseline) *was* derived that way - measured directly from real GT centroid
+displacement across the dataset. Nothing below got that treatment.
+
+| constant | value | basis |
+|---|---|---|
+| `MAX_CONSECUTIVE_EMPTY` | 5 frames | reasoned default, not measured |
+| `STATIC_THRESHOLD_PX` | 2.0px | reasoned ("should be well below real motion"), not checked against actual measured frame-to-frame GT displacement |
+| `MAX_CONSECUTIVE_STATIC` | 5 frames | arbitrary, chosen by analogy with `MAX_CONSECUTIVE_EMPTY` |
+| `MERGE_GAP` | 10px | tuned by eye across several rendered images |
+| `BG_SAMPLES` | 40 frames | arbitrary "enough for a stable median," no convergence check |
+| `MIN_WIDTH_FRAC` | 0.85x median box width | derived from recovering one specific missing region in seq2, not validated elsewhere |
+| `CURATED_CLEAR_REGIONS` | per-sequence, hand-picked | fully manual, eyeballed per sequence |
+| `gt_dist_factor` | 1.25x box width | reasoned ("~one body-width"), adjusted after observing one segment (seq1 segment 7) |
+| `min_width_px` | 4px | reasoned + verified only on synthetic data, not a real-artifact-width distribution |
+
 ## What's NOT yet done / open
 
 - `union_gt_outlier` is marked TEMPORARY in code, not yet the default - still being compared
   against `majority` on real segments.
-- Temporal-staticness rejection (above) is a proposal, not implemented.
+- Temporal-staticness rejection is implemented and unit-tested but not yet run on real GPU data.
 - No held-out quality metric exists beyond the `min_pairwise_iou`/coverage diagnostics computed
   from the pipeline's own intermediate outputs - there is no independent ground truth to check
   final mask quality against (by definition - that's the problem being solved). Quality
@@ -212,3 +247,4 @@ This would complement, not replace, the existing GT-distance/width filters: stat
   full-video review, not just sparse sampling), not a representative sample of the dataset.
 - The pipeline has never been run to completion + validated across all 4 sequences with the
   current (post-patches) code version.
+- None of the constants above were systematically measured or swept (see table above).
