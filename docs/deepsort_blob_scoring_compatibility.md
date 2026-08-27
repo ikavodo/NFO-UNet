@@ -139,15 +139,21 @@ pipeline, training loop - and still carries the trained-on-synthetic → deploye
 domain-gap risk every learned component in this project has carried. Treat as escalation, not a
 starting point.
 
-**3. Occluder domain fidelity - adopted.** `generate_occlusion_branch` added to
-`utils/occlusion_utils.py`, ported from `master_thesis/src/occluders.py:occ_branch` (geometric/
-motion core only - branch line segments with sinusoidally-swaying tips, fixed bases; dropped the
-torch video-tensor plumbing and RGB light-canvas shading, neither applicable here). This closes a
-real domain gap in the KTH validation already run for the native-vs-224 resolution decision: that
-experiment applied one *static* occlusion mask across an entire sequence, but NFO's real
-occluders (wind-blown branches) move independently of the camera and the person. Any future
-KTH-based training/eval for the scale-robustness work below should use this, not
-`generate_occlusion_morph`, for that reason.
+**3. Occluder domain fidelity - adopted, then upgraded.** `generate_occlusion_branch` added to
+`utils/occlusion_utils.py`, originally ported from `master_thesis/src/occluders.py:occ_branch`
+(sinusoidally-swaying branch lines), then **replaced** with a cleaner port of
+`~/PycharmProjects/MovingMNIST-OcclusionBench/occluders.py:branches_mask` - direct density
+control (binary search over how many pre-sampled branch segments to draw, converging to a target
+coverage within tolerance, plus a small erode/dilate refinement pass) and optional restriction to
+a bounding box (e.g. a person's own bbox), so density is meaningful relative to the actual
+occlusion target instead of the whole frame. Sway was dropped entirely on reconsideration: NFO's
+occluder geometry is treated as fixed per sequence in this project's own model (see the "Key
+constraint" note above) - the earlier ported version's animated sway was over-modeling motion
+this project doesn't assume exists, not an unambiguous realism win. Verified: density lands
+within tolerance at 0.1/0.3/0.5 targets, and bbox-restricted occlusion produces exactly zero
+pixels outside the given box. Any future KTH-based training/eval for the scale-robustness work
+below should use this, not `generate_occlusion_morph`, for the shape-fidelity reasons already
+discussed.
 
 **Kill test, before building any training pipeline.** Before training anything (feature-based
 scorer or otherwise), run the *existing*, unmodified `score_and_fit`/`track_blobs` heuristic
@@ -187,15 +193,12 @@ Build in this order - each step is a go/no-go gate for the next one, do not skip
    carries the same synthetic→real domain-gap risk every learned component in this project has
    carried. Treat as escalation, not a starting point.
 
-Before any of the above: `generate_occlusion_branch` (`utils/occlusion_utils.py`) currently
-produces flat-color occlusion (no per-branch intensity variation, no Perlin-like light-canvas
-modulation like the original `occ_branch` has) - fine for pure mask/geometry use (steps 1-2
-above only consume mask geometry), not yet sufficient if step 3's appearance work needs
-realistic-looking composited frames. Also unresolved: `occ_branch`'s sinusoidal sway may be
-*more* motion than this project's own documented NFO model assumes (`docs/
-nfo_pseudo_segmentation_approach.md`'s "Key constraint": occluder geometry is fixed per
-sequence, only the person moves) - worth a deliberate decision, not an inherited default,
-before relying on it for anything beyond step 1's mask-only kill test.
+Before any of the above: `generate_occlusion_branch` (`utils/occlusion_utils.py`, now the
+density-controlled/bbox-restricted, non-swaying version - see "Occluder domain fidelity" above)
+still produces flat-color occlusion when composited (no per-branch intensity variation, no
+Perlin-like light-canvas modulation) - fine for pure mask/geometry use (steps 1-2 above only
+consume mask geometry), not yet sufficient if step 3's appearance work needs realistic-looking
+composited frames.
 
 ## Open questions / not yet done
 
@@ -206,11 +209,13 @@ before relying on it for anything beyond step 1's mask-only kill test.
   Mahalanobis gating, given the fragmented-blob domain.
 - Scale-relative constant normalization is unimplemented and unvalidated - this doc only
   confirms the current constants are scale-specific, not fixes it.
-- Whether `generate_occlusion_branch`'s sway matches or over-models this project's own static-
-  occluder assumption is unresolved (see "Start here" above).
 - A classical patch-based texture-synthesis occluder (Efros-Leung/image-quilting, sampling real
   occluder texture from NFO's own no-person frames instead of a synthetic line/noise model) was
   discussed as a cheaper, no-training alternative to a learned generative occluder model, but is
   unimplemented and unspec'd beyond this note - real advantage (uses actual NFO texture
   statistics) traded against needing a first-pass occluder/background separation step on those
   reference frames.
+- `generate_occlusion_branch`'s density/bbox controls are unit-tested informally (this session's
+  smoke test only) - not validated against real NFO occluder coverage statistics (what fraction
+  of a person's bbox is actually occluded on average in real footage), which would be the right
+  reference point for choosing `density` values in the kill test.

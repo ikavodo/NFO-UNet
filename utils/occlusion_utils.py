@@ -40,37 +40,103 @@ def generate_occlusion_morph(shape: Tuple[int, int], init_occ_prob: float = 0.05
     return occlusion
 
 
-def generate_occlusion_branch(shape: Tuple[int, int], n_frames: int, num_branches: int = 210,
-                              thickness: int = 5, movement_x: int = 6, seed: int = 42) -> np.ndarray:
-    """[T, H, W] bool occlusion mask stack of branch-like line occluders whose tips sway
-    sinusoidally (freq t/3) while their bases stay fixed - a structurally accurate model of
-    wind-blown foliage, and temporally coherent (the same branches move) rather than one
-    static occlusion pattern repeated across every frame.
+def _sample_branch_specs(H: int, W: int, num_specs: int, thickness: int, y_start_band: int,
+                         dx_range: int, dy_range: Tuple[int, int], seed: int):
+    """Pre-samples num_specs candidate branch line segments (start point near the bottom
+    edge, extending up/outward) - a superset that generate_occlusion_branch draws the
+    first k of, so density search below only needs to vary k, not re-sample geometry."""
+    rng = np.random.default_rng(seed)
+    y_start_band = int(np.clip(y_start_band, 1, H))
+    specs = []
+    for _ in range(num_specs):
+        x1 = int(rng.integers(0, W))
+        y1 = int(rng.integers(H - y_start_band, H))
+        x2 = int(np.clip(x1 + rng.integers(-dx_range, dx_range + 1), 0, W - 1))
+        y2 = int(np.clip(y1 + rng.integers(dy_range[0], dy_range[1] + 1), 0, H - 1))
+        thick = int(rng.integers(thickness, thickness + 2))
+        specs.append(((x1, y1), (x2, y2), thick))
+    return specs
 
-    Ported from master_thesis/src/occluders.py:occ_branch - keeps only the geometric/motion
-    core (branch line segments + sway); drops that function's torch [T,C,H,W] video-tensor
-    plumbing and its separately-drifting RGB light/shading canvas, neither of which applies
-    here (this project's occlusion masks are plain booleans - color/shading is applied
-    separately via augment_imgs_with_constant_occlusion/augment_imgs_with_noisy_occlusion).
 
-    Re-seeds every frame like the original: branch base positions stay identical across
-    frames (real branches don't relocate their trunk), only the sway offset changes what
-    moves.
+def _render_branch_specs(H: int, W: int, specs, k: int) -> np.ndarray:
+    canvas = np.zeros((H, W), dtype=np.uint8)
+    for pt1, pt2, thick in specs[:k]:
+        cv2.line(canvas, pt1, pt2, color=1, thickness=thick, lineType=cv2.LINE_AA)
+    return canvas > 0
+
+
+def _refine_mask_to_density(mask: np.ndarray, target: float, tol: float, max_steps: int = 5) -> np.ndarray:
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    m = mask.astype(np.uint8)
+    for _ in range(max_steps):
+        d = m.mean()
+        if abs(d - target) <= tol:
+            break
+        m_new = cv2.erode(m, kernel) if d > target else cv2.dilate(m, kernel)
+        if np.array_equal(m, m_new):
+            break
+        m = m_new
+    return m > 0
+
+
+def generate_occlusion_branch(shape: Tuple[int, int], density: float = 0.3, tol: float = 0.02,
+                              num_specs: int = 900, thickness: int = 1, y_start_band: int = 25,
+                              dx_range: int = 25, dy_range: Tuple[int, int] = (-600, 30),
+                              bbox: Tuple[int, int, int, int] = None, seed: int = 0) -> np.ndarray:
+    """[H, W] bool occlusion mask of branch-like line segments, density-controlled to match
+    `density` (fraction of the target region covered) within `tol` via binary search over how
+    many pre-sampled segments to draw, plus a small erode/dilate refinement pass. Optionally
+    restricted to a bounding box `(x1, y1, x2, y2)` - e.g. a person's own bbox - rather than
+    filling the whole frame, so density is meaningful relative to the actual occlusion target
+    instead of the frame as a whole.
+
+    Ported from ~/PycharmProjects/MovingMNIST-OcclusionBench/occluders.py:branches_mask - a
+    cleaner, density-controlled successor to master_thesis/src/occluders.py:occ_branch, which
+    this function previously ported directly (indirect num_branches x thickness density
+    control, no bbox restriction, global np.random.seed reuse). Drops that version's
+    sinusoidal sway entirely: NFO's occluder geometry is treated as fixed per sequence in this
+    project's own model (docs/nfo_pseudo_segmentation_approach.md's "Key constraint" - only
+    the person moves), so animated sway was over-modeling motion this project doesn't assume
+    exists. Single static mask now, matching generate_occlusion_morph's signature.
     """
     H, W = shape
-    masks = np.zeros((n_frames, H, W), dtype=bool)
-    for t in range(n_frames):
-        current_movement = round(movement_x * np.sin(t / 3))
-        np.random.seed(seed)
-        branch_layer = np.zeros((H, W), dtype=np.uint8)
-        for _ in range(num_branches):
-            pt1 = (np.random.randint(0, W), np.random.randint(max(H - 50, 0), H))
-            pt2 = (pt1[0] + np.random.randint(-50, 50) - current_movement,
-                   pt1[1] + np.random.randint(-int(H * 1.3), H // 10))
-            thick = np.random.randint(max(thickness - 1, 1), thickness + 2)
-            cv2.line(branch_layer, pt1, pt2, 1, thick)
-        masks[t] = branch_layer > 0
-    return masks
+    if bbox is None:
+        x0, y0, x1b, y1b = 0, 0, W, H
+    else:
+        x0, y0, x1b, y1b = bbox
+    bw, bh = x1b - x0, y1b - y0
+
+    target = float(np.clip(density, 0.0, 1.0))
+    full = np.zeros((H, W), dtype=bool)
+    if target <= 0 or bw <= 0 or bh <= 0:
+        return full
+
+    specs = _sample_branch_specs(bh, bw, num_specs, thickness, min(y_start_band, bh),
+                                 dx_range, dy_range, seed)
+
+    def occ_for_k(k):
+        m = _render_branch_specs(bh, bw, specs, k)
+        return m.mean(), m
+
+    occ_hi, m_hi = occ_for_k(num_specs)
+    if occ_hi < target - tol:
+        local = m_hi  # can't reach target even using every sampled branch
+    else:
+        lo, hi = 1, num_specs
+        best = (num_specs, occ_hi, m_hi)
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            occ_mid, m_mid = occ_for_k(mid)
+            best = (mid, occ_mid, m_mid)
+            if abs(occ_mid - target) <= tol:
+                break
+            lo, hi = (mid + 1, hi) if occ_mid < target else (lo, mid - 1)
+        _, occ_best, local = best
+        if abs(occ_best - target) > tol:
+            local = _refine_mask_to_density(local, target, tol)
+
+    full[y0:y1b, x0:x1b] = local
+    return full
 
 
 def save_occlusion(file_path: str, occlusion: np.ndarray):
