@@ -161,31 +161,24 @@ def combine_checkpoint_masks(per_checkpoint_results, n_seg_frames):
 
 
 def combine_checkpoint_masks_union_gt_outlier(per_checkpoint_results, n_seg_frames, bbs, start,
-                                              img_w, img_h, gt_dist_factor=1.25, min_width_px=4):
+                                              img_w, img_h, box_dilate_px=3, min_width_px=4):
     """TEMPORARY alternate combination strategy for comparison against the majority-vote
     default: union of all available masks per frame (maximizes recall/coverage instead of the
-    default's intersection-like behavior, which trades recall for precision) - then reject
-    outlier connected components using the GT box as an anchor, since we actually have ground
-    truth for every frame in these labeled segments (that's what seeds the checkpoints in the
-    first place) - a much stronger reference than a statistic like "median of 2 masks" would be
-    at this sample size. A component survives if its centroid is within gt_dist_factor times
-    the GT box's own size of the GT box center; anything farther is almost certainly drift onto
-    the wrong object, not the person.
+    default's intersection-like behavior, which trades recall for precision) - then clip to the
+    GT box (dilated a few px), since we actually have ground truth for every frame in these
+    labeled segments (that's what seeds the checkpoints in the first place) - a much stronger
+    reference than a statistic like "median of 2 masks" would be at this sample size. Any mask
+    pixel outside the dilated box is wrong by definition, so this directly removes drift-onto-
+    background and stuck-tracker artifacts (a frozen mask falls out of the box within a few
+    frames, since the person - and so the box - is always in motion in this dataset), and is a
+    strictly tighter, more directly-justified version of what an earlier centroid-distance-based
+    filter was only approximating (removed - this supersedes it, not just tightens it further).
 
-    gt_dist_factor was 2.0 initially; tightened to 1.25 after visual review of real seq1 output
-    (segment 7) showed SAM2's memory-based tracking getting "stuck" on a frozen spatial location
-    after the person walks past - since the filter compares against the *current frame's* GT
-    position (not a fixed reference), it does eventually reject a stuck blob once the person has
-    walked far enough away, but 2.0x box-size was generous enough to let it survive for several
-    frames after the tracker had already lost the real target. 1.25x (roughly one body-width of
-    tolerance) catches this faster while still allowing normal partial-visibility offset.
-
-    Also rejects components narrower than min_width_px (bounding-box width, not area) - a
-    recurring artifact (visually confirmed on real seq1 output) is a persistent thin vertical
-    sliver, likely a trunk edge one checkpoint's mask keeps including, 1-3px wide even where
-    it's tall. A real person fragment - even a partial one, occluded by branches - has
-    meaningfully more width than that; this only removes hairline slivers, not body parts (see
-    the module's test for the calibration check on synthetic near/far/thin cases).
+    Also rejects components narrower than min_width_px (bounding-box width, not area) within the
+    clipped region - clipping alone doesn't catch a thin artifact (e.g. a trunk edge one
+    checkpoint's mask keeps including, 1-3px wide even where tall) that happens to sit inside
+    the box; a real person fragment - even a partial one, occluded by branches - has
+    meaningfully more width than that.
 
     Returns (combined, diagnostics) with the same shape as combine_checkpoint_masks.
     """
@@ -206,18 +199,17 @@ def combine_checkpoint_masks_union_gt_outlier(per_checkpoint_results, n_seg_fram
         gt_list = bbs.get(raw_idx)
         if gt_list and gt_list[0].x >= 0:
             bb = gt_list[0]
-            gt_cx, gt_cy = (bb.x + bb.w / 2) * img_w, (bb.y + bb.h / 2) * img_h
-            # width, not max(w,h): drift/stuck-tracker artifacts are horizontal (the person
-            # walks sideways), so tolerance should scale with the horizontal body size, not
-            # height (~2.5x larger for a standing person, which made the old max(w,h) version
-            # far looser than the "1.25x" multiplier suggested - see gt_dist_factor docstring)
-            max_dist = gt_dist_factor * bb.w * img_w
-            n_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(union.astype(np.uint8))
-            keep = np.zeros_like(union)
+            x0 = max(0, int(bb.x * img_w) - box_dilate_px)
+            y0 = max(0, int(bb.y * img_h) - box_dilate_px)
+            x1 = min(img_w, int((bb.x + bb.w) * img_w) + box_dilate_px)
+            y1 = min(img_h, int((bb.y + bb.h) * img_h) + box_dilate_px)
+            clipped = np.zeros_like(union)
+            clipped[y0:y1, x0:x1] = union[y0:y1, x0:x1]
+
+            n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(clipped.astype(np.uint8))
+            keep = np.zeros_like(clipped)
             for lbl in range(1, n_labels):  # 0 is background
-                cx, cy = centroids[lbl]
-                width = stats[lbl, cv2.CC_STAT_WIDTH]
-                if width >= min_width_px and np.hypot(cx - gt_cx, cy - gt_cy) <= max_dist:
+                if stats[lbl, cv2.CC_STAT_WIDTH] >= min_width_px:
                     keep |= (labels == lbl)
             combined[local_idx] = keep
         else:
