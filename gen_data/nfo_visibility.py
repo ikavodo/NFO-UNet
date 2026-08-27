@@ -27,14 +27,16 @@ BG_SAMPLES = 40  # no-person frames to median-combine into the background image
 # tuning per sequence proved too fragile (mean vs. min vs. frac-occluded each got some
 # sequences right and others wrong, with no single knob setting working everywhere) - eyeballed
 # and picked the best-looking automated result per sequence instead of chasing one unified
-# formula further. seq1: reverted to the original 4-region column-mean result (more checkpoints
-# per segment - the tighter 2-region min-based version left large unlabeled tails whenever the
-# GT trajectory spent a long stretch outside its narrower corridors). seq4: column-min method,
-# tighter margin. seq2: original column-mean result plus a manually-confirmed third corridor at
-# ~73% horizontal (a real gap next to a diagonal branch against the background wall, missed by
-# every automated width threshold tried). seq3: original column-mean result, unchanged throughout.
+# formula further. seq1/seq4: column-min method, tighter margin - 2 checkpoints per segment.
+# (Briefly widened seq1 to 4 regions to fix large unlabeled tails, but that traded coverage for
+# more chances of an individual checkpoint's tracker getting stuck near an occluder with nothing
+# to catch it pre-union - reverted once GT box+point prompting alone closed most of the coverage
+# gap; see docs/nfo_pseudo_segmentation_approach.md for the tradeoff discussion.) seq2: original
+# column-mean result plus a manually-confirmed third corridor at ~73% horizontal (a real gap
+# next to a diagonal branch against the background wall, missed by every automated width
+# threshold tried). seq3: original column-mean result, unchanged throughout.
 CURATED_CLEAR_REGIONS = {
-    'seq1': [(3, 30), (44, 91), (106, 141), (152, 223)],
+    'seq1': [(44, 85), (154, 203)],
     'seq2': [(2, 38), (56, 117), (153, 174)],
     'seq3': [(2, 30), (110, 166)],
     'seq4': [(18, 49), (151, 181)],
