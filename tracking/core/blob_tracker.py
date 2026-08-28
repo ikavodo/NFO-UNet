@@ -131,7 +131,7 @@ def merged_center(detections_at_frame, anchor_x: float, anchor_y: float, merge_r
 
 
 def score_and_fit(tracks, min_track_length: int = 3, expected_height: float = None,
-                  height_tolerance: float = 0.5):
+                  height_tolerance: float = 0.5, return_all: bool = False):
     """Score completed tracks by persistence x drift-consistency (span * net_displacement
     / (1 + residual_std) of a linear fit to the x-centroid trajectory). Returns the winning
     track's info dict, or None if no track has at least min_track_length frames.
@@ -168,6 +168,9 @@ def score_and_fit(tracks, min_track_length: int = 3, expected_height: float = No
         results.append(dict(id=tr.id, span=span, score=score, vx=coef[0], resid_std=resid_std,
                              net_disp=net_disp, mean_height=mean_height, frames=frames, history=tr.history))
     if not results:
-        return None
+        return [] if return_all else None
     results.sort(key=lambda r: -r["score"])
-    return results[0]
+    # return_all exposes every candidate track, best-first, for offline analysis of the
+    # *ranking* rather than just its winner (tracking/eval/stage2_rank_learning.py). Default
+    # False keeps the original single-winner contract.
+    return results if return_all else results[0]

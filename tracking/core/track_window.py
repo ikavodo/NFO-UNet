@@ -4,18 +4,11 @@ from tracking.core.preprocess import foreground_mask, refine_mask, filter_by_sha
 from tracking.core.blob_tracker import detect_blobs, track_blobs, score_and_fit, merged_center
 
 
-def _result_from_detections(window_detections, min_track_length, expected_height, height_tolerance,
-                            max_dist, max_age, merge_radius):
-    """Shared by track_window() and track_sequence.track_windows_in_sequence() - given one
-    window's already-computed per-frame detections, run Kalman/Hungarian tracking +
-    scoring and read off a center-frame position estimate. Returns the same result dict
-    both callers expose, or None if no track of sufficient length was found."""
-    tracks = track_blobs(window_detections, max_dist=max_dist, max_age=max_age)
-    winner = score_and_fit(tracks, min_track_length=min_track_length,
-                           expected_height=expected_height, height_tolerance=height_tolerance)
-    if winner is None:
-        return None
-
+def position_from_track(winner, window_detections, merge_radius):
+    """Read a center-frame (x, y) position off one scored track. Split out of
+    _result_from_detections so the same read-out can be applied to *any* candidate track,
+    not only the winning one - needed to study the ranking offline
+    (tracking/eval/stage2_rank_learning.py). Behavior is unchanged."""
     center_t = len(window_detections) // 2
     if center_t in winner["history"]:
         anchor_x, anchor_y = winner["history"][center_t][:2]
@@ -38,6 +31,20 @@ def _result_from_detections(window_detections, min_track_length, expected_height
 
     return dict(x=float(cx), y=float(cy), vx=float(winner["vx"]),
                score=float(winner["score"]), resid_std=float(winner["resid_std"]))
+
+
+def _result_from_detections(window_detections, min_track_length, expected_height, height_tolerance,
+                            max_dist, max_age, merge_radius):
+    """Shared by track_window() and track_sequence.track_windows_in_sequence() - given one
+    window's already-computed per-frame detections, run Kalman/Hungarian tracking +
+    scoring and read off a center-frame position estimate. Returns the same result dict
+    both callers expose, or None if no track of sufficient length was found."""
+    tracks = track_blobs(window_detections, max_dist=max_dist, max_age=max_age)
+    winner = score_and_fit(tracks, min_track_length=min_track_length,
+                           expected_height=expected_height, height_tolerance=height_tolerance)
+    if winner is None:
+        return None
+    return position_from_track(winner, window_detections, merge_radius)
 
 
 def track_window(frames: np.ndarray, bg_frames: int = None, var_threshold: float = 16.0,

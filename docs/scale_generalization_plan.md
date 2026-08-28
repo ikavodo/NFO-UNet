@@ -487,3 +487,73 @@ tested on the same footage:
 
 This keeps the same discipline as stage 1 - offline, no tracker changes, one number - while
 moving to the only stage where the evidence says learning has something to bite on.
+
+---
+
+## Stage 2 result: GO on learned ranking - and the oracle is the real finding
+
+`tracking/eval/stage2_rank_learning.py`. Real NFO, tracker untouched and running NFO's own
+hand-tuned constants, leave-one-sequence-out (fit on 3, evaluate on the 4th, rotate). Ranker is
+a RankNet-style logistic regression on differences of 6 dimensionless, within-window-normalized
+track features. `score_and_fit`'s own winner is the baseline; `oracle` picks the best candidate
+actually present in the window.
+
+| | mean resid | median | p90 | hit@0.1 |
+|---|---|---|---|---|
+| baseline (`score_and_fit`) | 0.0662 | 0.0248 | 0.0988 | 90.0% |
+| learned ranker | **0.0603** | 0.0240 | **0.0827** | **91.5%** |
+| **oracle** | **0.0212** | 0.0156 | 0.0415 | **98.8%** |
+
+### The headline is the oracle, not the ranker
+
+**The right candidate track is already in the candidate set 98.8% of the time.** Detection and
+association are not the bottleneck - the tracker generates a good candidate almost always and
+then fails to pick it. Essentially all remaining NFO error is a *ranking* failure. That is a
+much stronger justification for this direction than anything measured so far, and it is
+consistent with Stage 1: the gate had nothing left to give because the gate was never the
+problem.
+
+Available headroom is mean 0.0662 -> 0.0212 and hit 90.0% -> 98.8%. The learned ranker captures
+**13%** of it.
+
+### The ranker wins out of sample, but weakly
+
+Per held-out sequence (hit@0.1, baseline -> learned):
+
+| sequence | candidates/window | baseline | learned | note |
+|---|---|---|---|---|
+| seq1 | 3.1 | 98.5% | 98.4% | already saturated, nothing to win |
+| seq2 | 19.7 | 83.8% | **87.8%** | p90 0.387 -> 0.181, big win |
+| seq3 | 15.0 | 88.0% | 88.1% | flat (mean marginally worse) |
+| seq4 | 14.1 | 89.6% | **91.2%** | p90 0.103 -> 0.082 |
+
+Two clear wins, one tie, one wash. With four sequences this is a modest signal, exactly as
+flagged in advance - treat it as "the direction is real", not as "the ranker works". The
+useful pattern: the win concentrates in the cluttered sequences with 14-20 candidates per
+window, and its main effect is on p90 rather than the median, i.e. it removes catastrophic
+wrong-object picks rather than sharpening good ones. That is precisely the failure mode the
+shape term exists for.
+
+### What to do next, and what not to
+
+- **Features, not model capacity.** 6 crude features capture 13% of a very large headroom, and
+  the model is a linear ranker on differences. The ceiling here is clearly the feature set,
+  not the classifier. The two obvious additions are the ones already argued for: gait
+  periodicity (a walking person's width/aspect oscillates coherently with translation; foliage
+  oscillates with near-zero net displacement) which needs blob *width* stored in
+  `_Track.history` alongside height, and masked-region appearance statistics from the raw
+  greyscale, which `detect_blobs` currently discards entirely.
+- **Do not scale up the model or the training set yet.** With four sequences the variance
+  dominates, and synthetic KTH cannot help (Stage 1: 3-14% non-person candidates - no clutter,
+  no negatives).
+- **The oracle number is the target to quote**, not the baseline. Any future work on this
+  pipeline should be measured as "fraction of the 90.0% -> 98.8% ranking headroom captured".
+
+### Caveats on these numbers
+
+The baseline here reads 0.0662 mean against `eval_nfo`'s published 0.0698, because this script
+builds masks with `filter_by_shape`/`refine_mask` defaults and `detect_blobs`'s own default
+`min_area=80` rather than `track_windows_in_sequence`'s 50, and it skips windows that produced
+no candidate at all (0.2% of them) instead of counting them as misses. Both differences apply
+identically to all three arms, so the comparison stands; the absolute numbers are marginally
+optimistic relative to the published figure.
