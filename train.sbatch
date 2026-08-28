@@ -1,8 +1,10 @@
 #!/bin/bash
 
-#SBATCH --job-name=nfo_unet_train
+#SBATCH --job-name=kth_train_anisotropic
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=4
+# 8, not 4: kth_train/kth_train_anisotropic both set num_workers=min(8, available_cpus()) -
+# 4 cpus-per-task left half the dataloader's own worker budget unused
+#SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
 #SBATCH --nodelist=node4,node11,node14,node15,node16,node17,node19,node20
 # --nodelist above is copied from integ.sbatch as a starting point - it does not target
@@ -34,4 +36,5 @@ PYTHON=/home/wiss/akid/miniconda3/envs/comp_vis/bin/python3
 # =============================================
 pwd; hostname; date
 nvidia-smi
-srun "$PYTHON" -m train_main --config kth_train --save-dir out/kth_train_$(date +%Y%m%d_%H%M%S)
+srun "$PYTHON" -m train_main --config kth_train_anisotropic \
+    --save-dir out/kth_train_anisotropic_$(date +%Y%m%d_%H%M%S)
