@@ -125,10 +125,14 @@ In value order. Items 1-3 need no learning and no new data.
 1. **Keep the dimensionless parameterization** (already in `tracking/core/track_sequence.py`
    `scale_relative_params`, driven by `preprocess.estimate_person_height`). Treat the measured
    height as a scale *proxy*, not a measurement - do not report it as person height (F4).
-2. **Replace the association gate with a formulation that needs no scale at all.** This is the
-   single highest-value change left, because the gate holds 70-78% of the sensitivity (F2) and
-   it is the one constant whose failure is fatal rather than degrading (F1). Three scale-free
-   options, all standard:
+2. ~~**Replace the association gate with a formulation that needs no scale at all.**~~
+   **WITHDRAWN - measured and wrong, see the Stage 1 result at the end of this file.** The
+   median-nearest-neighbour rule loses 9.7-11.3% of person detections where the existing
+   `0.25 x h` rule loses 0.0%, because the median nearest-neighbour distance is a statistic of
+   the clutter rather than of the person. Distance relative to body height is the right
+   reference and the gate is already correct. Original text kept below for the record; the
+   ratio-test and online-Mahalanobis variants remain untested and must clear the same 0.0% bar.
+   Three scale-free options, all standard:
    - ratio test: accept the best match only if it is clearly better than the runner-up;
    - gate at `k x` the median nearest-neighbour distance among this frame's detections;
    - Mahalanobis distance against the Kalman innovation covariance with `Q`/`R` estimated
@@ -399,3 +403,87 @@ which components A/B/C all need and which F5 says must exist before any invarian
 **Only if stage 1 passes,** stage 2 plugs `-log p(match)` into `track_blobs`'s cost matrix and
 re-runs the kill test, with the bar being `scale_rel`'s worst bucket of 74.6% (F3) and NFO mean
 residual <= 0.0762 (F4). Not before.
+
+---
+
+## Stage 1 result: NO-GO on a learned gate, and a retraction
+
+`tracking/eval/stage1_gate_learning.py`, 3 sequences, calibrated occluder (density 0.05),
+injected swaying distractor, logistic regression on 7 dimensionless features fit on 1x only,
+every rule's threshold chosen on 1x only and then frozen.
+
+Loss rate = fraction of person detections with **no** accepted person match (the failure that
+kills tracks, per F1), at a matched 1% contamination budget:
+
+| bucket | fixed-h (0.25 x h) | median-nn (scale-free) | learned |
+|---|---|---|---|
+| 0.5x | **0.0%** [1.0%] | 9.7% [0.8%] | 6.9% [1.3%] |
+| 1.0x | **0.0%** [1.0%] | 11.3% [1.0%] | 10.2% [1.0%] |
+| 2.0x | **0.0%** [1.8%] | 11.3% [2.1%] | 10.6% [2.3%] |
+
+**The plain distance threshold in the right units loses nothing, at any scale.** The learned
+rule loses ~10% of person detections at the same contamination cost, and so does the
+"scale-free" median-nearest-neighbour alternative. Verdict: NO-GO. All three transfer *flatly*
+across scale (drift ~0pp), so scale transfer was not the differentiator - absolute quality was,
+and the simple rule wins outright.
+
+### Retraction: Part 2, item 2 was wrong
+
+Part 2 recommended replacing the gate with a scale-free formulation, `k x` median
+nearest-neighbour distance, as "the single highest-value change left". **Measured, that rule is
+worse than what is already there** - 9.7-11.3% loss against 0.0%. The reason in hindsight is
+simple: the median nearest-neighbour distance among detections is a statistic of the *clutter*,
+not of the person, so when the person is cleanly separated from a few distant blobs the
+reference becomes large and the gate lets in nonsense, forcing a tighter operating point.
+Distance relative to *body height* is the right reference. Item 2 is withdrawn; the ratio-test
+and online-Mahalanobis variants remain untested but should be held to the same 0.0% bar.
+
+### What this says about the gate, and about the earlier 85pp cliff
+
+The cliff (F1/F2) was never a *discrimination* problem - it was a *units* problem. Given a
+threshold expressed in the right units and calibrated once, the gate makes no mistakes worth
+learning away: with 2-4 detections per frame and >90% of them belonging to the person, the
+association decision is nearly trivial. Getting the units right is the whole fix, and it is
+already implemented (`scale_relative_params`). **The gate is done.** Nothing learned belongs
+here.
+
+One caveat kept honest: `fixed-h` is handed a ground-truth person height in this experiment,
+where deployment gets `estimate_person_height` (3x off on NFO, per F4). That is tolerable only
+because too-loose is cheap (F1) - but it means the gate's remaining risk is the estimator, not
+the rule.
+
+### Why KTH cannot answer the next question either
+
+The measurement that matters for what comes next: with the occluder calibrated to NFO and a
+swaying distractor injected, only **3.1% / 4.6% / 13.8%** of candidate destinations (at
+0.5x / 1x / 2x) are non-person. KTH's background is essentially clean, so it contains almost no
+negatives. That is why the first version of this experiment was saturated - at a 10%
+contamination budget, accepting *everything* was within budget at every scale.
+
+So on the data-strategy question: **the constraint was never quantity, and it is not even
+occluder fidelity any more - it is the absence of clutter.** Augmenting KTH harder will not
+manufacture distractors that a clean-background dataset does not contain, and the two synthetic
+distractor designs tried so far are trivially separable. Real NFO, by contrast, is full of real
+clutter - that is precisely why its shape term is worth taking p90 from 0.59 to 0.10.
+
+### The next smallest experiment
+
+The remaining ambiguity is **which object**, on cluttered data, which is the ranking problem
+and not the gate. NFO is the only data available that actually contains it, so the next
+experiment has to use NFO for fitting, with leave-one-sequence-out so nothing is tuned and
+tested on the same footage:
+
+- Run the existing tracker on NFO, keep **all** candidate tracks per window rather than only
+  the argmax winner.
+- Label each track by whether its centre lands within the eval threshold of the ground truth.
+- Features: dimensionless and within-window normalized - track height over the median candidate
+  height in that window, net displacement over path length (translation vs oscillation),
+  residual of the linear fit over the track's own displacement, span, size stability over the
+  track's running median.
+- Fit a pairwise ranker on 3 of the 4 NFO sequences, evaluate on the held-out one, rotate.
+- Baseline to beat: `score_and_fit` as it stands, i.e. mean residual 0.0698 / p90 0.1049.
+- Go/no-go: a learned ranker must beat that on held-out sequences. With 4 sequences the
+  variance will be high, so treat a small win as inconclusive rather than as success.
+
+This keeps the same discipline as stage 1 - offline, no tracker changes, one number - while
+moving to the only stage where the evidence says learning has something to bite on.
