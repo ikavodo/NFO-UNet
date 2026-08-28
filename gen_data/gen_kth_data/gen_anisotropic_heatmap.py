@@ -12,10 +12,13 @@ Usage:
     python3 -m gen_data.gen_kth_data.gen_anisotropic_heatmap --in-dir data/kth_processed
 """
 import argparse
+import multiprocessing as mp
 import os
+from functools import partial
 
 import cv2
 import numpy as np
+from tqdm import tqdm
 
 from utils.gauss_utils import generate_gauss_2d
 
@@ -70,10 +73,18 @@ def main():
     parser.add_argument('--skip-existing', action='store_true')
     args = parser.parse_args()
 
-    seq_dirs = sorted(d for d in os.listdir(args.in_dir) if d.endswith('_gt'))
+    seq_dirs = [os.path.join(args.in_dir, d) for d in sorted(os.listdir(args.in_dir)) if d.endswith('_gt')]
     total_written = total_bad_mask = total_existing = 0
-    for seq in seq_dirs:
-        w, bm, e = run_sequence(os.path.join(args.in_dir, seq), args.skip_existing)
+    # sequences are fully independent (each writes only into its own directory) - parallelize
+    # across processes the same way gen_kth_data/main.py already does, since this is a lot of
+    # small per-frame numpy/cv2 work (moments + a 224x224 Gaussian render) across ~40k frames,
+    # not something a GPU would meaningfully help with (tiny per-call arrays, transfer overhead
+    # would dominate) - CPU parallelism across sequences is the actual bottleneck fix
+    with mp.Pool(mp.cpu_count()) as pool:
+        results = list(tqdm(
+            pool.imap_unordered(partial(run_sequence, skip_existing=args.skip_existing), seq_dirs),
+            total=len(seq_dirs)))
+    for w, bm, e in results:
         total_written += w
         total_bad_mask += bm
         total_existing += e
