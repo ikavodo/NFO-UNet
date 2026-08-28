@@ -453,3 +453,119 @@ NFO coverage; scale is still simulated by whole-frame resize rather than person/
 compositing; sway amplitude and period were chosen to be plausible, not measured from NFO
 footage; and sway currently confounds "more distractors" with "weaker occlusion" (see the caveat
 above).
+
+## Step 1c: separated occluder/distractor, real-NFO wiring, and a reinterpretation of what the shape term does
+
+### The scale-relative parameterization now lives in the pipeline
+
+`estimate_person_height` -> `tracking/core/preprocess.py`; coefficients and
+`scale_relative_params` -> `tracking/core/track_sequence.py`, which now accepts a
+`person_height` kwarg and derives `max_dist`, `merge_radius`, `expected_height`, `min_area`,
+both morphology kernels and the Kalman variances from it. `eval_nfo.py` has a third config
+using it, plus a CLI selector so each config can be one job.
+
+### Result on real NFO: nearly free, but the estimator does not transfer
+
+3495 windows, all four sequences:
+
+| config | mean resid | median | p90 | no-track | NFO-specific constants |
+|---|---|---|---|---|---|
+| no shape term | 0.1912 | 0.0468 | 0.5929 | 0.2% | 8 |
+| hand-tuned (baseline) | 0.0698 | 0.0250 | 0.1049 | 0.2% | 8 |
+| scale-relative (measured) | 0.0762 | 0.0316 | 0.1381 | 0.0% | **0** |
+
+Dropping all eight hand-tuned constants costs +0.006 mean / +0.007 median. But the
+validation criterion set out in step 1b **failed**: measured person height came out at
+315 / 61 / 129 / 200 px on seq1-4 against a true ~195px, where on synthetic KTH the same
+estimator was within 5% at every scale. NFO's occlusion is far denser than the synthetic
+0.35 coverage, so the fragment-bridging step either welds the person to surrounding foliage
+(seq1: 315px) or finds too little connected foreground to measure (seq2: 61px).
+
+Accuracy survived a 3x error in the estimate for two reasons, and only one is a real
+robustness claim: the association gate is genuinely flat over a wide band (already known
+from the coefficient sweep), *and* seq2's too-small estimate produced a smaller merge radius
+and made that sequence **better** (0.1095 -> 0.0783). That second one is luck cancelling a
+mis-set constant, and it points at a separate finding: **`MERGE_RADIUS = 100` looks too large
+for some NFO sequences** - an over-large merge sweeps neighbouring foliage blobs into the
+person's box and drags the reported centre off. Worth testing on its own.
+
+So: the parameterization is sound and the estimator is not, on real data. Do not report
+`estimate_person_height` as a measurement of person height; it is a scale *proxy* that
+happens to be adequate for parameter derivation in this regime.
+
+### Separated occluder/distractor: implemented, and it does not reproduce the failure mode
+
+`--distractor PX` keeps the occluder over the person's path perfectly static (identical
+occlusion to the static run: coverage 0.365 in both) and puts an independent swaying branch
+cluster of full person height (mean 156px vs ~120px person) in a canvas strip added beside
+the frame, with guaranteed zero overlap. Residuals stay normalized by the original frame
+size, so the runs are directly comparable to the static run. The strip is needed because
+KTH's person traverses the whole frame: the only person-free region *inside* the frame is
+the band above their path, ~30% of a person height, too small to distract.
+
+Height term, per-scale-correct constants, at two distractor strengths:
+
+| bucket | correct height | no height term | height mis-scaled |
+|---|---|---|---|
+| 2.0x, distractor 8px | 72.6% | 69.8% | 68.9% |
+| 2.0x, distractor 40px | 72.7% | 69.9% | 70.2% |
+| 1.0x, distractor 40px | 61.2% | 59.4% | 61.2% |
+
+**Raising the distractor's sway amplitude 5x - to roughly the person's own per-window
+displacement - changed nothing.** The synthetic distractor is not competing at all. Reason:
+a rigid shear of a dense branch band moves the branch *tips* by the full amplitude, but the
+*centroid* of the resulting large connected blob barely moves, and `score_and_fit` scores
+centroid trajectories. Real foliage does something different - it occludes and reveals
+background patches, so blobs appear and vanish and their apparent centroid jumps - which is
+noise-like rather than translation-like.
+
+Two separate attempts (swaying occluder in step 1b, separated swaying band here at 5x
+amplitude) have now failed to synthesize a candidate that outscores the person on motion.
+Producing that failure mode synthetically is harder than assumed, and the next attempt
+should not be another swaying-geometry variant.
+
+### Reinterpretation: on real data the shape term is doing fragment selection, not distractor rejection
+
+The doc has assumed throughout that `expected_height` exists to reject swaying foliage (its
+own docstring says so). The NFO numbers above say something different. Turning the term off:
+
+- no-track rate is **unchanged** (0.2% both ways) - the tracker still finds a track, it does
+  not get captured by foliage and lose the person entirely;
+- but mean residual worsens 2.7x (0.0698 -> 0.1912) - i.e. the position it reports gets much
+  worse while still being a track.
+
+That is the signature of picking the wrong *fragment of the person*, not of locking onto a
+different object. NFO's people are heavily fragmented; the height term biases selection
+toward the full-body-sized blob, which makes the merged centroid right. On KTH, where
+fragmentation is much milder, the same term is worth only 2-3pp - which now reads as a
+consistency, not a contradiction.
+
+Consequences for the build order:
+
+1. The most promising learned target is **fragment grouping/selection** (which blobs are one
+   person, which fragment to anchor on), not track scoring and not distractor rejection.
+   It targets the measured failure, it has free labels from synthetic data, and it is also
+   what the over-large NFO `MERGE_RADIUS` finding points at.
+2. A learned *ranker* over dimensionless, within-window-normalized features (each track's
+   height over the median candidate height, displacement over median displacement, net
+   displacement over path length, gait periodicity) has a real advantage that this session's
+   data now supports directly: it needs **no scale estimate at all**, and the explicit scale
+   estimator is exactly the component that just failed to transfer to real footage. Scale
+   cancels in a within-window comparison because all candidates share a frame.
+3. That still cannot fix the association gate, which is applied before any candidate exists
+   (at 2x, 90% of windows produce nothing to rank). The gate needs to be made relative
+   too - a ratio test against the runner-up match, or k x the median nearest-neighbour
+   distance in the frame, or Mahalanobis gating with online-estimated noise. Those are
+   scale-free without measuring anything about people.
+
+### Reproducing
+
+    python -m tracking.eval.eval_nfo [noshape|fixed|relative]      # ~3.5 min per config
+    python -m tracking.eval.kill_test_scale [--sway PX] [--distractor PX] [--frozen-preprocess]
+    python -m tracking.eval.kill_test_scale --alpha-sweep --sway 8
+    sbatch tracking/eval/kill_test_scale.sbatch                    # all six variants in parallel
+
+The kill-test cliff reproduces in every variant run so far: fixed constants at the 2x bucket
+land at 2.1-5.9% against 72-91% for per-scale-correct, with 79-95% of windows producing no
+track. `scale_rel` lands at 74.6% / 95.8% / 95.0% (weak distractor) and 74.6% / 96.0% / 96.5%
+(competitive), i.e. ~21pp spread against 77pp for fixed constants.
