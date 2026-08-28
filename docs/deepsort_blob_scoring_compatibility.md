@@ -292,3 +292,164 @@ Scale is simulated by resizing the whole frame, so the person's *fraction* of th
 constant; a real camera-distance change would keep frame size fixed and shrink the person within
 it, which needs person/background compositing this test does not do. Occluder density 0.35 is
 still uncalibrated against real NFO coverage statistics (pre-existing documented gap).
+
+## Step 1b: sway added (a real moving distractor), and two scale-invariance candidates measured
+
+`--sway PX` in `tracking/eval/kill_test_scale.py` shears the branch mask about its base by
+`+-PX*sin(2*pi*t/40)`, PX scaling with the bucket, so branch tips swing while the base stays put
+(`utils/occlusion_utils.sway_masks`). Sway was re-added not for realism but because it is the
+only way to put a **moving non-person object** in front of the scorer - the exact case
+`score_and_fit`'s height term exists for. A fully static occluder is absorbed into the MOG2
+background model and generates no competing detections at all, which is why step 1 could not
+evaluate the scoring question.
+
+Confirmed as a side effect: switching the occluder's appearance from background-valued to
+dark-foliage-valued (`OCC_DARKEN=0.45`, keeping the background's own texture) changed the static
+results by *nothing* - 0.5x/1x/2x identical to the step-1 run - because a frame-fixed occluder is
+background to MOG2 whatever colour it is. Only motion makes an occluder visible to this pipeline.
+
+Sway = 8px at 1x (~7% of person height), period 40 frames against a 13-frame window, so within
+one window the sway reads as consistent drift - a plausible competing track rather than obvious
+jitter.
+
+**Caveat on this design, which matters for reading the numbers:** sway does two things at once,
+and they push in opposite directions. It adds distractor tracks (intended), but it also *weakens
+the occlusion*, because dynamic occluder pixels raise MOG2's per-pixel variance, so the person
+leaks through where a static occluder would have erased them. Net effect measured at
+per-scale-correct constants: 1x went 61.5% -> 74.0% and 2x went 74.4% -> 91.4%, i.e. the swaying
+version is *easier* overall despite the added distractors. So absolute levels are not comparable
+between the static and sway runs; only within-run contrasts are. The clean design for the next
+iteration is to separate the two roles: keep a static occluder on the person's path for the
+occlusion, and add a *separate* swaying object away from that path for the distractor.
+
+### The height term (what step 2 would replace) becomes ~4x more load-bearing under sway
+
+Per-scale-correct constants everywhere, varying only `score_and_fit`'s shape term:
+
+| bucket | correct height | no height term | height mis-scaled, rest correct |
+|---|---|---|---|
+| 2.0x, static | 74.4% | 72.3% (-2.1pp) | 72.1% (-2.3pp) |
+| 2.0x, **sway** | 91.4% | 88.6% (-2.8pp) | **82.2% (-9.2pp)** |
+| 1.0x, sway | 74.0% | 72.3% | 74.0% |
+| 0.5x, sway | 38.0% | 37.4% | 38.0% |
+
+Two things follow. (1) With a moving distractor present, mis-scaling the height term costs 9.2pp
+instead of 2.3pp - the scoring term *is* real and *is* scale-sensitive, but only once a
+non-person mover exists, which is exactly why step 1's static test measured 0% for it. (2) A
+**mis-scaled shape prior is worse than no shape prior at all** (82.2% vs 88.6%): a wrong
+`expected_height` actively down-weights the true person. That argues first for making the term
+scale-relative, and only secondarily for making it learned.
+
+Keep the magnitude in view: 9.2pp is still an order of magnitude below the 85.6pp the association
+gate costs at the same bucket. Step 1's ordering stands - fix the gate first.
+
+### Two candidates for scale invariance, measured (hit@0.1, sway run)
+
+| bucket | (a) per-scale-correct | (b) fixed 1x | `scale_rel` | `canon` |
+|---|---|---|---|---|
+| 0.5x | 38.0% | 80.3% | **75.0%** | 51.1% |
+| 1.0x | 74.0% | 74.0% | **93.2%** | 60.0% |
+| 2.0x | 91.4% | 5.9% | **89.4%** | 65.7% |
+| spread across buckets | 53.5pp | 74.4pp | **18.2pp** | 14.5pp |
+| worst bucket | 38.0% | 5.9% | **75.0%** | 51.1% |
+
+`scale_rel` derives *every* pixel constant - `max_dist`, `expected_height`, `merge_radius`,
+`min_area`, both morphology kernels, and `P`/`Q`/`R` - from one measured number `h_ref`, with
+coefficients identical at every bucket. It beats the per-scale-correct GT-measured recipe at two
+of three buckets and lifts the worst bucket from 5.9% to 75.0%, with no-track at ~0% everywhere.
+Static run: 74.8% / 96.5% / 98.8%. **This is the fix, and it involves no learning.**
+
+`canon` - resize the input until the measured `h_ref` equals a canonical value, then run the
+existing pipeline with the existing fixed constants - is also consistent but clearly worse in
+level (51/60/66%): canonicalizing the 2x bucket downward discards real resolution the tracker
+was using. Rescaling the constants beats rescaling the image.
+
+### The load-bearing detail: the scale proxy must itself be scale-equivariant
+
+The first `h_ref` was p95 of raw foreground-component heights. Measured, it goes **42 -> 56 -> 76
+px** while the true person height goes 64 -> 128 -> 256 - only ~1.35x per 2x of real scale. A
+fixed-pixel front-end fragments a large person into *relatively* smaller pieces than a small one,
+so fragment statistics are not equivariant, and no amount of coefficient fitting repairs a
+non-equivariant proxy. That version of `scale_rel` scored a flat, uniformly-bad ~30% at every
+bucket: consistent and wrong, which is the trap to watch for - low spread alone does not mean
+scale-invariant.
+
+Fix (`estimate_h_ref`): bridge the fragments before measuring, with a dilation radius derived
+from the current height estimate, and iterate `h -> radius(0.25h) -> h` to a fixed point. The only
+pixel quantity in the loop is itself a function of `h`, so the estimator carries no absolute
+scale of its own. Measured: **60 -> 122 -> 253 px**, within ~5% of the true GT person height at
+every bucket - recovered from occluded footage with no ground truth at all.
+
+### Coefficients, and where the residual scale-dependence lives
+
+`--alpha-sweep` (3 sequences, sway; `max_dist` and `merge_radius` as multiples of `h_ref`):
+
+| md alpha | merge alpha | 0.5x | 1.0x | 2.0x | worst |
+|---|---|---|---|---|---|
+| 0.15 | 0.5 | 55.7% | 86.7% | 98.5% | 55.7% |
+| 0.25 | **0.75** | 72.3% | 93.3% | 90.0% | **72.3%** |
+| 0.25 | 1.0 | 73.4% | 88.7% | 82.1% | 73.4% |
+| 0.40 | 1.5 | 74.0% | 86.2% | 78.1% | 74.0% |
+
+`max_dist` is remarkably insensitive (0.15 -> 0.40 moves the result ~2pp at fixed merge): the gate
+mainly has to be *big enough*. The measured GT-displacement ratio (~0.095*`h_ref` here, and
+25/195 = 0.128 on NFO - reassuringly close across two datasets) is a lower bound, not the right
+value, because blob centroids jump between fragments. `merge_radius` is the sensitive
+coefficient, and it is where the residual scale-dependence lives: 0.5 is best at 2x and worst at
+0.5x, 1.0 the reverse. Recommended single pair: **md=0.25, merge=0.75*`h_ref`** (`eval_nfo.py`
+currently uses height/2, i.e. ~0.5 - slightly too tight).
+
+### How to proceed - concrete order
+
+1. **Promote `estimate_h_ref` out of the test file** into `tracking/core/` and call it once per
+   sequence from `eval_nfo.py`/`track_sequence.py`. Replace `MAX_DIST`/`EXPECTED_HEIGHT`/
+   `MERGE_RADIUS` and the `min_area`/kernel/`P`/`Q`/`R` defaults with `ALPHA_* * h_ref`. That is
+   the whole scale-invariance fix, and the coefficients above are already calibrated. The real
+   test on NFO: check `h_ref` lands near NFO's measured 195px, then confirm the existing NFO
+   numbers reproduce with *no* NFO-specific constant anywhere.
+2. **Re-measure the residual spread afterwards.** What remains is concentrated in the merge stage
+   and in mask sparsity at small scale - both segmentation problems, not scoring problems. Fix or
+   bound those before considering anything learned.
+3. **Only then reconsider a learned scorer**, with the measured headroom in mind: the shape term
+   is worth ~3pp when correct, ~9pp when the alternative is a mis-scaled one, against 85pp for
+   the gate.
+
+### If the score is to be learned, how to make it generalizable rather than another constant
+
+The measured facts constrain this fairly tightly:
+
+- **Learn a ranking, not a score.** `score_and_fit`'s output is only ever consumed through an
+  `argmax` over the tracks in one window. Absolute calibration is irrelevant, and it is exactly
+  what would fail to transfer. Train a pairwise ranking loss on (true-person track, distractor
+  track) pairs drawn from the same window.
+- **Every feature must be dimensionless.** This is the actual generalization requirement, and the
+  doc's existing feature list has the right instinct: aspect ratio, frame-to-frame size *growth
+  rate*, size over the track's own running median, `net_disp / (span * h_ref)`, `resid_std /
+  h_ref`, and oscillation energy (net displacement over path length - a swaying branch has large
+  path length with near-zero net displacement, and this test now generates exactly that). Any
+  feature in raw pixels reintroduces the problem just measured. `_Track.history` already carries
+  `(x, y, height)` per frame, so no new plumbing is needed.
+- **Keep it tiny.** 5-8 dimensionless features with logistic regression or a depth-2 tree. At
+  ~850 windows per configuration, anything larger fits the occluder generator rather than the
+  problem. A CNN embedding (step 3 of the build order) is not justified by a 9pp ceiling.
+- **The training data must contain the failure mode, or the scorer is untestable.** Step 1 could
+  not measure the scoring term at all because a static occluder produces no competing tracks.
+  `--sway` is the minimum; better is the separated design noted above - static occluder for
+  occlusion, independent swaying object for the distractor - plus distractors of clearly
+  non-person aspect ratio and non-person (oscillatory, zero-net-displacement) motion, which are
+  what the features above can actually discriminate.
+- **Validate with the per-bucket, leave-one-in protocol used here, not pooled accuracy.** Report
+  every bucket and report the spread. A learned scorer that improves the mean while widening the
+  spread across scales has not solved this problem; it has re-tuned to one scale.
+- **Honest expectation.** After item 1 above, a learned scorer competes for single-digit pp
+  against a two-coefficient dimensionless formula, while carrying the synthetic->real domain-gap
+  risk every learned component in this project has carried. The defensible framing is therefore
+  not "learned scorer beats heuristic" but "the heuristic's hand-picked terms can be replaced by
+  a dimensionless, calibration-free scorer with no per-dataset constants" - the contribution
+  being the removal of the constants, not the accuracy.
+
+Remaining limitations, unchanged or new: occluder density 0.35 is still uncalibrated against real
+NFO coverage; scale is still simulated by whole-frame resize rather than person/background
+compositing; sway amplitude and period were chosen to be plausible, not measured from NFO
+footage; and sway currently confounds "more distractors" with "weaker occlusion" (see the caveat
+above).

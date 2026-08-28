@@ -139,6 +139,32 @@ def generate_occlusion_branch(shape: Tuple[int, int], density: float = 0.3, tol:
     return full
 
 
+def sway_masks(mask: np.ndarray, n_frames: int, amplitude_px: float, period_frames: float = 40.0):
+    """Yields n_frames copies of an [H, W] occlusion mask, horizontally sheared about the
+    bottom edge by amplitude_px * sin(2*pi*t/period_frames) - branch tips (top of the mask)
+    swing by up to amplitude_px, the base (bottom row) does not move.
+
+    Re-adds the sway that generate_occlusion_branch deliberately dropped, as an opt-in
+    generator rather than a change to that function's static-mask contract. The reason to
+    want it back is not realism for its own sake: a swaying occluder is a *moving
+    non-person object*, which is the one thing a static occluder cannot provide and the
+    exact failure mode score_and_fit's shape term exists for (its docstring: a swaying-
+    foliage track outscored the real person on NFO). A static occluder gets absorbed into
+    the MOG2 background model and produces no competing detections at all, so any test that
+    wants to measure whether a scoring term can reject non-person tracks needs this.
+
+    A generator, not a [T, H, W] array, because at the largest scale bucket the stack is
+    ~140MB of bool for no reason - callers composite frame by frame anyway.
+    """
+    H, W = mask.shape
+    src = mask.astype(np.uint8)
+    for t in range(n_frames):
+        dx = amplitude_px * np.sin(2 * np.pi * t / period_frames)
+        s = dx / H
+        M = np.float32([[1, -s, s * H], [0, 1, 0]])  # x' = x + s*(H - y): 0 at bottom, dx at top
+        yield cv2.warpAffine(src, M, (W, H), flags=cv2.INTER_NEAREST) > 0
+
+
 def save_occlusion(file_path: str, occlusion: np.ndarray):
     ensure_dir(file_path)
     cv2.imwrite(file_path, occlusion * 255)
@@ -197,3 +223,21 @@ def calc_circumference(occlusion: np.ndarray):
                 if w-1 >= 0 and occlusion[h, w-1]:
                     counter += 1
     return counter
+
+if __name__ == '__main__':
+    # self-check for sway_masks' shear: the base row must not move, the top row must swing by
+    # the full amplitude, and a quarter period in must sit at the peak.
+    m = np.zeros((40, 60), dtype=bool)
+    m[:, 30] = True  # a vertical branch
+    frames = list(sway_masks(m, n_frames=20, amplitude_px=10.0, period_frames=40.0))
+
+    def col_of(mask, row):
+        cols = np.nonzero(mask[row])[0]
+        return int(cols.mean()) if len(cols) else None
+
+    assert col_of(frames[0], 0) == 30 and col_of(frames[0], 39) == 30, "t=0 must be undeflected"
+    peak = frames[10]  # quarter period -> sin = 1
+    assert col_of(peak, 39) == 30, f"base row moved: {col_of(peak, 39)}"
+    assert abs(col_of(peak, 0) - 40) <= 1, f"top row should swing ~10px, got {col_of(peak, 0)}"
+    assert all(m.sum() > 0 for m in frames), "mask went empty"
+    print("sway_masks self-check ok")
