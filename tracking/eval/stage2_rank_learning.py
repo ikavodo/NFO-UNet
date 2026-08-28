@@ -27,7 +27,6 @@ Reports, per held-out sequence:
     python -m tracking.eval.stage2_rank_learning
 """
 import os
-import sys
 
 import cv2
 import numpy as np

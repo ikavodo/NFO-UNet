@@ -38,10 +38,6 @@ def detect_blobs(masks: np.ndarray, min_area: float = 80, raw_frames: np.ndarray
     return detections
 
 
-def _bbox_height(bbox):
-    return bbox[3] - bbox[1]
-
-
 def _det_shape_app(d):
     """(height, width, app_mean, app_std) for one detection - the per-frame record kept in
     _Track.history beyond position. Width and appearance are None/NaN when unavailable, so
