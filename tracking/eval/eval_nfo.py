@@ -1,8 +1,10 @@
 import os
+import sys
 
 import cv2
 import numpy as np
 
+from tracking.core.preprocess import estimate_person_height
 from tracking.core.track_sequence import track_windows_in_sequence
 
 IN_DIR = 'data/nfo_final/nfo_final'
@@ -15,6 +17,12 @@ SPAN = MARGIN * NTH_FRAME
 # from KTH - see conversation for the measurement:
 # - MAX_DIST from measured GT centroid displacement at nth_frame=2 stride (p99 ~= 25px)
 # - MERGE_RADIUS from measured person height (~195px mean) / 2
+# These are ABSOLUTE PIXEL constants, valid only at this dataset's resolution and camera
+# distance. Reusing them on footage where people appear at a different pixel size fails
+# badly (measured: accuracy 91% -> 6% over a 2x change in person size). The
+# scale_relative=True path below replaces all of them with multiples of a person height
+# measured from the footage itself, and needs no ground truth to do it - see
+# docs/deepsort_blob_scoring_compatibility.md, "Step 1b".
 MAX_DIST = 25.0
 MERGE_RADIUS = 100.0
 EXPECTED_HEIGHT = 195.0  # measured mean NFO person height at native 800x600 resolution
@@ -33,7 +41,7 @@ def parse_normalized_bbs(file_path):
     return boxes
 
 
-def eval_sequence(seq, use_shape_scoring):
+def eval_sequence(seq, use_shape_scoring, scale_relative=False):
     seq_in = os.path.join(IN_DIR, seq)
     jpgs = sorted(f for f in os.listdir(seq_in) if f.endswith('.jpg'))
     norm_file = next(f for f in os.listdir(seq_in) if f != 'groundtruth.txt' and f.startswith('groundtruth'))
@@ -45,9 +53,15 @@ def eval_sequence(seq, use_shape_scoring):
     h, w = frames_all.shape[1], frames_all.shape[2]
 
     expected_height = EXPECTED_HEIGHT if use_shape_scoring else None
+    person_height = None
+    if scale_relative:
+        person_height = estimate_person_height(frames_all, bg_frames=BG_FRAMES)
+        print(f"  {seq}: measured person height = {person_height:.0f}px "
+              f"(hand-measured ground-truth value: {EXPECTED_HEIGHT:.0f}px)")
     results = track_windows_in_sequence(frames_all, valid_centers, span=SPAN, nth_frame=NTH_FRAME,
                                         max_dist=MAX_DIST, merge_radius=MERGE_RADIUS,
-                                        expected_height=expected_height, bg_frames=BG_FRAMES)
+                                        expected_height=expected_height, bg_frames=BG_FRAMES,
+                                        person_height=person_height)
 
     residuals, n_no_track = [], 0
     for center in valid_centers:
@@ -63,13 +77,15 @@ def eval_sequence(seq, use_shape_scoring):
     return residuals, n_no_track, len(valid_centers)
 
 
-def run(use_shape_scoring):
+def run(use_shape_scoring, scale_relative=False):
     label = "WITH shape-aware scoring + sequence warm-start" if use_shape_scoring else \
         "WITHOUT shape-aware scoring, WITH sequence warm-start"
+    if scale_relative:
+        label += ", SCALE-RELATIVE constants (measured, no NFO-specific pixel values)"
     print(f"=== {label} ===")
     all_residuals, total_no_track, total_valid = [], 0, 0
     for seq in SEQS:
-        residuals, n_no_track, n_valid = eval_sequence(seq, use_shape_scoring)
+        residuals, n_no_track, n_valid = eval_sequence(seq, use_shape_scoring, scale_relative)
         all_residuals.extend(residuals)
         total_no_track += n_no_track
         total_valid += n_valid
@@ -89,9 +105,22 @@ def run(use_shape_scoring):
     print()
 
 
+CONFIGS = {
+    'noshape': dict(use_shape_scoring=False),
+    'fixed': dict(use_shape_scoring=True),
+    # same tracker, same data, but every pixel constant derived from a person height measured
+    # off the footage instead of hand-measured from NFO's ground truth. If this matches
+    # 'fixed', NFO no longer needs any dataset-specific constant at all.
+    'relative': dict(use_shape_scoring=True, scale_relative=True),
+}
+
+
 def main():
-    run(use_shape_scoring=False)
-    run(use_shape_scoring=True)
+    """No arguments: run all three configs in sequence (~11 min). Named configs run only
+    those, so a scheduler can put one per job - see tracking/eval/eval_nfo.sbatch."""
+    names = [a for a in sys.argv[1:] if not a.startswith('-')] or list(CONFIGS)
+    for name in names:
+        run(**CONFIGS[name])
 
 
 if __name__ == '__main__':

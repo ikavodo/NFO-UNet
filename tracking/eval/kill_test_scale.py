@@ -67,8 +67,8 @@ import cv2
 import numpy as np
 
 from tracking.core import blob_tracker as bt
-from tracking.core.preprocess import foreground_mask, refine_mask, filter_by_shape
-from tracking.core.track_sequence import track_windows_in_sequence
+from tracking.core.preprocess import estimate_person_height
+from tracking.core.track_sequence import track_windows_in_sequence, scale_relative_params
 from utils.occlusion_utils import generate_occlusion_branch, sway_masks
 
 ROOT = 'data/kth_processed'
@@ -89,28 +89,19 @@ OCC_DARKEN = 0.45    # occluder appearance = 0.45 * that pixel's background, so 
                      # (a partial fix for the doc's "flat-color occlusion" gap). Static
                      # occluders get absorbed by MOG2 either way; swaying ones must be
                      # visually distinct from the background or they generate no motion.
+DIST_PAD = 0.5       # width of the canvas strip added for the separated distractor, as a
+                     # fraction of frame width (only used with --distractor)
 SWAY_PERIOD = 40.0   # frames per full sway cycle; window span is 13 frames, so a window
                      # sees ~1/3 of a cycle - i.e. sway looks like consistent drift inside
                      # a window, which is what makes it a plausible competing track.
 HIT_THRESHOLD = 0.1  # eval pipeline's max_dist_error, in frame-normalized units
 
-# Scale-relative constants (the "generalize it" arm). Every pixel constant is expressed as
-# a multiple of ONE per-scene measured scale proxy h_ref (p95 of foreground-component
-# heights, see estimate_h_ref) instead of an absolute pixel value. The coefficients are
-# meant to be calibrated once, on any single scale, and then reused everywhere - which is
-# exactly the claim this arm tests.
-ALPHA_MAX_DIST = 0.25    # max_dist = ALPHA_MAX_DIST * h_ref. Measured GT displacement is
-                         # only ~0.095 * h_ref here (and 25/195 = 0.128 on NFO), but blob
-                         # centroids jump between fragments, so the gate needs to be looser
-                         # than the GT motion - see --alpha-sweep.
-ALPHA_EXP_HEIGHT = 0.95  # expected_height = ALPHA_EXP_HEIGHT * h_ref. The iterated h_ref
-                         # lands within ~5% of true person height, so this is ~1.
-ALPHA_MERGE = 0.75       # merge_radius = ALPHA_MERGE * h_ref. eval_nfo.py uses height/2;
-                         # the sweep prefers ~a full height, because the merge has to reach
-                         # from one fragment of a person to the far one.
-H_REF_0 = 120.0          # measured mean h_ref at the 1x bucket. Sets the canonical scale
-                         # for the 'canon' arm and normalizes the P/Q/R variances by
-                         # (h_ref / H_REF_0)^2.
+# The scale-relative parameterization tested by the 'scale_rel' arm now lives in
+# tracking/core/track_sequence.py (ALPHA_* and scale_relative_params) and the person-height
+# estimator in tracking/core/preprocess.py, so the experiment and the production path cannot
+# drift apart. --alpha-sweep still sweeps the two load-bearing coefficients here.
+H_REF_0 = 120.0          # canonical person height for the 'canon' arm: the measured mean at
+                         # the 1x bucket, i.e. what canon resizes every bucket to match.
 
 # defaults at scale 1.0, i.e. kth_processed's native 224x224
 BASE_MIN_AREA = 50.0
@@ -152,46 +143,34 @@ def measure_constants(boxes, H, W):
                 merge_radius=exp_h / 2)
 
 
-def estimate_h_ref(frames, bg_frames, iters=4, naive=False):
-    """Per-scene scale proxy in pixels, measured from the footage itself with no
-    scale-specific tuning: p95 of *merged* foreground-cluster heights.
+def build_bucket(frames_native, boxes, scale, seed, sway_px=0.0, distractor_px=0.0):
+    """Resize to the bucket, then composite the branch occluder(s).
 
-    The naive version (naive=True: p95 of raw connected-component heights) is NOT
-    scale-equivariant, which is the whole difficulty - measured on this data it grows only
-    ~1.35x per 2x change in real person size, because a fixed-pixel front-end fragments a
-    big person into relatively smaller pieces than a small one. A proxy that is not
-    equivariant cannot make anything downstream scale-invariant, no matter how the
-    coefficients are fitted.
+    Three modes:
+      sway_px=0, distractor_px=0  - one static occluder over the person's path. Occlusion
+                                    only, no competing detections (MOG2 absorbs it).
+      sway_px>0                   - that same occluder sways. Adds distractors, but also
+                                    WEAKENS the occlusion (moving occluder pixels raise the
+                                    background model's variance, so the person leaks
+                                    through) - the two effects are confounded.
+      distractor_px>0             - the separated design: the occluder over the person's
+                                    path stays perfectly static, and an INDEPENDENT swaying
+                                    branch cluster of full person height is placed in a
+                                    canvas strip added beside the frame, where it can never
+                                    intersect the person. Occlusion strength and distractor
+                                    presence become independent variables.
 
-    Fix: bridge the fragments before measuring, with a dilation radius proportional to the
-    current height estimate, and iterate to a fixed point (h -> radius -> h). Each iteration
-    is scale-free by construction because the only pixel quantity in it, the radius, is
-    itself derived from h. Height is corrected for the dilation growth.
-    """
-    masks = filter_by_shape(refine_mask(foreground_mask(frames, bg_frames=bg_frames),
-                                        close_kernel_size=3, open_kernel_size=2),
-                            min_area=10, min_solidity=0.1)
-    binaries = [(masks[t] > 0).astype(np.uint8) for t in range(masks.shape[0])]
+    Why the added strip: in KTH the person traverses the whole frame width, so the only
+    person-free region inside the original frame is the thin band above their path (~30% of
+    a person height here) - a distractor that small is filtered out or trivially out-scored,
+    which makes the experiment a null by construction. Extending the canvas gives a
+    full-height distractor with zero overlap. Residuals stay normalized by the ORIGINAL
+    frame size so padded and unpadded runs remain directly comparable, and the person's
+    pixel coordinates are untouched by the padding (only the normalization denominator would
+    have changed, and that is what norm_hw pins down).
 
-    h, k_px = 1.0, 1
-    for it in range(1 if naive else iters):
-        heights = []
-        for m in binaries:
-            if k_px > 1:
-                m = cv2.dilate(m, np.ones((k_px, k_px), np.uint8))
-            n, _, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
-            heights.extend(max(stats[i, cv2.CC_STAT_HEIGHT] - (k_px - 1), 1) for i in range(1, n)
-                           if stats[i, cv2.CC_STAT_AREA] >= 10)
-        if not heights:
-            return 1.0
-        h = float(np.percentile(heights, 95))
-        k_px = max(1, int(round(0.25 * h)))  # bridge gaps up to a quarter of a body height
-    return h
-
-
-def build_bucket(frames_native, boxes, scale, seed, sway_px=0.0):
-    """Resize to the bucket, then composite one GT-union-restricted branch occluder.
-    -> ([T, H, W] uint8 occluded frames, mean per-frame coverage of the real GT box)."""
+    -> dict(frames, boxes, coverage, dist_h, norm_hw). `boxes` is returned because padding
+    changes normalized coordinates; callers must use the returned copy."""
     Hn, Wn = frames_native.shape[1:]
     H, W = int(round(Hn * scale)), int(round(Wn * scale))
     frames = np.stack([cv2.resize(f, (W, H), interpolation=cv2.INTER_AREA) for f in frames_native], axis=0)
@@ -220,13 +199,49 @@ def build_bucket(frames_native, boxes, scale, seed, sway_px=0.0):
     else:
         frames[:, occ] = occ_appearance[occ]
         coverage = [gt_box_coverage(occ, f) for f in boxes]
+
     coverage = [c for c in coverage if c is not None]
-    return frames, float(np.mean(coverage))
+    out = dict(frames=frames, boxes=boxes, coverage=float(np.mean(coverage)), dist_h=0,
+               norm_hw=(H, W))
+    if distractor_px <= 0:
+        return out
+
+    # Independent swaying distractor in an added canvas strip: the occluder above is
+    # untouched and still perfectly static, so occlusion strength is identical to the
+    # static run, and the ONLY thing that changed is that competing moving detections now
+    # exist. Denser than the occluder so its blobs survive min_area at every bucket.
+    # ponytail: the strip is edge-replicated background (streaky but perfectly static, which
+    # is all MOG2 needs). Sample real background texture here if the strip ever has to look
+    # right rather than just behave right.
+    pad = int(round(DIST_PAD * W))
+    frames = np.pad(frames, ((0, 0), (0, 0), (0, pad)), mode='edge')
+    W2 = W + pad
+    strip_bg = np.median(frames[:, :, W:], axis=0).astype(np.uint8)
+    strip_appearance = (strip_bg * OCC_DARKEN).astype(np.uint8)
+
+    dist_h = union[3] - union[1]
+    dmask_full = generate_occlusion_branch((H, W2), density=0.5,
+                                           bbox=(W, union[1], W2, union[3]), seed=seed + 777)
+    for t, m in enumerate(sway_masks(dmask_full, len(frames), distractor_px, SWAY_PERIOD)):
+        strip = m[:, W:]
+        frames[t, :, W:][strip] = strip_appearance[strip]
+
+    # padding is on the right, so the person's PIXEL position is unchanged; only the
+    # normalized coordinates shift, and residuals are still normalized by norm_hw = (H, W)
+    out['frames'] = frames
+    out['boxes'] = {f: (b[0] * W / W2, b[1], b[2] * W / W2, b[3]) for f, b in boxes.items()}
+    out['dist_h'] = dist_h
+    return out
 
 
-def run_arm(frames, boxes, const, kf, preprocess):
-    """One (bucket, constants) run. -> (residuals list, n_no_track, n_windows)."""
+def run_arm(frames, boxes, const, kf, preprocess, norm_hw=None):
+    """One (bucket, constants) run. -> (residuals list, n_no_track, n_windows).
+
+    norm_hw: (H, W) to normalize residuals by, defaulting to the frames' own size. Pinned
+    explicitly so runs whose canvas was widened for a distractor stay comparable to runs
+    that were not."""
     T, H, W = frames.shape
+    norm_h, norm_w = norm_hw if norm_hw is not None else (H, W)
     centers = [c for c in sorted(boxes) if SPAN <= c < T - SPAN]
     bt._Track.P_VAR, bt._Track.Q_VAR, bt._Track.R_VAR = kf
     bg_frames = int(max(5, min(30, centers[0])))  # must not exceed frames actually elapsed
@@ -245,7 +260,7 @@ def run_arm(frames, boxes, const, kf, preprocess):
             n_no_track += 1
             continue
         gx, gy = center_px(boxes[c], H, W)
-        residuals.append(float(np.hypot((r['x'] - gx) / W, (r['y'] - gy) / H)))
+        residuals.append(float(np.hypot((r['x'] - gx) / norm_w, (r['y'] - gy) / norm_h)))
     return residuals, n_no_track, len(centers)
 
 
@@ -259,16 +274,14 @@ def summarize(residuals, n_no_track, n_windows):
 
 
 def scale_relative_config(h_ref):
-    """All constants from ONE measured number, with coefficients that are the same at every
-    scale - including the segmentation front-end, which must not get oracle scale info
-    either or the arm is cheating."""
-    rel = h_ref / H_REF_0
-    const = dict(max_dist=ALPHA_MAX_DIST * h_ref, expected_height=ALPHA_EXP_HEIGHT * h_ref,
-                 merge_radius=ALPHA_MERGE * h_ref)
-    kf = (BASE_P_VAR * rel ** 2, BASE_Q_VAR * rel ** 2, BASE_R_VAR * rel ** 2)
-    pre = dict(min_area=BASE_MIN_AREA * rel ** 2,
-               close_k=max(2, int(round(BASE_CLOSE_K * rel))),
-               open_k=max(1, int(round(BASE_OPEN_K * rel))))
+    """All constants from ONE measured number, with coefficients identical at every scale -
+    including the segmentation front-end, which must not get oracle scale info either or the
+    arm is cheating. Coefficients live in tracking/core/track_sequence.py so the test and the
+    production path cannot drift apart."""
+    kwargs, kf = scale_relative_params(h_ref)
+    const = {k: kwargs[k] for k in ('max_dist', 'expected_height', 'merge_radius')}
+    pre = dict(min_area=kwargs['min_area'], close_k=kwargs['close_kernel_size'],
+               open_k=kwargs['open_kernel_size'])
     return const, kf, pre
 
 
@@ -279,7 +292,9 @@ def arg_value(flag, default):
 def main():
     scale_preprocess = '--frozen-preprocess' not in sys.argv
     sway_base = arg_value('--sway', 0.0)  # px of branch-tip sway at the 1x bucket
+    dist_base = arg_value('--distractor', 0.0)  # px of sway for the separated distractor
     print(f"scale buckets {SCALES}, ref bucket {REF_SCALE}, occluder density {OCC_DENSITY}, "
+          f"distractor sway {dist_base}px@1x, "
           f"darken {OCC_DARKEN}, sway {sway_base}px@1x (period {SWAY_PERIOD}), "
           f"preprocessing {'scaled per bucket' if scale_preprocess else 'frozen at defaults'}")
     print(f"sequences: {len(SEQS)}\n")
@@ -303,7 +318,7 @@ def main():
     ABLATION = ['b+max_dist', 'b+expected_height', 'b+merge_radius', 'b+kf']
     ARMS = ['a', 'b'] + ABLATION + ['a-no_height', 'a-wrong_height', 'scale_rel', 'canon']
     pooled = {s: {arm: ([], 0, 0) for arm in ARMS} for s in SCALES}
-    coverages, h_refs = [], {s: [] for s in SCALES}
+    coverages, dist_heights, h_refs = [], [], {s: [] for s in SCALES}
 
     for seq_i, name in enumerate(SEQS):
         frames_native, boxes = load_sequence(name)
@@ -312,13 +327,16 @@ def main():
                      (BASE_P_VAR * REF_SCALE ** 2, BASE_Q_VAR * REF_SCALE ** 2, BASE_R_VAR * REF_SCALE ** 2))
         line = [f"{name.replace('_uncomp_gt', ''):26s}"]
         for scale in SCALES:
-            frames, cov = build_bucket(frames_native, boxes, scale, seed=seq_i, sway_px=sway_base * scale)
-            coverages.append(cov)
+            built = build_bucket(frames_native, boxes, scale, seed=seq_i,
+                                 sway_px=sway_base * scale, distractor_px=dist_base * scale)
+            frames, boxes_b, norm_hw = built['frames'], built['boxes'], built['norm_hw']
+            coverages.append(built['coverage'])
+            dist_heights.append(built['dist_h'])
             H, W = frames.shape[1:]
             first_center = next(c for c in sorted(boxes) if c >= SPAN)
-            h_ref = estimate_h_ref(frames, bg_frames=int(max(5, min(30, first_center))))
+            h_ref = estimate_person_height(frames, bg_frames=int(max(5, min(30, first_center))))
             h_refs[scale].append(h_ref)
-            const_a = measure_constants(boxes, H, W)
+            const_a = measure_constants(boxes_b, H, W)
             kf_a = (BASE_P_VAR * scale ** 2, BASE_Q_VAR * scale ** 2, BASE_R_VAR * scale ** 2)
             if scale_preprocess:
                 pre = dict(min_area=BASE_MIN_AREA * scale ** 2,
@@ -342,13 +360,18 @@ def main():
                 const, kf, arm_pre, resize = arm_cfg[arm]
                 arm_frames = frames if resize is None else np.stack(
                     [cv2.resize(f, (int(round(W * resize)), int(round(H * resize)))) for f in frames], axis=0)
-                r, nnt, nw = run_arm(arm_frames, boxes, const, kf, arm_pre)
+                arm_norm = norm_hw if resize is None else tuple(int(round(v * resize)) for v in norm_hw)
+                r, nnt, nw = run_arm(arm_frames, boxes_b, const, kf, arm_pre, norm_hw=arm_norm)
                 pr, pnt, pnw = pooled[scale][arm]
                 pooled[scale][arm] = (pr + r, pnt + nnt, pnw + nw)
             line.append(f"{scale}x done")
         print('  '.join(line))
 
     print(f"\nmean occluder coverage of the real per-frame GT box: {np.mean(coverages):.3f}")
+    if dist_base > 0:
+        print(f"separated distractor: swaying branch band above the GT path, mean height "
+              f"{np.mean(dist_heights):.0f}px (0 = no room in that sequence), zero overlap with "
+              f"the person by construction")
     print("measured scale proxy h_ref (p95 foreground-component height): "
           + ', '.join(f"{s}x={np.mean(v):.1f}px" for s, v in h_refs.items()) + "\n")
     print(f"{'bucket':>7} {'person_px':>9} {'arm':>18} {'n':>5} {'no_track':>9} {'resid_mean':>11} "
@@ -422,15 +445,18 @@ def alpha_sweep():
     for seq_i, name in enumerate(seqs):
         frames_native, boxes = load_sequence(name)
         for scale in SCALES:
-            frames, _ = build_bucket(frames_native, boxes, scale, seed=seq_i, sway_px=sway_base * scale)
+            built = build_bucket(frames_native, boxes, scale, seed=seq_i,
+                                 sway_px=sway_base * scale,
+                                 distractor_px=arg_value('--distractor', 0.0) * scale)
+            frames, boxes_b, norm_hw = built['frames'], built['boxes'], built['norm_hw']
             first_center = next(c for c in sorted(boxes) if c >= SPAN)
-            h_ref = estimate_h_ref(frames, bg_frames=int(max(5, min(30, first_center))))
+            h_ref = estimate_person_height(frames, bg_frames=int(max(5, min(30, first_center))))
             const, kf, pre = scale_relative_config(h_ref)
             for md in md_alphas:
                 for mr in mr_alphas:
-                    r, nnt, nw = run_arm(frames, boxes,
+                    r, nnt, nw = run_arm(frames, boxes_b,
                                          {**const, 'max_dist': md * h_ref, 'merge_radius': mr * h_ref},
-                                         kf, pre)
+                                         kf, pre, norm_hw=norm_hw)
                     pr, pnt, pnw = pooled.get((scale, md, mr), ([], 0, 0))
                     pooled[(scale, md, mr)] = (pr + r, pnt + nnt, pnw + nw)
         print(f"{name} done")
