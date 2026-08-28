@@ -19,7 +19,13 @@ from tracking.core.track_window import _result_from_detections
 # sensitive one, and it is where residual scale-dependence still lives.
 ALPHA_MAX_DIST = 0.25
 ALPHA_EXP_HEIGHT = 0.95   # estimate_person_height lands within ~5% of true height
-ALPHA_MERGE = 0.75        # eval_nfo.py's old value was 0.5, i.e. slightly too tight
+ALPHA_MERGE = 0.625       # swept directly on real NFO (tracking/eval/merge_radius_sweep.py):
+                          # 0.625 gives mean residual 0.0660 / hit 90.0%, against 0.0704 /
+                          # 89.6% at eval_nfo's old 0.5 and 0.0671 / 89.1% at the 0.75 the
+                          # synthetic sweep had preferred. Note the risk here is asymmetric in
+                          # the OPPOSITE direction to the association gate: too large is
+                          # catastrophic (1.5x -> 51.3% hit) while too small degrades gently
+                          # (0.0x -> 84.7%), so "bias loose" is not a universal rule.
 ALPHA_MIN_AREA = 50.0 / 120.0 ** 2   # base min_area 50px^2 at a 120px person
 H_CALIB = 120.0           # person height the base morphology/Kalman values were tuned at
 

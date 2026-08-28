@@ -109,7 +109,7 @@ A rigid shear moves branch tips but barely moves a dense blob's centroid, and th
 scores centroids. **Our synthetic data does not reproduce NFO's failure mode**, and the
 failure mode is heavy fragmentation, not foliage that translates convincingly.
 
-### F7. NFO's merge radius looks too large - test this on its own
+### F7. ~~NFO's merge radius looks too large~~ REFUTED - see the merge-radius sweep at the end
 
 seq2's wrongly-*small* measured height (61 px) produced a smaller merge radius and made that
 sequence **better** (0.1095 -> 0.0783). An over-large merge sweeps neighbouring foliage blobs
@@ -676,3 +676,98 @@ which is further weak evidence that `app_mean_rel` encodes a scene-specific assu
 headroom, no brightness-polarity assumption, no hand-tuned fallback constant, and the smallest
 regression on the uncluttered sequence of any learned variant. `all + bscore` (95.7%, 67%)
 remains an upper bound contingent on the scene assumption.
+
+---
+
+## F7 refuted: NFO's merge radius was slightly too SMALL, not too large
+
+`tracking/eval/merge_radius_sweep.py`. `merge_radius` is used in exactly one place -
+`position_from_track` -> `merged_center` - and affects only the reported position, not
+background subtraction, association or scoring. So the tracker runs once and every radius is
+evaluated on the same winning tracks. Swept as a multiple of measured person height so the
+answer is directly an `ALPHA_MERGE` coefficient rather than another absolute pixel constant.
+
+Pooled over all four NFO sequences:
+
+| radius | mean resid | median | p90 | hit@0.1 |
+|---|---|---|---|---|
+| 0.0x (no merge) | 0.0837 | 0.0407 | 0.1309 | 84.7% |
+| 0.375x | 0.0771 | 0.0342 | 0.1156 | 88.6% |
+| 0.5x (eval_nfo's 100px) | 0.0704 | 0.0260 | 0.1061 | 89.6% |
+| **0.625x** | **0.0660** | **0.0202** | **0.0992** | **90.0%** |
+| 0.75x (synthetic sweep's pick) | 0.0671 | 0.0206 | 0.1088 | 89.1% |
+| 1.0x | 0.0779 | 0.0284 | 0.1406 | 82.5% |
+| 1.5x | 0.1133 | 0.0956 | 0.1994 | 51.3% |
+
+**F7 was wrong.** It hypothesised that NFO's 100px radius was too large, on the basis that
+seq2 improved when a wrongly-small measured person height produced a smaller radius. That
+attribution was unsafe: the run in question changed `max_dist`, `expected_height`, `min_area`,
+the morphology kernels and the Kalman variances at the same time, so the improvement could not
+be pinned on the merge radius. Swept cleanly, the optimum is *larger* than the current value,
+not smaller. `ALPHA_MERGE` updated 0.75 -> 0.625.
+
+Two things worth keeping from this:
+
+- **A dimensionless coefficient transferred across datasets.** Synthetic multi-scale KTH picked
+  0.75; real NFO picks 0.625. Both sit in a 0.6-0.8 band, and either beats the hand-tuned
+  absolute 100px. That is direct evidence for the central claim of this document - that these
+  quantities belong in units of body height - obtained on two datasets that share nothing.
+- **The risk asymmetry is the reverse of the gate's.** For the association gate, too tight is
+  fatal and too loose is cheap (F1). For the merge radius, too large is catastrophic (1.5x
+  collapses to 51.3% hit, because the merge sweeps neighbouring foliage into the person's box)
+  and too small degrades gently. So "bias loose" is a rule about the gate specifically, not a
+  general principle - each parameter's asymmetry has to be measured.
+
+---
+
+## Real-time feasibility of the learned ranker: measured
+
+Per-frame streaming cost at NFO's native 800x600, single-threaded Python + OpenCV:
+
+| stage | ms/frame |
+|---|---|
+| MOG2 background subtraction | 4.25 |
+| morphology refine | 0.60 |
+| shape filter | 1.45 |
+| `detect_blobs`, no appearance | 0.87 |
+| `detect_blobs`, with appearance | 2.60 |
+
+**The learned features are not the cost.** Appearance adds 1.7 ms/frame, a 2.1% overhead; gait
+adds nothing measurable (blob width is already in the connected-components stats); the ranker
+is a 15-element dot product per candidate.
+
+The cost is the association stage, and most of it is an artifact of how the offline evaluator is
+structured rather than an intrinsic cost:
+
+| association per output frame | ms |
+|---|---|
+| evaluator: re-track a fresh 7-frame window every frame | 73.66 |
+| streaming: one association step per frame, persistent tracks | 19.33 |
+
+That is a **3.8x speedup from restructuring alone**, giving roughly **26.5 ms/frame, ~38 fps**
+at 800x600 with appearance features included. Real-time is comfortable.
+
+Three conditions on that figure:
+
+1. **Detection count dominates.** Hungarian assignment is O(n^3), and this measurement ran with
+   57.5 detections/frame (MOG2 had only 200 frames of warm-up; well-warmed runs see far fewer).
+   `min_area` therefore has a direct latency cost, not only an accuracy one.
+2. **Track pruning becomes mandatory.** Scoring the full accumulated set of 2350 tracks took
+   42 ms; a streaming implementation must score only live tracks and retire dead ones. `max_age`
+   already provides the mechanism - it just has to be relied on rather than incidental.
+3. **Latency is already non-causal and the features do not change it.** The window is centred,
+   so the estimate for frame `c` uses frames up to `c + 6`: a fixed ~240 ms lookahead at 25 fps,
+   inherent to the existing design. "Real-time" here means fixed-latency streaming.
+
+### The real-time constraint helps the gait feature rather than killing it
+
+A longer window is not available, and in the current windowed architecture that does rule out
+frequency-domain gait analysis: 13 real frames against a ~25-frame walking cycle.
+
+But window length constrains how far *ahead* the system looks, not how far *back* a track
+remembers. A streaming tracker holds **persistent** tracks whose history accumulates over their
+whole lifetime - seconds, not 13 frames - at zero additional latency. So real gait periodicity
+becomes measurable exactly when the pipeline moves to streaming, and it is the current offline
+evaluator, not the real-time constraint, that cannot support it. Restructuring to streaming buys
+the 3.8x speedup and the gait feature together, which makes it the highest-value next piece of
+work rather than a deployment chore.
