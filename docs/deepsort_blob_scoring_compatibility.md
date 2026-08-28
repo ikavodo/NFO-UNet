@@ -1,5 +1,10 @@
 # DeepSORT-style scoring for the classical blob tracker - compatibility and scale-robustness assessment
 
+> **Read `docs/scale_generalization_plan.md` first.** That file is the standing conclusion
+> and the plan; this one is the chronological log of how the results were arrived at,
+> including the wrong turns (a non-equivariant scale proxy, two distractor designs that
+> measured nothing). Useful for *why*, not for *what to do*.
+
 **Goal:** the classical Kalman+Hungarian tracker (`tracking/core/blob_tracker.py`) currently
 beats the trained U-Net on NFO, using hand-tuned, dataset-specific constants. Two open
 questions from prior discussion: (1) is DeepSORT's learned-association-score approach
