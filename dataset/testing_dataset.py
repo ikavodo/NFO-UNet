@@ -12,14 +12,15 @@ class TestingDataSet(AbstractDataSet):
                          exclude_roots=exclude_roots,
                          transforms=transforms)
 
-    def _construct_ds_entries(self, bbs_per_root, gauss_files_per_root, circle_files_per_root, orig_files_per_root) -> \
-    Tuple[List[DatasetEntry], Dict[int, int]]:
+    def _construct_ds_entries(self, bbs_per_root, gauss_files_per_root, circle_files_per_root, aniso_files_per_root,
+                              orig_files_per_root) -> Tuple[List[DatasetEntry], Dict[int, int]]:
         ds_entries, idx_file_mapping, global_idx = [], {}, 0
         for orig_files, bbs in zip(orig_files_per_root, bbs_per_root):
             for root_idx, frame_of in enumerate(orig_files):
                 ds_entries.append(DatasetEntry(orig_file=frame_of,
                                                gauss_file=None,
                                                circle_file=None,
+                                               aniso_file=None,
                                                bbs=bbs.get(root_idx, [])))
 
                 # paper sec. 4.2: the measures "assume presence of a person in each test image";

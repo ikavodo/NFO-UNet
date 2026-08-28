@@ -1,4 +1,5 @@
 import dill
+import torch.nn
 
 from config.config import AbstractConfig, available_cpus
 from dataset.abstract_dataset import HeatMap
@@ -94,6 +95,22 @@ kth_train = {
     # scale to whichever machine actually runs training (e.g. a remote GPU box)
     'num_workers': min(8, available_cpus()),
 }
+
+# Anisotropic-heatmap experiment (see /home/akovi/.claude/plans/sparkling-munching-valiant.md):
+# identical to kth_train in every other respect, so the only difference between the two
+# training runs is the target image + loss - an isolated comparison of whether the U-Net can
+# learn a real-mask-moment-derived covariance target (gen_data/gen_kth_data/
+# gen_anisotropic_heatmap.py), and whether doing so also affects plain localization accuracy.
+# MSELoss, not LogisticLoss: the anisotropic target is a smooth regression target (a real
+# covariance-shaped Gaussian, continuous values), not GAUSS/CIRCLE's classification-style
+# {-1,1} target that LogisticLoss is paired with per the kth_train comment above - using
+# LogisticLoss here would reproduce the exact GAUSS/LogisticLoss mismatch already documented
+# as unsuitable.
+kth_train_anisotropic = kth_train.copy()
+kth_train_anisotropic.update({
+    'hm_filter': HeatMap.ANISO,
+    'criterion': torch.nn.MSELoss(),
+})
 
 
 def set_cfg(config_name: str):
