@@ -82,8 +82,15 @@ SPAN = (SEQ_SIZE // 2) * NTH_FRAME
 SCALES = [0.5, 1.0, 2.0]
 REF_SCALE = 1.0   # the bucket arm (b) calibrates on and then deploys everywhere
 
-OCC_DENSITY = 0.35   # fraction of the GT-union box covered by branches. NOT calibrated
-                     # against real NFO occluder coverage (documented gap in the doc).
+OCC_THICKNESS = 1    # branch line thickness in px. Few-thick-bands vs many-thin-lines is
+                     # what decides whether the person gets cleanly cut or eaten away - see
+                     # tracking/eval/occluder_calibration.py.
+OCC_DENSITY = 0.05   # fraction of the GT-union box covered by branches. CALIBRATED against
+                     # real NFO's measured fragmentation statistics by
+                     # tracking/eval/occluder_calibration.py (blobs per person, tallest-blob
+                     # height over box height, inter-blob gap). Every kill-test result
+                     # recorded before that calibration used 0.35, which over-fragments the
+                     # person by ~7x relative to NFO - pass --density 0.35 to reproduce them.
 OCC_DARKEN = 0.45    # occluder appearance = 0.45 * that pixel's background, so the occluder
                      # is visibly dark foliage-like but keeps the background's own texture
                      # (a partial fix for the doc's "flat-color occlusion" gap). Static
@@ -180,7 +187,8 @@ def build_bucket(frames_native, boxes, scale, seed, sway_px=0.0, distractor_px=0
     x2 = int(np.ceil(max(b[0] + b[2] for b in boxes.values()) * W))
     y2 = int(np.ceil(max(b[1] + b[3] for b in boxes.values()) * H))
     union = (max(x1, 0), max(y1, 0), min(x2, W), min(y2, H))
-    occ = generate_occlusion_branch((H, W), density=OCC_DENSITY, bbox=union, seed=seed)
+    occ = generate_occlusion_branch((H, W), density=OCC_DENSITY, bbox=union, seed=seed,
+                                    thickness=OCC_THICKNESS)
 
     background = np.median(frames, axis=0).astype(np.uint8)  # person passes through, so median ~ background
     occ_appearance = (background * OCC_DARKEN).astype(np.uint8)
@@ -293,6 +301,8 @@ def main():
     scale_preprocess = '--frozen-preprocess' not in sys.argv
     sway_base = arg_value('--sway', 0.0)  # px of branch-tip sway at the 1x bucket
     dist_base = arg_value('--distractor', 0.0)  # px of sway for the separated distractor
+    global OCC_DENSITY
+    OCC_DENSITY = arg_value('--density', OCC_DENSITY)
     print(f"scale buckets {SCALES}, ref bucket {REF_SCALE}, occluder density {OCC_DENSITY}, "
           f"distractor sway {dist_base}px@1x, "
           f"darken {OCC_DARKEN}, sway {sway_base}px@1x (period {SWAY_PERIOD}), "

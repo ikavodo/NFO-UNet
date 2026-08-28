@@ -89,7 +89,13 @@ uniformly wrong. Low variance across scale is not evidence of invariance, and it
 easiest way to fool yourself here. Any future invariance claim needs both a spread number
 and a level number.
 
-### F6. The shape term does fragment selection, not distractor rejection
+### F6. ~~The shape term does fragment selection, not distractor rejection~~ SUPERSEDED
+
+**Wrong - see the calibration addendum at the end of this file.** Measured NFO fragmentation
+is mild (1.85 blobs per person, tallest blob spanning 86% of the box), so there is little
+fragment ambiguity to resolve, and the p90 residual of 0.5929 without the term means the
+tracker locks onto a *different object*, not a different fragment. The term rejects non-person
+movers, as its docstring always said. The paragraph below is kept for the record.
 
 The premise all along was that `expected_height` exists to reject swaying foliage. On real
 NFO, switching it off leaves the no-track rate **unchanged** (0.2% either way) but worsens
@@ -253,3 +259,143 @@ parameter actually carries the scale sensitivity, that a fragment-statistics sca
 not transfer to dense real occlusion, that consistency across scale is not invariance, and
 that the shape term's real job was fragment selection rather than the distractor rejection its
 docstring claims.
+
+---
+
+## Addendum: occluder calibration, and a correction to F6
+
+`tracking/eval/occluder_calibration.py` measures four dimensionless fragmentation statistics
+strictly inside the person's own ground-truth box, on real NFO and on synthetic KTH, with the
+segmentation front-end derived from each dataset's own ground-truth person height so neither
+gets a front-end tuned to it. Person height comes from ground truth, not from
+`estimate_person_height` - per F4 that estimator has no business inside a calibration loop.
+
+### What real NFO fragmentation actually looks like
+
+| | blobs per person | tallest blob / box height | fill of box | inter-blob gap / box height |
+|---|---|---|---|---|
+| NFO seq1 | 1.65 | 0.873 | 0.452 | 0.381 |
+| NFO seq2 | 1.93 | 0.870 | 0.504 | 0.350 |
+| NFO seq3 | 2.02 | 0.798 | 0.429 | 0.364 |
+| NFO seq4 | 1.84 | 0.873 | 0.508 | 0.363 |
+| **NFO pooled** | **1.85** | **0.855** | **0.475** | **0.365** |
+
+**NFO people are only mildly fragmented.** Under two blobs on average, and the tallest single
+blob spans 86% of the person's box height. This contradicts an assumption carried through this
+whole investigation.
+
+### The synthetic occluder was ~7x too aggressive
+
+Synthetic KTH, 1x scale, sweeping density and line thickness (mismatch = mean relative error
+over the three shape statistics; `fill_frac` excluded, see below):
+
+| thickness | density | blobs | tallest/box | fill | gap | mismatch |
+|---|---|---|---|---|---|---|
+| 1 | 0.00 | 1.66 | 0.873 | 0.230 | 0.392 | 0.064 |
+| 1 | **0.05** | **1.75** | **0.838** | 0.220 | 0.394 | **0.050** |
+| 1 | 0.10 | 1.91 | 0.790 | 0.211 | 0.398 | 0.063 |
+| 1 | 0.15 | 2.02 | 0.731 | 0.198 | 0.409 | 0.113 |
+| 1 | **0.35** (used all along) | 2.42 | 0.552 | 0.149 | 0.416 | 0.238 |
+| 5 | 0.05 | 1.82 | 0.809 | 0.211 | 0.418 | 0.067 |
+
+**Calibrated value: density 0.05, thickness 1.** `OCC_DENSITY` default changed accordingly;
+pass `--density 0.35` to reproduce any earlier result. Line thickness barely matters at
+matched density, so the few-thick-bands idea is not needed.
+
+`fill_frac` is excluded from the score for a reason that is itself a finding: adding occlusion
+can only lower it, and synthetic KTH's **unoccluded** fill (0.230) is already less than half
+NFO's **occluded** fill (0.475). MOG2 recovers a much smaller share of the person on KTH than
+on NFO. So on the statistic that measures how much of the person survives segmentation,
+**un-occluded synthetic KTH is already harder than real occluded NFO** - our benchmark's
+difficulty comes mostly from KTH's own segmentation noise, not from the occluder we added. No
+density setting can fix that; it is a property of the source footage.
+
+### Correction to F6
+
+F6 claimed the shape term does *fragment selection* on heavily-fragmented NFO rather than
+distractor rejection. **That was wrong**, and this measurement is why: NFO people are not
+heavily fragmented (1.85 blobs, 86% intact), so there is little fragment ambiguity to resolve.
+
+Re-reading the same NFO run with that in mind, the tell was already there and I read it
+wrongly: without the shape term the **p90 residual is 0.5929** - more than half the frame
+away. That is not a different fragment of the person, it is a different object. The no-track
+rate stays at 0.2% because a track is always found; it is simply the wrong one. So
+`score_and_fit`'s docstring was right all along: **the term rejects non-person movers**, and
+on NFO that is worth taking p90 from 0.59 to 0.10.
+
+Why the synthetic distractor experiments still measured nothing is then a separate, mechanical
+failure, already diagnosed: a rigid shear of a dense branch band moves branch tips but barely
+moves the blob centroid, and the scorer scores centroids. The concept was fine; the stimulus
+was not.
+
+### What this does and does not change
+
+- **F1, F2, F3, F5 stand.** The scale cliff, the gate holding 70-78% of the sensitivity, the
+  dimensionless fix, and consistency-is-not-invariance were all measured across five variant
+  runs and are properties of pixel thresholds, not of occluder density.
+- **F4 stands**, and gains support: the estimator over-read seq1 as 315px partly because dense
+  occlusion welds a person to nearby foliage - but NFO's *box-internal* fragmentation is mild,
+  so the failure is about foliage outside the person, i.e. about blob identity, not breakage.
+- **F6 is replaced** by the corrected reading above: the shape term rejects wrong objects.
+- **Every scoring-term measurement in this log was taken at density 0.35**, i.e. in a
+  7x-over-fragmented regime that does not represent NFO. The scoring-term numbers (2-9pp) are
+  therefore measured in the wrong regime and should be re-taken at the calibrated density
+  before any conclusion about the scorer is trusted. The gate numbers are unaffected.
+- **Data-strategy consequence:** KTH + synthetic occlusion is a weak proxy for NFO
+  fragmentation, and the mismatch is dominated by KTH's base segmentation rather than the
+  occluder. Generating more of it will not fix that. Either improve the base segmentation on
+  KTH, or accept the mismatch and lean on dimensionless features to bridge it - and in either
+  case validate on NFO, never tune on it.
+
+---
+
+## Stage 1: the smallest experiment that moves toward learned gating
+
+Deliberately local: no tracker changes, no training pipeline, no new data generation, one
+script, one number that decides whether to continue. It targets the gate because that is where
+70-78% of the scale sensitivity is (F2), and it is offline so a negative result costs nothing.
+
+**Question.** Can a learned match rule hold its operating point across scale better than the
+best non-learned dimensionless rule can?
+
+That is the only question worth asking first. If the fixed dimensionless threshold already
+transfers perfectly, a learned gate has nothing to add and the whole direction can be dropped
+for the cost of an afternoon.
+
+**Setup.**
+- Data: 3 KTH sequences, 3 scales (0.5x / 1x / 2x), calibrated occluder (density 0.05).
+  Everything already exists in `kill_test_scale.build_bucket`.
+- Examples: for each frame pair `(t, t + nth_frame)`, every (detection in `t`, detection in
+  `t + nth_frame`) pair. Label 1 if both detections lie inside the person's ground-truth box,
+  0 otherwise. That is exactly the decision `track_blobs`'s gate makes, in isolation.
+- Features, 6, all dimensionless, none needing a person-height estimate:
+  1. centroid displacement / median nearest-neighbour distance among frame `t`'s detections
+  2. centroid displacement / this detection's own blob height
+  3. `|dheight| / mean height`
+  4. `|darea| / mean area`
+  5. `|daspect| / mean aspect`
+  6. rank of this candidate by distance (1 = nearest) + whether the match is mutual
+- Model: logistic regression (sklearn 1.6.1 is already in the env).
+- Baselines: (i) today's rule, `distance < 0.25 x person_height`; (ii) the scale-free
+  alternative, `distance < k x median nearest-neighbour distance`, with `k` tuned on 1x.
+
+**Protocol.** Fit on 1x only. Evaluate at 0.5x and 2x. This is the scale-transfer test in
+its cheapest possible form.
+
+**Metric.** Not accuracy - the classes are wildly imbalanced and the costs are asymmetric.
+Report the **false-negative rate on true person pairs at a fixed false-positive rate**, per
+scale, because F1 established that missing true matches is what kills the tracker while
+extra candidates are cheap.
+
+**Go/no-go.** Continue only if the learned rule's false-negative rate at 0.5x and 2x is
+materially better than both baselines' when all three are tuned on 1x alone. If baseline (ii)
+already transfers flat, implement baseline (ii) in the tracker (it is a ~5-line change) and
+stop - that is a win without any learned component.
+
+**By-products worth having either way.** The dimensionless feature extractor, and the
+resize-invariance unit test on it (`f(video) ~= f(resize(video, s))` for `s` in {0.5, 1, 2}),
+which components A/B/C all need and which F5 says must exist before any invariance claim.
+
+**Only if stage 1 passes,** stage 2 plugs `-log p(match)` into `track_blobs`'s cost matrix and
+re-runs the kill test, with the bar being `scale_rel`'s worst bucket of 74.6% (F3) and NFO mean
+residual <= 0.0762 (F4). Not before.
