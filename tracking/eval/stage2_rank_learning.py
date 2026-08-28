@@ -53,7 +53,21 @@ GAIT_FEATURES = ['aspect_mean', 'aspect_cv', 'width_cv', 'aspect_rel']
 # entirely by detect_blobs. Normalized within the window so overall scene brightness and
 # contrast cancel.
 APP_FEATURES = ['app_mean_rel', 'app_std_rel', 'app_consistency']
-FEATURES = BASE_FEATURES + GAIT_FEATURES + APP_FEATURES
+# score_and_fit's own score, handed to the ranker as evidence rather than as a hard fallback
+# branch. Motivation: on the one NFO sequence where the formula nearly saturates (seq1,
+# baseline 98.5% against an oracle of 99.3% - 0.8pp of headroom), every learned feature block
+# hurts, because there is nothing to win and only variance to add. A count-based "few
+# candidates -> use the formula" guard would fix that with a threshold fitted to a single
+# sequence; giving the model the formula's own opinion instead needs no constant and lets it
+# learn when to defer. Both features are PER-CANDIDATE: a per-window quantity such as the
+# top-to-runner-up margin would cancel in a pairwise-difference ranker.
+#   base_score_rel  the candidate's score over the window's best score (1.0 = the formula's pick)
+#   base_rank_frac  its rank by score over the number of candidates (small = the formula likes it)
+# Note the score is a nonlinear combination of quantities the other features already carry
+# (span x net_disp / (1 + resid_std), times a Gaussian in height), so this mainly gives a
+# linear model access to that nonlinearity.
+BASE_SCORE_FEATURES = ['base_score_rel', 'base_rank_frac']
+FEATURES = BASE_FEATURES + GAIT_FEATURES + APP_FEATURES + BASE_SCORE_FEATURES
 
 
 def _track_arrays(cand):
@@ -114,18 +128,23 @@ def track_features(cand, n_frames, all_cands):
         app_mean / med_app,                                              # app_mean_rel
         app_std / med_app_std,                                           # app_std_rel
         _cv(ams),                                                        # app_consistency
+        cand['_score_rel'],                                              # base_score_rel
+        cand['_rank_frac'],                                              # base_rank_frac
     ]
 
 
 def annotate_candidates(cands):
     """Pre-compute each candidate's raw aspect/appearance means so the within-window medians
     used for normalization are available while featurizing any single candidate."""
-    for c in cands:
+    best_score = max([c['score'] for c in cands] + [0.0])
+    for rank, c in enumerate(cands, start=1):   # score_and_fit returns candidates best-first
         _, _, hs, ws, ams, asds = _track_arrays(c)
         aspect = ws / np.where(np.isfinite(hs) & (hs > 0), hs, np.nan)
         c['_aspect_mean'] = float(np.nanmean(aspect)) if np.isfinite(aspect).any() else None
         c['_app_mean'] = float(np.nanmean(ams)) if np.isfinite(ams).any() else None
         c['_app_std'] = float(np.nanmean(asds)) if np.isfinite(asds).any() else None
+        c['_score_rel'] = c['score'] / best_score if best_score > 1e-12 else 0.0
+        c['_rank_frac'] = rank / len(cands)
 
 
 def collect_sequence(seq):
@@ -198,13 +217,16 @@ def main():
     # (texture amount and temporal stability). The gap between 'all' and 'all_nopol' measures
     # how much of the win rests on that shortcut.
     APP_NOPOL = [f for f in APP_FEATURES if f != 'app_mean_rel']
+    ALL_NOPOL = BASE_FEATURES + GAIT_FEATURES + APP_NOPOL
     BLOCKS = {
         'base': BASE_FEATURES,
         'base+gait': BASE_FEATURES + GAIT_FEATURES,
-        'base+app': BASE_FEATURES + APP_FEATURES,
         'base+app_nopol': BASE_FEATURES + APP_NOPOL,
-        'all': FEATURES,
-        'all_nopol': BASE_FEATURES + GAIT_FEATURES + APP_NOPOL,
+        'all_nopol': ALL_NOPOL,
+        'all': BASE_FEATURES + GAIT_FEATURES + APP_FEATURES,
+        # + the formula's own score as evidence, on top of each of the two headline sets
+        'all_nopol+bscore': ALL_NOPOL + BASE_SCORE_FEATURES,
+        'all+bscore': FEATURES,
     }
     pooled = {k: [] for k in ('baseline', 'oracle', *BLOCKS)}
     weights = {}
@@ -238,12 +260,14 @@ def main():
 
     print("\nstandardized weights for the full feature set (mean over folds, "
           "positive = evidence this candidate is the right one):")
-    mean_w = {k: float(np.mean([f[k] for f in weights['all']])) for k in FEATURES}
+    mean_w = {k: float(np.mean([f[k] for f in weights['all+bscore']])) for k in FEATURES}
     for k, v in sorted(mean_w.items(), key=lambda t: -abs(t[1])):
-        block = 'gait' if k in GAIT_FEATURES else 'app' if k in APP_FEATURES else 'base'
+        block = ('gait' if k in GAIT_FEATURES else 'app' if k in APP_FEATURES
+                 else 'score' if k in BASE_SCORE_FEATURES else 'base')
         print(f"  {k:>16} [{block:>4}]: {v:+.3f}")
 
-    b = np.array(pooled['baseline']); l = np.array(pooled['all']); o = np.array(pooled['oracle'])
+    b = np.array(pooled['baseline']); l = np.array(pooled['all+bscore'])
+    o = np.array(pooled['oracle'])
     print(f"\nheadroom (baseline -> oracle): mean {b.mean():.4f} -> {o.mean():.4f}, "
           f"hit {100 * (b < HIT).mean():.1f}% -> {100 * (o < HIT).mean():.1f}%")
     print(f"captured by the learned ranker: mean {b.mean():.4f} -> {l.mean():.4f}, "

@@ -630,3 +630,49 @@ which is exactly the regime where there is nothing to disambiguate anyway.
   real frames cannot see a full walking cycle (~25 frames), so only silhouette-proportion
   variability was measurable, not periodicity. A longer window would let the frequency-domain
   version be tried - that is a change to the window length, not to the model.
+
+### Baseline-score feature: kept, but it is not the fix for seq1
+
+`score_and_fit`'s own score added as two per-candidate features - the candidate's score over
+the window's best score, and its rank over the candidate count. (A per-window quantity such as
+the top-to-runner-up margin would cancel in a pairwise-difference ranker, so it cannot be used.)
+This replaced the count-based fallback guard that was considered and rejected: the guard would
+have needed a threshold fitted to a single sequence, whereas this needs no constant and lets the
+model learn when to defer to the formula.
+
+Pooled effect is small, as expected - the score is a nonlinear combination of quantities the
+other features already carry:
+
+| feature set | hit@0.1 | headroom (mean / hit) |
+|---|---|---|
+| all_nopol | 94.6% | 52% / 52% |
+| **all_nopol + bscore** | **94.9%** | **53% / 55%** |
+| all | 95.6% | 68% / 63% |
+| all + bscore | 95.7% | 67% / 64% |
+
+On the sequence that motivated it:
+
+| held-out seq1 | hit@0.1 |
+|---|---|
+| baseline (formula alone) | **98.5%** |
+| all_nopol | 95.4% |
+| **all_nopol + bscore** | **96.2%** |
+| all + bscore | 94.5% |
+| oracle | 99.3% |
+
+So the feature recovers 0.8pp of seq1's 3.1pp regression - **directionally right, but not a
+fix**. The formula still beats every learned variant on that sequence by ~2.3pp. Conclusion:
+neither the rejected guard nor this feature addresses the real cause, which remains confounded
+between a ceiling effect (0.8pp of headroom exists there, so any change is nearly all downside)
+and a scene difference in seq1's appearance statistics. Separating those needs footage from a
+different scene; `../master_thesis/GPJATK` (different actors, hence different clothing) is the
+available instrument and is the only thing that can settle it.
+
+Keep the feature - it is free, needs no constant, and is mildly positive on both pooled and
+seq1 numbers. Note also that seq1 again prefers the polarity-free variant (96.2% vs 94.5%),
+which is further weak evidence that `app_mean_rel` encodes a scene-specific assumption.
+
+**Recommended configuration: `all_nopol + bscore`.** Pooled hit 94.9%, 53% of the ranking
+headroom, no brightness-polarity assumption, no hand-tuned fallback constant, and the smallest
+regression on the uncluttered sequence of any learned variant. `all + bscore` (95.7%, 67%)
+remains an upper bound contingent on the scene assumption.
