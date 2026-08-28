@@ -3,9 +3,17 @@ import cv2
 from scipy.optimize import linear_sum_assignment
 
 
-def detect_blobs(masks: np.ndarray, min_area: float = 80):
+def detect_blobs(masks: np.ndarray, min_area: float = 80, raw_frames: np.ndarray = None):
     """[T, H, W] binary (0/255) mask stack -> list of per-frame detection lists.
-    Each detection: {'x': cx, 'y': cy, 'area': area, 'bbox': (x1, y1, x2, y2)}."""
+    Each detection: {'x': cx, 'y': cy, 'area': area, 'bbox': (x1, y1, x2, y2)}.
+
+    raw_frames: optional [T, H, W] greyscale stack the masks were computed from. When given,
+    each detection also carries 'app_mean'/'app_std' - the mean and standard deviation of the
+    raw intensity over that blob's own pixels (not its bounding box). The mask itself is a
+    pure 0/255 silhouette, but the frame underneath it is not, and that intensity signal was
+    previously discarded entirely; it is real information for telling clothing from foliage.
+    Defaults to None, i.e. exactly the original behavior.
+    """
     detections = []
     for t in range(masks.shape[0]):
         frame = (masks[t] > 0).astype(np.uint8)
@@ -18,13 +26,29 @@ def detect_blobs(masks: np.ndarray, min_area: float = 80):
             cx, cy = centroids[i]
             x, y, w, h = (stats[i, cv2.CC_STAT_LEFT], stats[i, cv2.CC_STAT_TOP],
                           stats[i, cv2.CC_STAT_WIDTH], stats[i, cv2.CC_STAT_HEIGHT])
-            dets.append({"x": cx, "y": cy, "area": area, "bbox": (x, y, x + w, y + h)})
+            det = {"x": cx, "y": cy, "area": area, "bbox": (x, y, x + w, y + h)}
+            if raw_frames is not None:
+                sub = raw_frames[t][y:y + h, x:x + w]
+                own = labels[y:y + h, x:x + w] == i
+                vals = sub[own].astype(np.float32)
+                det["app_mean"] = float(vals.mean()) if vals.size else float('nan')
+                det["app_std"] = float(vals.std()) if vals.size else float('nan')
+            dets.append(det)
         detections.append(dets)
     return detections
 
 
 def _bbox_height(bbox):
     return bbox[3] - bbox[1]
+
+
+def _det_shape_app(d):
+    """(height, width, app_mean, app_std) for one detection - the per-frame record kept in
+    _Track.history beyond position. Width and appearance are None/NaN when unavailable, so
+    callers that never asked for them are unaffected."""
+    x1, y1, x2, y2 = d["bbox"]
+    return (y2 - y1, x2 - x1,
+            d.get("app_mean", float('nan')), d.get("app_std", float('nan')))
 
 
 class _Track:
@@ -42,12 +66,15 @@ class _Track:
     Q_VAR = 2.0
     R_VAR = 9.0
 
-    def __init__(self, x, y, t0, height=None):
+    def __init__(self, x, y, t0, height=None, shape_app=(None, float('nan'), float('nan'))):
         self.id = _Track._next_id
         _Track._next_id += 1
         self.state = np.array([x, y, 0.0, 0.0])
         self.P = np.eye(4) * self.P_VAR
-        self.history = {t0: (x, y, height)}
+        # history entries are (x, y, height, width, app_mean, app_std). Entries are only ever
+        # APPENDED to, never reordered, so existing readers that index [0]/[1]/[2] or slice
+        # [:2] keep working unchanged.
+        self.history = {t0: (x, y, height) + tuple(shape_app)}
         self.first_frame = t0
         self.last_frame = t0
         self.misses = 0
@@ -59,7 +86,7 @@ class _Track:
         self.P = F @ self.P @ F.T + Q
         return self.state[:2]
 
-    def update(self, x, y, t, height=None):
+    def update(self, x, y, t, height=None, shape_app=(None, float('nan'), float('nan'))):
         H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], dtype=float)
         R = np.eye(2) * self.R_VAR
         z = np.array([x, y])
@@ -68,7 +95,7 @@ class _Track:
         K = self.P @ H.T @ np.linalg.inv(S)
         self.state = self.state + K @ y_res
         self.P = (np.eye(4) - K @ H) @ self.P
-        self.history[t] = (x, y, height)
+        self.history[t] = (x, y, height) + tuple(shape_app)
         self.last_frame = t
         self.misses = 0
 
@@ -90,7 +117,8 @@ def track_blobs(detections, max_dist: float, max_age: int = 6):
             row_ind, col_ind = linear_sum_assignment(cost)
             for r, c in zip(row_ind, col_ind):
                 if cost[r, c] <= max_dist:
-                    active[r].update(dets[c]["x"], dets[c]["y"], t, height=_bbox_height(dets[c]["bbox"]))
+                    h, *rest = _det_shape_app(dets[c])
+                    active[r].update(dets[c]["x"], dets[c]["y"], t, height=h, shape_app=rest)
                     matched_tracks.add(r)
                     matched_dets.add(c)
         for i, tr in enumerate(active):
@@ -98,7 +126,8 @@ def track_blobs(detections, max_dist: float, max_age: int = 6):
                 tr.misses += 1
         for j, d in enumerate(dets):
             if j not in matched_dets:
-                active.append(_Track(d["x"], d["y"], t, height=_bbox_height(d["bbox"])))
+                h, *rest = _det_shape_app(d)
+                active.append(_Track(d["x"], d["y"], t, height=h, shape_app=rest))
         still_active = []
         for tr in active:
             (dead if tr.misses > max_age else still_active).append(tr)

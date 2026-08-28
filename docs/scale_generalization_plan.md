@@ -557,3 +557,76 @@ builds masks with `filter_by_shape`/`refine_mask` defaults and `detect_blobs`'s 
 no candidate at all (0.2% of them) instead of counting them as misses. Both differences apply
 identically to all three arms, so the comparison stands; the absolute numbers are marginally
 optimistic relative to the published figure.
+
+---
+
+## Stage 2, rerun with gait and appearance features: 13% -> 68% of the ranking headroom
+
+Two feature blocks added. Both needed plumbing that did not exist:
+`detect_blobs(..., raw_frames=)` now computes each blob's masked-intensity mean/std from the
+greyscale frame under its own pixels (previously discarded entirely), and `_Track.history`
+entries grew from `(x, y, height)` to `(x, y, height, width, app_mean, app_std)` - appended
+only, so every existing reader is untouched.
+
+Pooled over the four held-out sequences, leave-one-sequence-out throughout:
+
+| feature set | mean | median | p90 | hit@0.1 | headroom captured (mean / hit) |
+|---|---|---|---|---|---|
+| baseline (`score_and_fit`) | 0.0662 | 0.0248 | 0.0988 | 90.0% | - |
+| base (6 motion/size features) | 0.0601 | 0.0240 | 0.0824 | 91.5% | 13% / 17% |
+| base + gait | 0.0554 | 0.0232 | 0.0781 | 92.5% | 24% / 28% |
+| base + appearance, polarity-free | 0.0458 | 0.0233 | 0.0741 | 93.8% | 45% / 42% |
+| base + appearance | 0.0390 | 0.0225 | 0.0705 | 94.5% | 60% / 51% |
+| **all, polarity-free** | 0.0428 | 0.0222 | 0.0704 | 94.6% | **52% / 52%** |
+| **all** | **0.0357** | 0.0216 | 0.0683 | **95.6%** | **68% / 63%** |
+| oracle | 0.0212 | 0.0156 | 0.0415 | 98.8% | 100% |
+
+Appearance is by far the biggest single addition (+32 points of headroom over base, in its
+polarity-free form), gait adds a real but smaller amount (+11), and the two are largely
+complementary.
+
+### The dominant feature is a possible scene shortcut, and it was worth checking
+
+The largest standardized weight by a wide margin is `app_mean_rel` at **-2.02**: a candidate
+is judged more likely to be the person the *darker* it is relative to the other candidates in
+its window. That may simply be true of NFO's four sequences - dark clothing against a bright
+background - and false of other footage, where it would invert. Note that leave-one-sequence-out
+**cannot** detect this: all four sequences share the same scene and clothing, so the shortcut is
+present in every fold, train and test alike. Dimensionless is not the same as
+scene-independent, which is a variant of F5's lesson.
+
+So the `*_nopol` rows drop `app_mean_rel` and keep only the polarity-free appearance features
+(texture amount, temporal appearance stability). Result: **52% of the headroom survives without
+it, against 68% with it.** Roughly three quarters of the appearance win is polarity-free and
+trustworthy; the remaining quarter rests on "the person is the darkest thing here" and should
+not be shipped or published without testing on footage with different clothing and lighting.
+
+Recommendation: treat `all_nopol` (52%, hit 94.6%) as the defensible result and `all` (68%,
+hit 95.6%) as an upper bound contingent on a scene assumption.
+
+### seq1 is a real warning, not noise
+
+| held-out seq1 | baseline | base | all | all_nopol | oracle |
+|---|---|---|---|---|---|
+| hit@0.1 | **98.5%** | 98.4% | 94.0% | 95.4% | 99.3% |
+
+On the one sequence the hand-picked formula already nearly saturates, every learned variant is
+**worse**, and the appearance features are what cause it (base is neutral at 98.4%). seq1 also
+has only 3.1 candidate tracks per window against 14-20 in the others. So the learned ranker
+trades a little accuracy on easy, uncluttered windows for a lot on cluttered ones. Pooled that
+is clearly a win, but it means a deployed version should not simply replace the formula - the
+obvious cheap guard is to fall back to the existing score when a window has few candidates,
+which is exactly the regime where there is nothing to disambiguate anyway.
+
+### Where this leaves the direction
+
+- Ranking is confirmed as the place where the remaining error lives (the oracle is 98.8%) and
+  now also as the place where learning actually pays: 68% of that headroom, 52% without the
+  suspect feature, against 13% for motion/size features alone.
+- The next honest step is **not** a bigger model. It is testing whether the appearance win
+  survives a change of scene, which needs footage that is not these four NFO sequences. Until
+  then the number to quote is 52%.
+- Gait features are worth keeping but were limited by design: a 7-frame window spanning 13
+  real frames cannot see a full walking cycle (~25 frames), so only silhouette-proportion
+  variability was measurable, not periodicity. A longer window would let the frequency-domain
+  version be tried - that is a change to the window length, not to the model.

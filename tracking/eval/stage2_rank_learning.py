@@ -40,28 +40,92 @@ from tracking.eval.eval_nfo import (IN_DIR, SEQS, SPAN, NTH_FRAME, BG_FRAMES, MA
                                     MERGE_RADIUS, EXPECTED_HEIGHT, parse_normalized_bbs)
 
 HIT = 0.1
-FEATURES = ['span_frac', 'height_rel', 'disp_rel', 'straightness', 'resid_rel', 'size_stability']
+BASE_FEATURES = ['span_frac', 'height_rel', 'disp_rel', 'straightness', 'resid_rel',
+                 'size_stability']
+# Shape/gait block. True gait *periodicity* is not measurable here and deliberately is not
+# attempted: a window is 7 sampled frames spanning 13 real ones, while a walking cycle is
+# ~25 frames at NFO's frame rate, so a window sees about half a cycle. What IS measurable is
+# how the silhouette's proportions vary over the window, which is the same signal minus the
+# frequency estimate: a person's aspect ratio wobbles about a person-like value, a
+# foliage-revealed background patch does not.
+GAIT_FEATURES = ['aspect_mean', 'aspect_cv', 'width_cv', 'aspect_rel']
+# Appearance block, from the raw greyscale under each blob's own pixels - previously discarded
+# entirely by detect_blobs. Normalized within the window so overall scene brightness and
+# contrast cancel.
+APP_FEATURES = ['app_mean_rel', 'app_std_rel', 'app_consistency']
+FEATURES = BASE_FEATURES + GAIT_FEATURES + APP_FEATURES
+
+
+def _track_arrays(cand):
+    """(xs, ys, heights, widths, app_means, app_stds) over the track's own frames."""
+    frames, hist = cand['frames'], cand['history']
+    cols = [[hist[f][k] if len(hist[f]) > k else None for f in frames] for k in range(6)]
+    out = []
+    for c in cols:
+        v = np.array([np.nan if x is None else float(x) for x in c], dtype=float)
+        out.append(v)
+    return out
+
+
+def _cv(v):
+    """Coefficient of variation - dimensionless spread. 0 when undefined."""
+    v = v[np.isfinite(v)]
+    if len(v) < 2 or abs(v.mean()) < 1e-6:
+        return 0.0
+    return float(v.std() / abs(v.mean()))
+
+
+def _nanmed(vals, default=1.0):
+    vals = [v for v in vals if v is not None and np.isfinite(v)]
+    m = float(np.median(vals)) if vals else default
+    return m if abs(m) > 1e-6 else default
 
 
 def track_features(cand, n_frames, all_cands):
     """Dimensionless, within-window-normalized description of one candidate track."""
+    xs, ys, hs, ws, ams, asds = _track_arrays(cand)
     frames = cand['frames']
-    hist = cand['history']
-    xs = np.array([hist[f][0] for f in frames])
-    ys = np.array([hist[f][1] for f in frames])
-    hs = np.array([hist[f][2] for f in frames if hist[f][2] is not None], dtype=float)
 
     path = float(np.sum(np.hypot(np.diff(xs), np.diff(ys)))) if len(xs) > 1 else 0.0
-    med_h = np.median([c['mean_height'] for c in all_cands if c['mean_height']]) or 1.0
-    med_disp = np.median([c['net_disp'] for c in all_cands]) or 1.0
+    med_h = _nanmed([c['mean_height'] for c in all_cands])
+    med_disp = _nanmed([c['net_disp'] for c in all_cands])
+
+    aspect = ws / np.where(np.isfinite(hs) & (hs > 0), hs, np.nan)
+    aspect_mean = float(np.nanmean(aspect)) if np.isfinite(aspect).any() else 0.0
+    app_mean = float(np.nanmean(ams)) if np.isfinite(ams).any() else 0.0
+    app_std = float(np.nanmean(asds)) if np.isfinite(asds).any() else 0.0
+
+    # within-window references for the new blocks, computed once per candidate set
+    med_aspect = _nanmed([c.get('_aspect_mean') for c in all_cands], default=aspect_mean or 1.0)
+    med_app = _nanmed([c.get('_app_mean') for c in all_cands], default=app_mean or 1.0)
+    med_app_std = _nanmed([c.get('_app_std') for c in all_cands], default=app_std or 1.0)
+
     return [
         len(frames) / max(n_frames, 1),                                  # span_frac
-        (cand['mean_height'] or 0.0) / max(med_h, 1e-6),                 # height_rel
-        cand['net_disp'] / max(med_disp, 1e-6),                          # disp_rel
+        (cand['mean_height'] or 0.0) / med_h,                            # height_rel
+        cand['net_disp'] / med_disp,                                     # disp_rel
         cand['net_disp'] / max(path, 1e-6),                              # straightness
         cand['resid_std'] / max(cand['net_disp'], 1e-6),                 # resid_rel
-        float(hs.std() / max(hs.mean(), 1e-6)) if len(hs) else 0.0,      # size_stability
+        _cv(hs),                                                         # size_stability
+        aspect_mean,                                                     # aspect_mean
+        _cv(aspect),                                                     # aspect_cv
+        _cv(ws),                                                         # width_cv
+        aspect_mean / med_aspect,                                        # aspect_rel
+        app_mean / med_app,                                              # app_mean_rel
+        app_std / med_app_std,                                           # app_std_rel
+        _cv(ams),                                                        # app_consistency
     ]
+
+
+def annotate_candidates(cands):
+    """Pre-compute each candidate's raw aspect/appearance means so the within-window medians
+    used for normalization are available while featurizing any single candidate."""
+    for c in cands:
+        _, _, hs, ws, ams, asds = _track_arrays(c)
+        aspect = ws / np.where(np.isfinite(hs) & (hs > 0), hs, np.nan)
+        c['_aspect_mean'] = float(np.nanmean(aspect)) if np.isfinite(aspect).any() else None
+        c['_app_mean'] = float(np.nanmean(ams)) if np.isfinite(ams).any() else None
+        c['_app_std'] = float(np.nanmean(asds)) if np.isfinite(asds).any() else None
 
 
 def collect_sequence(seq):
@@ -82,11 +146,12 @@ def collect_sequence(seq):
     windows = []
     for c in centers:
         idx = list(range(c - SPAN, c + SPAN + 1, NTH_FRAME))
-        dets = detect_blobs(masks[idx])
+        dets = detect_blobs(masks[idx], raw_frames=frames_all[idx])
         tracks = track_blobs(dets, max_dist=MAX_DIST)
         cands = score_and_fit(tracks, expected_height=EXPECTED_HEIGHT, return_all=True)
         if not cands:
             continue
+        annotate_candidates(cands)
         gt = raw[c]
         gx, gy = (gt[0] + gt[2] / 2) * W, (gt[1] + gt[3] / 2) * H
         X, resid = [], []
@@ -125,35 +190,72 @@ def main():
         ncand = np.mean([len(w['resid']) for w in data[seq]])
         print(f"  {seq}: {len(data[seq])} windows, {ncand:.1f} candidate tracks per window")
 
-    pooled = {k: [] for k in ('baseline', 'learned', 'oracle')}
+    idx = {name: i for i, name in enumerate(FEATURES)}
+    # app_mean_rel encodes a brightness POLARITY ("the person is darker than the other
+    # candidates"), which may be true of NFO's four sequences and false of other footage.
+    # Leave-one-sequence-out cannot detect a shortcut shared by every sequence in one scene,
+    # so the *_nopol blocks drop it and keep only the polarity-free appearance features
+    # (texture amount and temporal stability). The gap between 'all' and 'all_nopol' measures
+    # how much of the win rests on that shortcut.
+    APP_NOPOL = [f for f in APP_FEATURES if f != 'app_mean_rel']
+    BLOCKS = {
+        'base': BASE_FEATURES,
+        'base+gait': BASE_FEATURES + GAIT_FEATURES,
+        'base+app': BASE_FEATURES + APP_FEATURES,
+        'base+app_nopol': BASE_FEATURES + APP_NOPOL,
+        'all': FEATURES,
+        'all_nopol': BASE_FEATURES + GAIT_FEATURES + APP_NOPOL,
+    }
+    pooled = {k: [] for k in ('baseline', 'oracle', *BLOCKS)}
+    weights = {}
     print()
     for held in SEQS:
         train = [w for s in SEQS if s != held for w in data[s]]
-        D, y = pairs_from(train)
-        model = LogisticRegression(max_iter=5000, fit_intercept=False).fit(D, y)
-        w_vec = model.coef_[0]
-
-        base, learn, orac = [], [], []
+        D_full, y = pairs_from(train)
+        base, orac = [], []
         for win in data[held]:
             base.append(win['resid'][win['baseline_idx']])
-            learn.append(win['resid'][int(np.argmax(win['X'] @ w_vec))])
             orac.append(win['resid'].min())
-        pooled['baseline'] += base; pooled['learned'] += learn; pooled['oracle'] += orac
-        print(f"held-out {held} ({len(base)} windows, {len(D)} training pairs)")
-        for label, vals in (('baseline', base), ('learned', learn), ('oracle', orac)):
-            print("   " + summarize(vals, label))
+        pooled['baseline'] += base; pooled['oracle'] += orac
+        print(f"held-out {held} ({len(base)} windows, {len(D_full)} training pairs)")
+        print("   " + summarize(base, 'baseline'))
+        for bname, names in BLOCKS.items():
+            cols = [idx[n] for n in names]
+            D = D_full[:, cols]
+            sd = D.std(axis=0)
+            sd[sd < 1e-9] = 1.0          # differences are mean-zero by construction
+            model = LogisticRegression(max_iter=5000, fit_intercept=False).fit(D / sd, y)
+            w_vec = model.coef_[0] / sd
+            weights.setdefault(bname, []).append(dict(zip(names, model.coef_[0])))
+            vals = [win['resid'][int(np.argmax(win['X'][:, cols] @ w_vec))] for win in data[held]]
+            pooled[bname] += vals
+            print("   " + summarize(vals, bname))
+        print("   " + summarize(orac, 'oracle'))
 
     print("\nPOOLED over all four held-out sequences:")
-    for label in ('baseline', 'learned', 'oracle'):
+    for label in ('baseline', *BLOCKS, 'oracle'):
         print("   " + summarize(pooled[label], label))
 
-    b = np.array(pooled['baseline']); l = np.array(pooled['learned']); o = np.array(pooled['oracle'])
+    print("\nstandardized weights for the full feature set (mean over folds, "
+          "positive = evidence this candidate is the right one):")
+    mean_w = {k: float(np.mean([f[k] for f in weights['all']])) for k in FEATURES}
+    for k, v in sorted(mean_w.items(), key=lambda t: -abs(t[1])):
+        block = 'gait' if k in GAIT_FEATURES else 'app' if k in APP_FEATURES else 'base'
+        print(f"  {k:>16} [{block:>4}]: {v:+.3f}")
+
+    b = np.array(pooled['baseline']); l = np.array(pooled['all']); o = np.array(pooled['oracle'])
     print(f"\nheadroom (baseline -> oracle): mean {b.mean():.4f} -> {o.mean():.4f}, "
           f"hit {100 * (b < HIT).mean():.1f}% -> {100 * (o < HIT).mean():.1f}%")
     print(f"captured by the learned ranker: mean {b.mean():.4f} -> {l.mean():.4f}, "
           f"hit {100 * (b < HIT).mean():.1f}% -> {100 * (l < HIT).mean():.1f}%")
-    frac = (b.mean() - l.mean()) / max(b.mean() - o.mean(), 1e-9)
-    print(f"fraction of available headroom captured: {100 * frac:.0f}%")
+    print("\nfraction of the available ranking headroom captured, by feature block:")
+    for bname in BLOCKS:
+        v = np.array(pooled[bname])
+        frac_mean = (b.mean() - v.mean()) / max(b.mean() - o.mean(), 1e-9)
+        frac_hit = ((v < HIT).mean() - (b < HIT).mean()) / \
+                   max((o < HIT).mean() - (b < HIT).mean(), 1e-9)
+        print(f"  {bname:>10}: {100 * frac_mean:>5.0f}% of the mean-residual headroom, "
+              f"{100 * frac_hit:>5.0f}% of the hit-rate headroom")
     print("\n-> " + ("GO: learned ranker beats the hand-picked formula out of sample"
                      if l.mean() < b.mean() and (b < HIT).mean() < (l < HIT).mean()
                      else "NO-GO: hand-picked formula is not beaten out of sample"))
