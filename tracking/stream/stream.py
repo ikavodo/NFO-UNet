@@ -25,6 +25,7 @@ On the readout frame (--readout):
   asserted - run the demo twice and compare the printed jitter.
 """
 import argparse
+import itertools
 import os
 import threading
 import time
@@ -325,11 +326,44 @@ def in_ranges(f: int, ranges) -> bool:
     return not ranges or any(lo <= f <= hi for lo, hi in ranges)
 
 
-def run(video: str, person_height: float, scale: float = 0.5, readout: str = 'center',
+def bootstrap_person_height(frames: np.ndarray, bg_frames: int = 30) -> float:
+    """Measure the person height from a CONTIGUOUS block of frames.
+
+    Contiguity is not incidental. estimate_person_height works off MOG2 foreground, so
+    sub-sampling the frames before handing them over makes every moving object look bigger
+    between consecutive samples and inflates the estimate badly - measured against NFO ground
+    truth, a stride-4 probe of 60 frames returned +38%/+177%/+105%/+149% on seq1-4, while the
+    same 240 frames taken contiguously return +33%/+17%/-5%/+4%. The tracker is flat over
+    0.75x-1.5x of the true height (measured: hit@0.1 >= 0.96 across that band on all four
+    sequences), so contiguous is inside the usable band and strided is not.
+
+    It still needs the person to be present and moving somewhere in the block: on a
+    person-absent window of ido_walk.mkv it returns 266px, measuring leaf motion. So treat a
+    wildly implausible answer as a signal to pass --person-height, not as a measurement.
+    """
+    return float(estimate_person_height(frames, bg_frames=bg_frames))
+
+
+def run(video, person_height: float = None, scale: float = 0.5, readout: str = 'center',
         out_dir: str = 'images/stream', tag: str = '', display: bool = False,
         src_fps: float = 24.0, present=(), out_fps: float = None, smooth: bool = True,
         halflife: float = 0.15, trend_halflife: float = 0.5, jump_max: float = 0.75,
-        gt_path: str = None) -> dict:
+        gt_path: str = None, probe_frames: int = 240) -> dict:
+    source = frames_from_source(video, scale)
+    warmup = []
+    if person_height is None:
+        for f in source:
+            warmup.append(f)
+            if len(warmup) >= probe_frames:
+                break
+        assert warmup, f"no frames from {video}"
+        person_height = bootstrap_person_height(np.stack(warmup))
+        h_frame = warmup[0].shape[0]
+        print(f"bootstrapped person height {person_height:.0f}px from {len(warmup)} contiguous "
+              f"frames ({person_height / h_frame:.0%} of frame height)")
+        if not 0.05 * h_frame <= person_height <= 0.95 * h_frame:
+            print(f"  WARNING: that is implausible for a person; the estimator measures any "
+                  f"large moving object, so pass --person-height explicitly")
     pipe = StreamPipeline(person_height=person_height, readout=readout)
     sm = Smoother(person_height, src_fps, halflife_s=halflife,
                   trend_halflife_s=trend_halflife, jump_max=jump_max) if smooth else None
@@ -339,7 +373,9 @@ def run(video: str, person_height: float, scale: float = 0.5, readout: str = 'ce
               f"are not viable, person detection is the realistic downstream task")
 
     writer, results, t_start, shown, compute = None, [], time.perf_counter(), 0, 0.0
-    for frame in frames_from_source(video, scale):
+    # the probe frames are fed through the pipeline too, so they double as MOG2's warm-up
+    # instead of being consumed and thrown away
+    for frame in itertools.chain(warmup, source):
         t0 = time.perf_counter()
         r = pipe.step(frame)
         compute += time.perf_counter() - t0
@@ -532,7 +568,11 @@ def main():
                    help='nfo_processed groundtruth.txt to score residual/hit against')
     p.add_argument('--scale', type=float, default=0.5, help='resize factor applied to every frame')
     p.add_argument('--person-height', type=float, default=None,
-                   help='person height in pixels AFTER --scale; estimated from the footage if omitted')
+                   help='person height in pixels AFTER --scale; bootstrapped from the first '
+                        '--probe-frames contiguous frames if omitted')
+    p.add_argument('--probe-frames', type=int, default=240,
+                   help='contiguous frames used to bootstrap the person height; they are then '
+                        'fed through the pipeline as well, so they are not wasted')
     p.add_argument('--readout', choices=('center', 'newest'), default='center')
     p.add_argument('--out-dir', default='images/stream')
     p.add_argument('--tag', default='', help='output filename prefix (defaults to --readout)')
@@ -554,18 +594,17 @@ def main():
         measure_presence(a.video, a.scale, a.out_dir)
         return
 
-    height = a.person_height
-    if height is None:
-        assert not a.video.isdigit(), "--person-height is required for a webcam source"
-        probe = np.stack([f for i, f in enumerate(frames_from_source(a.video, a.scale)) if i % 4 == 0][:60])
-        height = estimate_person_height(probe)
-        print(f"estimated person height {height:.1f}px from {len(probe)} probe frames "
-              f"(pass --person-height to override; the estimator is unreliable on footage "
-              f"where the person is absent for most of the probe)")
     if a.compare:
+        height = a.person_height
+        if height is None:
+            probe = np.stack([f for _, f in zip(range(a.probe_frames),
+                                                frames_from_source(a.video, a.scale))])
+            height = bootstrap_person_height(probe)
+            print(f"bootstrapped person height {height:.0f}px")
         compare_readouts(a.video, height, scale=a.scale, out_dir=a.out_dir, present=present)
     else:
-        run(a.video, height, scale=a.scale, readout=a.readout, out_dir=a.out_dir, tag=a.tag,
+        run(a.video, a.person_height, scale=a.scale, readout=a.readout, out_dir=a.out_dir,
+            tag=a.tag, probe_frames=a.probe_frames,
             display=a.display, present=present, out_fps=a.out_fps, smooth=a.smooth,
             halflife=a.halflife, trend_halflife=a.trend_halflife, jump_max=a.jump_max,
             src_fps=a.src_fps, gt_path=a.gt)
