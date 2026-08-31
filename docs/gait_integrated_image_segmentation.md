@@ -135,6 +135,31 @@ and residual pose/appearance drift costs more than the occluder it removes. At t
 `seq_size=7, nth_frame=2` window the two are roughly tied (23.94 vs 23.71) and *both* barely beat
 not fusing at all (24.85), so nothing was gained there either.
 
+**Confirmed at the calibrated occlusion density.** A peer session's
+`tracking/eval/occluder_calibration.py` measured real NFO fragmentation (1.85 blobs per person,
+tallest blob 86% of box height) and found `generate_occlusion_branch(density=0.05)` matches it -
+the `0.35` used in this and earlier experiments over-fragments the person by roughly 7x. Rerunning
+the sweep across densities (seq_size=15, nth_frame=1):
+
+| method | d=0.05 (calibrated) | d=0.15 | d=0.35 |
+|---|---|---|---|
+| no fusion (center only) | 25.36 | 25.95 | 23.93 |
+| `mean` | 32.79 | 29.24 | 25.42 |
+| `median` | 35.69 | 29.37 | 23.08 |
+| gait_weighted | 26.02 | 23.91 | 22.04 |
+| **temporal_gaussian (sigma=1.0)** | **20.41** | **20.58** | **19.75** |
+
+Temporal weighting wins at every density, and **at the calibrated 0.05 gait-weighting is worse
+than not fusing at all** (26.02 vs 25.36) - so the negative result strengthens, it doesn't
+weaken, once the occluder is made realistic. Note also how badly `mean`/`median` degrade at low
+density (32.79/35.69): with little occluder to remove, uniform averaging over 15 frames buys
+almost nothing and pays the full pose-blur cost. Independent convergent evidence from the peer
+session: OpenCV HOG fires on 30.0% of plain centre-frame crops but only 13.3% (gaussian
+sigma=1.0) / 10.0% (median) of integrated crops, because integration aligns the centroid while
+limbs articulate across the span - sharp torso, smeared legs, which anything gradient-based reads
+as "not a person". Both results point at the same dominant variable: **pose drift within the
+fusion window is the cost, and it grows with temporal distance.**
+
 **Narrower claim that survives:** gait-phase weighting could still matter in the regime this test
 does *not* cover - a person occluded across a long *contiguous* stretch, where every temporally
 nearby frame is also occluded and the only usable material is a distant same-phase frame. That is

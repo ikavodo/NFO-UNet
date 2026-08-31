@@ -107,7 +107,12 @@ def main():
     parser.add_argument('--seq-dir', default='data/kth_processed/person01_jogging_d1_uncomp_gt')
     parser.add_argument('--seq-size', type=int, default=7)
     parser.add_argument('--nth-frame', type=int, default=2)
-    parser.add_argument('--density', type=float, default=0.35)
+    # 0.05, not the 0.35 used in earlier experiments: a peer session's
+    # tracking/eval/occluder_calibration.py measured real NFO fragmentation (1.85 blobs per
+    # person, tallest blob 86% of box height) and found 0.05 is the density that matches it -
+    # 0.35 over-fragments the person by roughly 7x. The conclusion below is unchanged at
+    # 0.05/0.15/0.35, and actually strengthens at 0.05.
+    parser.add_argument('--density', type=float, default=0.05)
     args = parser.parse_args()
 
     bbs = parse_bbs(os.path.join(args.seq_dir, 'groundtruth.txt'))
