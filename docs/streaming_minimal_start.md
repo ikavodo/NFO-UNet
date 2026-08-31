@@ -4,8 +4,16 @@ Read this first if you are starting a fresh session to implement the streaming t
 exists to make the *surface area* minimal - the set of things you must read and may touch -
 rather than to minimise the file count of the repository.
 
-**The plan:** `docs/superpowers/plans/2026-08-28-streaming-realtime-tracker.md` (8 tasks).
+**The plan:** `docs/superpowers/plans/2026-08-28-streaming-realtime-tracker.md` - 4 tasks over
+3 days, with a working demo at the end of Day 1.
 **The evidence behind every constant:** `docs/scale_generalization_plan.md`.
+
+**The one ordering decision that makes 3 days feasible:** the demo does *not* need the streaming
+core. The existing per-window code already runs at ~12 fps, and it is already known-correct. So
+Day 1 wires the existing code behind a `StreamPipeline.step(frame)` API and gets the full demo
+working; Day 2 swaps the internals for persistent tracks (the measured 3.8x speedup) behind that
+same API, gated by diffing the two engines against each other. The risky part becomes an
+optimization with a fallback instead of a prerequisite, and there is something to show either way.
 
 ## Everything the streaming tracker depends on
 
@@ -31,11 +39,12 @@ a time, optionally paced to a target fps. `data/nfo_final/nfo_final/seq1` is 800
 JPEGs with ground truth in `groundtruth*.txt`, so the fake stream doubles as the accuracy check.
 Task 1 of the plan.
 
-**2. The streaming core.** Persistent tracks stepped once per frame instead of the offline code's
-per-window re-tracking. Measured: 19.3 ms/frame against 73.7, i.e. the entire reason to do this.
-Emit results for frame `t - 6`; that 6-frame lookahead already exists in the offline design and
-must not grow. Task 2, and its parity check against `track_windows_in_sequence` is the gate that
-proves the restructure did not change results.
+**2. A ring buffer, then (only on Day 2) the streaming core.** Keep the last 13 frames, emit for
+the frame 6 behind the newest - that 6-frame lookahead already exists in the offline design and
+must not grow. Day 1 fills that buffer and calls the existing windowed code on it. Day 2 replaces
+the internals with persistent tracks stepped once per frame: measured 19.3 ms/frame against 73.7,
+which is the entire reason to bother, and the gate is a frame-by-frame diff against Day 1's
+engine rather than an approximation.
 
 **3. Detection overlay with confidence.** Use OpenCV's built-in HOG people detector - **zero new
 dependencies**, and it returns confidences directly:
@@ -67,8 +76,26 @@ pipeline works.
   realistic downstream task; recognition needs a ~600px person, which is a camera change, not an
   algorithm change.
 
-## Suggested first milestone
+## The box is nearly free - do not build machinery for it
 
-Fake stream from `seq1` -> streaming core -> integrated crop -> HOG boxes with confidences drawn
-on top, displayed live, with the offline parity check passing. That is Tasks 1, 2 and a trimmed
-Task 6/8 from the plan, and it is a self-contained demo you can show.
+`merged_center` in `blob_tracker.py` already computes the merged bounding box of the detections
+near the tracked anchor and then returns only its centre. Adding a `return_box=True` flag is two
+lines and gives you a usable box on Day 1. The fancier version - averaging motion-aligned masks
+into a temporal support map, which recovers a clean silhouette even though no single frame has
+one - is a Day 3 upgrade, not a dependency.
+
+## Three files, not six
+
+`tracking/stream/pipeline.py` (ring buffer, `step`, both engines) and `tracking/stream/demo.py`
+(frame iteration, HOG overlay, display, CLI), plus checks in
+`tracking/tests/sanity_check_stream.py`. Two small additive changes to `tracking/core`:
+`merged_center(return_box=)` and a scale-relative `crop_size` in `integrate_image`.
+
+## The Day 1 deliverable
+
+```
+python -m tracking.stream.demo --path data/nfo_final/nfo_final/seq1 --person-height 195 --fps 25
+```
+
+seq1 playing as a stream, tracker box following the person, integrated crop inset, HOG boxes and
+confidences drawn on the crop, steady fps line. Self-contained and showable.
