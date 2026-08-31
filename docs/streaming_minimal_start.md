@@ -6,13 +6,25 @@
 > scale 0.5), HOG on a person-shaped centre-frame crop centred on the tracker's own position,
 > over the 277 tracked person-present frames:
 >
-> | HOG SVM margin cutoff | frames firing | mean best margin | IoU(best HOG box, merged tracker box) |
-> |---|---|---|---|
-> | >= 0 (default) | 11 / 277 = 4.0% | 0.28 | median **0.09**, fraction > 0.3: **0.00** |
-> | >= -0.5 | 151 / 277 = 54.4% | 0.18 | boxes land on leaves and stems |
+> HOG is run on the MERGED BLOB BOX crop, grown by `--hog-pad` person-heights and resized so
+> the person is `--hog-target` px tall. Best of the sweep is target=256, pad=0.5:
 >
-> **Not one of the 11 positive-margin detections overlaps the tracked person by IoU > 0.3.**
-> HOG is firing on vertical foliage, which produces pedestrian-like oriented-gradient patterns.
+> | HOG SVM margin cutoff | boxed frames firing | mean best margin |
+> |---|---|---|
+> | >= 0 (default) | 7 / 226 = **3.1%** | 0.54 |
+> | >= -0.5 | 109 / 226 = 46.3% | 0.38 |
+>
+> Full sweep at margin >= 0 (`hog_fired_when_boxed`): target 256 with pad 0.10/0.25/0.50 gives
+> 0.8/0.8/3.9%; target 384 gives 0.0/1.2/3.1%. Padding matters more than the resize, which is
+> expected - HOG's default detector was trained on INRIA 64x128 windows where the person fills
+> only the central half, so a crop cut tight to the silhouette is out of distribution.
+>
+> An earlier variant fed HOG a synthetic person-shaped window centred on the tracker's position
+> instead of the box. That fired on 11/277 frames at margin >= 0, and **not one of those 11
+> overlapped the tracked person by IoU > 0.3** (median IoU 0.09) - it was firing on vertical
+> foliage, which produces pedestrian-like oriented-gradient patterns. With the box crop the
+> detections are inside the padded box by construction, so IoU against that box is no longer an
+> independent check: **precision is unmeasurable on this footage and needs NFO's ground truth.**
 > Corroborated from the other side: on data/ido_rotate.mkv, where the plant fills the frame and
 > the tracker's winning-track scores are 0-4 (matching ido_walk's person-ABSENT regime, median
 > 2, against 22-151 when present), HOG fires on 84.5% of frames at margin >= -0.5 with a HIGHER
