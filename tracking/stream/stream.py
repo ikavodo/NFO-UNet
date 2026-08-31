@@ -236,11 +236,15 @@ def webcam_frames(index=0, scale: float = 1.0, width: int = 1280, height: int = 
     exposes TWO nodes - a capture node and a metadata node - so the second /dev/videoN is
     typically not a second camera. `v4l2-ctl --list-devices` says which is which.
 
-    FOURCC IS SET FIRST AND IT MATTERS. Measured on this machine's Integrated_Webcam_FHD, MJPG
-    offers 1920x1080 and 1280x720 at 30fps, while YUYV - which the V4L2 backend often negotiates
-    by default - offers 1080p at only 5fps and 720p at 10fps. Requesting MJPG is the difference
-    between a live demo and a slideshow. The negotiated settings are printed rather than assumed,
-    because V4L2 silently substitutes whatever it can do instead of failing.
+    FOURCC IS SET FIRST AND IT MATTERS. Read off the actual hardware with v4l2-ctl:
+
+        Logitech HD Pro Webcam C920   MJPG 1920x1080@30   YUYV 1920x1080@5, 2304x1536@2
+        Integrated_Webcam_FHD         MJPG 1920x1080@30   YUYV 1920x1080@5, 1280x720@10
+
+    YUYV is what the V4L2 backend often negotiates by default, so requesting MJPG is the
+    difference between a live demo and a slideshow - and it is nothing to do with the tracker,
+    which costs 2.5ms/frame. The negotiated settings are printed rather than assumed, because
+    V4L2 silently substitutes whatever it can do instead of failing.
 
     Auto-exposure and auto white balance are switched off on purpose: auto-gain shifts global
     brightness, and MOG2 reads a global brightness shift as everything-is-foreground. Static
