@@ -164,9 +164,11 @@ def run(video: str, person_height: float, scale: float = 0.5, readout: str = 'ce
         print(f"note: head is ~{person_height / 7.5:.0f}px at this scale; face-level tasks "
               f"are not viable, person detection is the realistic downstream task")
 
-    writer, results, t_start, shown = None, [], time.perf_counter(), 0
+    writer, results, t_start, shown, compute = None, [], time.perf_counter(), 0, 0.0
     for frame in frames_from_video(video, scale):
+        t0 = time.perf_counter()
         r = pipe.step(frame)
+        compute += time.perf_counter() - t0
         if r is None:
             continue
         results.append(r)
@@ -179,7 +181,10 @@ def run(video: str, person_height: float, scale: float = 0.5, readout: str = 'ce
         writer.write(vis)
         if display:
             cv2.imshow('stream', vis)
-            if cv2.waitKey(max(1, int(1000 / src_fps))) == 27:
+            # pace against a monotonic start, so playback does not drift by however long
+            # the tracker took on each frame
+            behind = 1000 * (shown + 1) / src_fps - 1000 * (time.perf_counter() - t_start)
+            if cv2.waitKey(max(1, int(behind))) == 27:
                 break
         shown += 1
     if writer is not None:
@@ -187,15 +192,18 @@ def run(video: str, person_height: float, scale: float = 0.5, readout: str = 'ce
     if display:
         cv2.destroyAllWindows()
 
-    elapsed = time.perf_counter() - t_start
+    wall = time.perf_counter() - t_start
     boxed = [r for r in results if r.box is not None]
     extrap = [r for r in results if r.extrapolated]
     montage([r for r in boxed if in_ranges(r.frame_index, present)],
             f"{out_dir}/{tag or readout}_montage.png")
     xs = {r.frame_index: r.x for r in results if r.x is not None and in_ranges(r.frame_index, present)}
     stats = dict(readout=readout, emitted=len(results), boxed=len(boxed),
-                 extrapolated=len(extrap), ms_per_frame=1000 * elapsed / max(shown, 1),
-                 fps=shown / elapsed, jitter_px=jitter(xs), jitter_n=len(xs),
+                 extrapolated=len(extrap),
+                 # compute cost, never the paced interval - with --display the two differ
+                 ms_per_frame=1000 * compute / max(pipe.seen, 1),
+                 fps=pipe.seen / compute, wall_fps=shown / wall,
+                 jitter_px=jitter(xs), jitter_n=len(xs),
                  latency_frames=SPAN if readout == 'center' else 0)
     print("  ".join(f"{k}={v:.3f}" if isinstance(v, float) else f"{k}={v}"
                     for k, v in stats.items()))
