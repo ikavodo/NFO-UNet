@@ -2,11 +2,12 @@
 # the on-screen variant.
 #
 # INSTALL
+#   pip install .                         # provides the `nfo-tracker` command; see PACKAGING below
 #   sudo usermod -aG video $USER          # MANDATORY - see PERMISSIONS below
 #   sudo cp deploy/nfo-tracker.service /etc/systemd/system/
 #   sudo mkdir -p /etc/nfo-tracker && sudo cp deploy/nfo-tracker.env /etc/nfo-tracker/env
 #   sudo editor /etc/nfo-tracker/env      # PYTHON, WORKDIR, CAMERA at minimum
-#   sudo editor /etc/systemd/system/nfo-tracker.service   # User=, Group=, WorkingDirectory=, ExecStart= interpreter
+#   sudo editor /etc/systemd/system/nfo-tracker.service   # User=, Group=, ExecStart= path
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now nfo-tracker
 #   journalctl -u nfo-tracker -f
@@ -30,7 +31,7 @@
 
 [Unit]
 Description=NFO person tracker (live camera)
-Documentation=file:///home/akovi/PycharmProjects/NFO-UNet/tracking/stream/live.py
+Documentation=https://github.com/-/nfo-tracker
 After=network.target
 StartLimitIntervalSec=0
 
@@ -42,13 +43,15 @@ SupplementaryGroups=video
 
 EnvironmentFile=/etc/nfo-tracker/env
 Environment=PYTHONUNBUFFERED=1
-# NOT ${WORKDIR}: systemd expands variables only in ExecStart-family settings, so this one has
-# to be a literal absolute path. Edit it at install time along with User= and Group=.
-WorkingDirectory=/home/akovi/PycharmProjects/NFO-UNet
-# The PROGRAM must be a literal absolute path - systemd expands ${VAR} in ExecStart ARGUMENTS
-# but not in the command name, and `systemd-analyze verify` reports exactly that. Edit this line
-# at install time; the arguments below stay configurable through the env file.
-ExecStart=/home/akovi/miniconda3/envs/smuggle-yolo/bin/python -m tracking.stream.live \
+# No WorkingDirectory= is needed. `pip install .` puts a real `nfo-tracker` command on disk, so
+# nothing depends on the current directory or on PYTHONPATH - verified by running the installed
+# command from / with the repository nowhere in sight.
+#
+# The PROGRAM must still be a literal absolute path: systemd expands ${VAR} in ExecStart
+# ARGUMENTS but not in the command name, and `systemd-analyze verify` reports exactly that.
+# Point this at wherever pip put the script - `pip show -f nfo-tracker`, or `which nfo-tracker`
+# with the environment active.
+ExecStart=/home/akovi/miniconda3/envs/smuggle-yolo/bin/nfo-tracker \
     --camera ${CAMERA} \
     --cam-size ${CAM_SIZE} \
     --cam-fps ${CAM_FPS} \
@@ -79,7 +82,7 @@ ProtectControlGroups=yes
 ProtectKernelTunables=yes
 RestrictSUIDSGID=yes
 # NOT PrivateDevices=yes - that hides /dev/video* and the camera disappears.
-# NOT ProtectHome=yes    - the interpreter and the repo live under /home.
+# NOT ProtectHome=yes    - the interpreter lives under /home in this install.
 
 StandardOutput=journal
 StandardError=journal
@@ -108,3 +111,12 @@ WantedBy=multi-user.target
 # frames - a true watchdog needs sd_notify (WatchdogSec= plus a notify call in the loop), which
 # would add a dependency. The status line in the journal is the manual substitute: if it stops
 # advancing, the process is wedged.
+
+# PACKAGING - why ExecStart is a single command rather than `python -m ...`.
+# pyproject.toml declares a console script (nfo-tracker -> tracking.stream.live:main) and scopes
+# the distribution to tracking* ONLY, because the repository root also holds config/, dataset/,
+# eval/, network/ and utils/ - generic names that would install as top-level modules and shadow
+# unrelated packages in the same environment. Dependencies are numpy, opencv-python and scipy
+# alone: the tracking path imports nothing else, and installing the tracker must not drag in the
+# U-Net training stack or torch. Use `pip install .` for a fixed deployment, or `pipx install .`
+# to get an isolated environment plus the command on PATH in one step.

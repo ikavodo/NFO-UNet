@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nfo-tracker"
+version = "0.1.0"
+description = "Person localisation under fragmented occlusion: streaming blob tracker and live camera application"
+readme = "README.md"
+requires-python = ">=3.10"          # tracking/stream/stream.py uses `X | None` annotations
+license = { text = "See repository" }
+dependencies = [
+    # The tracking path imports nothing else. Deliberately NOT the repo's requirements.txt,
+    # which also carries dill/matplotlib/Pillow/tqdm for the U-Net training stack, and not torch
+    # at all - installing the tracker must not drag in a deep-learning runtime.
+    "numpy",
+    "opencv-python",
+    "scipy",
+]
+
+[project.scripts]
+# The whole point: a real command on PATH, so nothing has to `cd` anywhere or set PYTHONPATH,
+# and the systemd unit needs no WorkingDirectory.
+nfo-tracker = "tracking.stream.live:main"
+nfo-tracker-offline = "tracking.stream.stream:main"
+
+[tool.setuptools.packages.find]
+# SCOPED TO tracking* ON PURPOSE. The repository root also holds config/, dataset/, eval/,
+# network/ and utils/ - all generic names that would be installed as top-level modules and
+# SHADOW unrelated packages in the same environment. Only the tracking path is packaged.
+include = ["tracking*"]
