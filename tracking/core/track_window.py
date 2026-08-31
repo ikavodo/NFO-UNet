@@ -43,7 +43,7 @@ def position_from_track(winner, window_detections, merge_radius, center_t: int =
 
     return dict(x=float(cx), y=float(cy), vx=float(winner["vx"]),
                score=float(winner["score"]), resid_std=float(winner["resid_std"]),
-               box=box, extrapolated=extrapolated)
+               box=box, extrapolated=extrapolated, winner=winner)
 
 
 def _result_from_detections(window_detections, min_track_length, expected_height, height_tolerance,

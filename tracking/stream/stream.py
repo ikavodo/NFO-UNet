@@ -36,6 +36,7 @@ from tracking.core.preprocess import refine_mask, filter_by_shape, estimate_pers
 from tracking.core.blob_tracker import detect_blobs, _Track
 from tracking.core.track_window import _result_from_detections
 from tracking.core.track_sequence import scale_relative_params
+from tracking.core.integrate_image import align_frames, fuse
 
 SEQ_SIZE, NTH_FRAME = 7, 2
 SPAN = (SEQ_SIZE // 2) * NTH_FRAME      # 6 - frames of lookahead for a centered readout
@@ -51,6 +52,11 @@ class Result:
     box: tuple | None                   # merged multi-blob box (x1, y1, x2, y2)
     extrapolated: bool                  # readout frame had no detection in the winning track
     score: float | None
+    # the stride-2 window itself, as REFERENCES into the ring buffer (not a stacked copy,
+    # so retaining many Results costs no extra frame memory) plus the scored winning track -
+    # together these are everything align_frames/fuse need to integrate this window
+    window_frames: list
+    winner: dict | None
 
 
 class StreamPipeline:
@@ -102,7 +108,9 @@ class StreamPipeline:
                       frame=self.frames[buf_i],
                       x=r and r['x'], y=r and r['y'], box=r and r['box'],
                       extrapolated=bool(r and r['extrapolated']),
-                      score=r and r['score'])
+                      score=r and r['score'],
+                      window_frames=[self.frames[i] for i in range(0, BUFFER, NTH_FRAME)],
+                      winner=r and r['winner'])
 
 
 # --------------------------------------------------------------------------- demo
@@ -140,6 +148,48 @@ def annotate(result: Result, fps: float) -> np.ndarray:
     return vis
 
 
+def integrated_panels(result: Result, crop_size: int, sigma: float = 1.0):
+    """The centre-frame crop and two fusions of the SAME aligned stack.
+
+    align_frames is called once and the three panels differ only in the fusion rule, so the
+    comparison isolates that one variable. The centre-frame crop is the do-nothing baseline
+    and shares the integrated panels' geometry exactly, which is the only way the visual
+    comparison means anything.
+
+    Fusion rules, and what each one is actually doing:
+      median   - a pixel is recovered exactly when the occluder covers it in fewer than half
+                 the T aligned frames. Breakdown point 1/2, no dependence on temporal
+                 distance, so it pays the full pose-drift cost of the window's edges.
+      gaussian - a weighted mean, so it has NO breakdown point (one occluded frame always
+                 leaks in) but down-weights the temporally distant frames where limb
+                 articulation has moved. Effective sample count n_eff = (sum w)^2 / sum w^2,
+                 which is 3.5 of 7 frames at sigma=1.0.
+    Which wins is therefore a function of occluder duty cycle vs pose drift, not a matter of
+    taste - and it is not settled in this repo. See the note in the plan doc.
+    """
+    frames = np.stack(result.window_frames)
+    aligned = align_frames(frames, result.winner, crop_size)
+    return [('centre frame (baseline)', aligned[len(aligned) // 2]),
+            (f'gaussian sigma={sigma:g}', fuse(aligned, 'gaussian', gaussian_sigma=sigma)),
+            ('median', fuse(aligned, 'median'))]
+
+
+def annotate_split(result: Result, fps: float, crop_size: int, panel_h: int = 360,
+                   sigma: float = 1.0) -> np.ndarray:
+    """Split screen: annotated full frame, then the three crops at a common panel height."""
+    left = annotate(result, fps)
+    left = cv2.resize(left, (round(panel_h * left.shape[1] / left.shape[0]), panel_h))
+    tiles = [left]
+    if result.winner is None:
+        tiles += [np.zeros((panel_h, panel_h, 3), np.uint8)]
+    else:
+        for name, img in integrated_panels(result, crop_size, sigma):
+            tile = cv2.cvtColor(cv2.resize(img, (panel_h, panel_h)), cv2.COLOR_GRAY2BGR)
+            cv2.putText(tile, name, (8, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            tiles.append(tile)
+    return np.hstack(tiles)
+
+
 def jitter(xs_by_index: dict) -> float:
     """RMS discrete acceleration of the reported x, pooled over consecutive frame triples.
     A person walking has near-zero true acceleration, so this is dominated by estimation
@@ -158,8 +208,11 @@ def in_ranges(f: int, ranges) -> bool:
 
 def run(video: str, person_height: float, scale: float = 0.5, readout: str = 'center',
         out_dir: str = 'images/stream', tag: str = '', display: bool = False,
-        src_fps: float = 24.0, present=()) -> dict:
+        src_fps: float = 24.0, present=(), split: bool = False,
+        crop_factor: float = 1.6, sigma: float = 1.0, panel_h: int = 360) -> dict:
     pipe = StreamPipeline(person_height=person_height, readout=readout)
+    crop = int(round(crop_factor * person_height))
+    render = ((lambda r, f: annotate_split(r, f, crop, panel_h, sigma)) if split else annotate)
     if person_height / 7.5 < 40:
         print(f"note: head is ~{person_height / 7.5:.0f}px at this scale; face-level tasks "
               f"are not viable, person detection is the realistic downstream task")
@@ -173,7 +226,7 @@ def run(video: str, person_height: float, scale: float = 0.5, readout: str = 'ce
             continue
         results.append(r)
         fps = len(results) / (time.perf_counter() - t_start)
-        vis = annotate(r, fps)
+        vis = render(r, fps)
         if writer is None:
             h, w = vis.shape[:2]
             writer = cv2.VideoWriter(f"{out_dir}/{tag or readout}_stream.mp4",
@@ -196,7 +249,8 @@ def run(video: str, person_height: float, scale: float = 0.5, readout: str = 'ce
     boxed = [r for r in results if r.box is not None]
     extrap = [r for r in results if r.extrapolated]
     montage([r for r in boxed if in_ranges(r.frame_index, present)],
-            f"{out_dir}/{tag or readout}_montage.png")
+            f"{out_dir}/{tag or readout}_montage.png", render=render,
+            cols=1 if split else 3, width=1280 if split else 480)
     xs = {r.frame_index: r.x for r in results if r.x is not None and in_ranges(r.frame_index, present)}
     stats = dict(readout=readout, emitted=len(results), boxed=len(boxed),
                  extrapolated=len(extrap),
@@ -210,14 +264,15 @@ def run(video: str, person_height: float, scale: float = 0.5, readout: str = 'ce
     return stats
 
 
-def montage(results: list[Result], path: str, n: int = 6, cols: int = 3, width: int = 480):
+def montage(results: list[Result], path: str, n: int = 6, cols: int = 3, width: int = 480,
+            render=annotate):
     """Contact sheet of n evenly spaced annotated results - the visual trace of the run."""
     if not results:
         return
     picks = [results[i] for i in np.linspace(0, len(results) - 1, n).astype(int)]
     tiles = []
     for r in picks:
-        vis = annotate(r, float('nan'))
+        vis = render(r, float('nan'))
         tiles.append(cv2.resize(vis, (width, int(width * vis.shape[0] / vis.shape[1]))))
     rows = [np.hstack(tiles[i:i + cols]) for i in range(0, len(tiles), cols)]
     cv2.imwrite(path, np.vstack([r for r in rows if r.shape == rows[0].shape]))
@@ -320,6 +375,14 @@ def main():
     p.add_argument('--out-dir', default='images/stream')
     p.add_argument('--tag', default='', help='output filename prefix (defaults to --readout)')
     p.add_argument('--display', action='store_true', help='cv2.imshow paced at the source fps')
+    p.add_argument('--split', action='store_true',
+                   help='split screen: full frame, centre-frame crop, and two fusions of the '
+                        'same aligned stack, all recomputed per frame')
+    p.add_argument('--crop-factor', type=float, default=1.6,
+                   help='integrated crop side, as a multiple of person height')
+    p.add_argument('--sigma', type=float, default=1.0,
+                   help="temporal gaussian sigma, in strided-frame units")
+    p.add_argument('--panel-height', type=int, default=360)
     p.add_argument('--compare', action='store_true',
                    help='paired center-vs-newest readout comparison instead of a single run')
     p.add_argument('--measure-presence', action='store_true',
@@ -344,7 +407,8 @@ def main():
         compare_readouts(a.video, height, scale=a.scale, out_dir=a.out_dir, present=present)
     else:
         run(a.video, height, scale=a.scale, readout=a.readout, out_dir=a.out_dir, tag=a.tag,
-            display=a.display, present=present)
+            display=a.display, present=present, split=a.split, crop_factor=a.crop_factor,
+            sigma=a.sigma, panel_h=a.panel_height)
 
 
 if __name__ == '__main__':
