@@ -64,7 +64,8 @@ class StreamPipeline:
 
     def __init__(self, person_height: float, bg_frames: int = 30, var_threshold: float = 16.0,
                  readout: str = 'center', min_solidity: float = 0.1, max_age: int = 6,
-                 min_track_length: int = 3, max_detections: int = 40):
+                 min_track_length: int = 3, max_detections: int = 40,
+                 suppress_warmup: bool = True):
         assert readout in ('center', 'newest'), readout
         self.kw, kalman = scale_relative_params(person_height)
         # ponytail: _Track's covariances are class attributes, so this is process-global.
@@ -75,6 +76,13 @@ class StreamPipeline:
         self.readout, self.min_solidity = readout, min_solidity
         self.max_age, self.min_track_length = max_age, min_track_length
         self.max_detections = max_detections
+        # MOG2's learning rate is ~1/history, so before `history` real frames have elapsed the
+        # background model is under-adapted and the mask is full of spurious foreground. That is
+        # the dominant source of early false positives, and track_sequence's own docstring
+        # already says any window before bg_frames have elapsed is under-adapted. Suppressing
+        # output until then costs the first bg_frames-1-SPAN emissions and introduces no new
+        # constant.
+        self.warmup = bg_frames if suppress_warmup else 0
         # one persistent subtractor: preprocess.foreground_mask builds a fresh MOG2 per
         # call, which is exactly what a stream must not do
         self.mog = cv2.createBackgroundSubtractorMOG2(history=bg_frames,
@@ -94,7 +102,7 @@ class StreamPipeline:
         self.frames.append(frame)
         self.dets.append(dets)
         self.seen += 1
-        if len(self.frames) < BUFFER:
+        if len(self.frames) < BUFFER or self.seen < self.warmup:
             return None
 
         window = [self.dets[i] for i in range(0, BUFFER, NTH_FRAME)]
@@ -145,13 +153,15 @@ class Smoother:
 
     def __init__(self, person_height: float, fps: float, halflife_s: float = 0.15,
                  trend_halflife_s: float = 0.5, size_halflife_s: float = 0.4,
-                 jump_max: float = 0.75, hold_s: float = 0.35):
+                 jump_max: float = 0.75, hold_s: float = 0.35,
+                 init_m: int = 3, init_n: int = 5):
         dt = 1.0 / max(fps, 1e-6)
         self.a = 1.0 - 0.5 ** (dt / max(halflife_s, 1e-6))
         self.b = 1.0 - 0.5 ** (dt / max(trend_halflife_s, 1e-6))
         self.c = 1.0 - 0.5 ** (dt / max(size_halflife_s, 1e-6))
         self.jump_max = jump_max * person_height
         self.hold = max(1, int(round(hold_s * fps)))
+        self.init_m, self.init_n = init_m, init_n
         self.reset()
 
     def reset(self):
@@ -159,16 +169,34 @@ class Smoother:
         self.trend = np.zeros(2)
         self.size = None
         self.misses = 0
+        self.init_buf = deque(maxlen=self.init_n)
 
     def update(self, xy, wh):
         """xy: (x, y) or None. wh: (w, h) or None. Returns ((x, y) | None, (w, h) | None,
         coasting)."""
         if self.level is None:
+            # M-of-N track initiation (Blackman and Popoli): do not declare a lock on a single
+            # measurement. An isolated warm-up false positive would otherwise BECOME the lock,
+            # and then the real person arrives as a large jump and gets gated out for hold_s.
+            # Requiring init_m of the last init_n measurements to agree within the gate rejects
+            # one-off spikes without needing a magnitude threshold on the score.
             if xy is None:
                 return None, None, False
-            self.level, self.trend = np.array(xy, float), np.zeros(2)
-            if wh is not None:
-                self.size = np.array(wh, float)
+            self.init_buf.append((np.array(xy, float), wh))
+            pts = np.array([q for q, _ in self.init_buf])
+            med = np.median(pts, axis=0)
+            close = [i for i, q in enumerate(pts)
+                     if float(np.hypot(*(q - med))) <= self.jump_max]
+            if len(close) < self.init_m:
+                return None, None, False
+            sel = pts[close]
+            self.level = sel[-1]
+            # seed the trend from the consistent run, so the filter starts with the right
+            # velocity instead of spending its first half-life catching up
+            self.trend = (sel[-1] - sel[0]) / max(len(sel) - 1, 1)
+            last_wh = self.init_buf[close[-1]][1]
+            if last_wh is not None:
+                self.size = np.array(last_wh, float)
             return self._out(False)
 
         pred = self.level + self.trend
@@ -348,7 +376,8 @@ def run(video, person_height: float = None, scale: float = 0.5, readout: str = '
         out_dir: str = 'images/stream', tag: str = '', display: bool = False,
         src_fps: float = 24.0, present=(), out_fps: float = None, smooth: bool = True,
         halflife: float = 0.15, trend_halflife: float = 0.5, jump_max: float = 0.75,
-        gt_path: str = None, probe_frames: int = 240) -> dict:
+        gt_path: str = None, probe_frames: int = 240, montage_all: bool = False,
+        suppress_warmup: bool = True, init_m: int = 1) -> dict:
     source = frames_from_source(video, scale)
     warmup = []
     if person_height is None:
@@ -364,9 +393,11 @@ def run(video, person_height: float = None, scale: float = 0.5, readout: str = '
         if not 0.05 * h_frame <= person_height <= 0.95 * h_frame:
             print(f"  WARNING: that is implausible for a person; the estimator measures any "
                   f"large moving object, so pass --person-height explicitly")
-    pipe = StreamPipeline(person_height=person_height, readout=readout)
+    pipe = StreamPipeline(person_height=person_height, readout=readout,
+                          suppress_warmup=suppress_warmup)
     sm = Smoother(person_height, src_fps, halflife_s=halflife,
-                  trend_halflife_s=trend_halflife, jump_max=jump_max) if smooth else None
+                  trend_halflife_s=trend_halflife, jump_max=jump_max,
+                  init_m=init_m) if smooth else None
     gt = load_gt(gt_path) if gt_path else None
     if person_height / 7.5 < 40:
         print(f"note: head is ~{person_height / 7.5:.0f}px at this scale; face-level tasks "
@@ -412,7 +443,8 @@ def run(video, person_height: float = None, scale: float = 0.5, readout: str = '
     wall = time.perf_counter() - t_start
     boxed = [r for r in results if r.box is not None]
     extrap = [r for r in results if r.extrapolated]
-    montage([r for r in boxed if in_ranges(r.frame_index, present)],
+    montage([r for r in (results if montage_all else boxed)
+             if in_ranges(r.frame_index, present)],
             f"{out_dir}/{tag or readout}_montage.png")
     keep = lambda r: in_ranges(r.frame_index, present)
     xs = {r.frame_index: r.x for r in results if r.x is not None and keep(r)}
@@ -570,6 +602,13 @@ def main():
     p.add_argument('--person-height', type=float, default=None,
                    help='person height in pixels AFTER --scale; bootstrapped from the first '
                         '--probe-frames contiguous frames if omitted')
+    p.add_argument('--init-m', type=int, default=1,
+                   help='M-of-5 track initiation for the smoother; 1 disables it (lock on the '
+                        'first measurement)')
+    p.add_argument('--montage-all', action='store_true',
+                   help='sample the montage from every emission, including ones with no box')
+    p.add_argument('--no-warmup-suppression', dest='suppress_warmup', action='store_false',
+                   help="emit during MOG2's warm-up too (shows the early false positives)")
     p.add_argument('--probe-frames', type=int, default=240,
                    help='contiguous frames used to bootstrap the person height; they are then '
                         'fed through the pipeline as well, so they are not wasted')
@@ -607,7 +646,8 @@ def main():
             tag=a.tag, probe_frames=a.probe_frames,
             display=a.display, present=present, out_fps=a.out_fps, smooth=a.smooth,
             halflife=a.halflife, trend_halflife=a.trend_halflife, jump_max=a.jump_max,
-            src_fps=a.src_fps, gt_path=a.gt)
+            src_fps=a.src_fps, gt_path=a.gt, montage_all=a.montage_all,
+            suppress_warmup=a.suppress_warmup, init_m=a.init_m)
 
 
 if __name__ == '__main__':
