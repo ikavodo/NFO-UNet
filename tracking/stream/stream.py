@@ -226,23 +226,47 @@ class Smoother:
 
 # --------------------------------------------------------------------------- demo
 
-def webcam_frames(index: int = 0, scale: float = 1.0, width: int = None, height: int = None):
+def webcam_frames(index=0, scale: float = 1.0, width: int = 1280, height: int = 720,
+                  fps: float = 30.0, fourcc: str = 'MJPG', auto_exposure: float = 0.25):
     """Newest-frame-only webcam source: a daemon thread writes a single slot and the consumer
     takes whatever is there. A fixed-latency pipeline must never accumulate a backlog - if the
     consumer falls behind, the right thing is to DROP frames, not to queue them.
 
+    `index` may be a device index or a path like '/dev/video0'. Note that a UVC camera usually
+    exposes TWO nodes - a capture node and a metadata node - so the second /dev/videoN is
+    typically not a second camera. `v4l2-ctl --list-devices` says which is which.
+
+    FOURCC IS SET FIRST AND IT MATTERS. Measured on this machine's Integrated_Webcam_FHD, MJPG
+    offers 1920x1080 and 1280x720 at 30fps, while YUYV - which the V4L2 backend often negotiates
+    by default - offers 1080p at only 5fps and 720p at 10fps. Requesting MJPG is the difference
+    between a live demo and a slideshow. The negotiated settings are printed rather than assumed,
+    because V4L2 silently substitutes whatever it can do instead of failing.
+
     Auto-exposure and auto white balance are switched off on purpose: auto-gain shifts global
     brightness, and MOG2 reads a global brightness shift as everything-is-foreground. Static
-    camera only, for the same reason.
+    camera only, for the same reason. auto_exposure=0.25 is the V4L2 "manual" magic value on most
+    drivers; some want 1, and some ignore it - pass a different value if exposure still drifts.
     """
     cap = cv2.VideoCapture(index)
-    assert cap.isOpened(), f"cannot open camera {index}"
+    assert cap.isOpened(), (f"cannot open camera {index!r}. `v4l2-ctl --list-devices` lists the "
+                            f"capture nodes; a UVC camera's second node is usually metadata, "
+                            f"not a second camera")
+    if fourcc:
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc))
     if width:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
     if height:
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)   # 0.25 = manual on most V4L2 backends
+    if fps:
+        cap.set(cv2.CAP_PROP_FPS, fps)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, auto_exposure)
     cap.set(cv2.CAP_PROP_AUTO_WB, 0)
+    got = int(cap.get(cv2.CAP_PROP_FOURCC))
+    print(f"camera {index!r}: negotiated "
+          f"{int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))} "
+          f"@ {cap.get(cv2.CAP_PROP_FPS):g}fps, fourcc "
+          f"{''.join(chr((got >> 8 * i) & 0xFF) for i in range(4))}")
     slot, stop = [None], threading.Event()
 
     def reader():

@@ -90,7 +90,16 @@ def bootstrap(source, probe_frames: int, stable_tol: float, display: bool):
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument('--camera', type=int, default=0)
+    p.add_argument('--camera', default='0',
+                   help="device index or path, e.g. 0 or /dev/video0. A UVC camera's second "
+                        "/dev/videoN is usually its metadata node, not a second camera")
+    p.add_argument('--cam-size', default='1280x720', help='requested capture size')
+    p.add_argument('--cam-fps', type=float, default=30.0)
+    p.add_argument('--fourcc', default='MJPG',
+                   help='MJPG is usually the only format offering 30fps above VGA; YUYV often '
+                        'caps at 5-10fps at high resolution')
+    p.add_argument('--auto-exposure', type=float, default=0.25,
+                   help='V4L2 manual-exposure magic value; some drivers want 1')
     p.add_argument('--source', default=None,
                    help='video file to use instead of the camera, paced to its own frame rate')
     p.add_argument('--scale', type=float, default=0.5)
@@ -112,9 +121,12 @@ def main():
         source = frames_from_video(a.source, a.scale)
         print(f"source {a.source} at {file_fps:g} fps, paced like a camera")
     else:
-        source = webcam_frames(a.camera, a.scale)
+        cam = int(a.camera) if a.camera.isdigit() else a.camera
+        cw, ch = (int(v) for v in a.cam_size.lower().split('x'))
+        source = webcam_frames(cam, a.scale, width=cw, height=ch, fps=a.cam_fps,
+                              fourcc=a.fourcc, auto_exposure=a.auto_exposure)
         file_fps = None
-        print(f"camera {a.camera}; auto-exposure and auto-WB disabled, static camera assumed")
+        print("auto-exposure and auto-WB disabled, static camera assumed")
 
     height, warm, fps = a.person_height, [], file_fps or 30.0
     if height is None:
