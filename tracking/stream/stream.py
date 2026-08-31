@@ -251,7 +251,13 @@ def webcam_frames(index=0, scale: float = 1.0, width: int = 1280, height: int = 
     camera only, for the same reason. auto_exposure=0.25 is the V4L2 "manual" magic value on most
     drivers; some want 1, and some ignore it - pass a different value if exposure still drifts.
     """
-    cap = cv2.VideoCapture(index)
+    # cv2.CAP_V4L2 EXPLICITLY. Opening a PATH like '/dev/video2' without naming the backend
+    # routes to FFMPEG, which silently ignores every V4L2 property: measured on the C920,
+    # VideoCapture('/dev/video2') negotiates 640x480 with fourcc \x00 and backend FFMPEG, while
+    # VideoCapture('/dev/video2', cv2.CAP_V4L2) gives 1280x720 @30 MJPG. Opening by integer index
+    # happens to pick V4L2 anyway, so this bug only appears with the path form - which is the
+    # form anyone reading `v4l2-ctl --list-devices` will naturally reach for.
+    cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
     assert cap.isOpened(), (f"cannot open camera {index!r}. `v4l2-ctl --list-devices` lists the "
                             f"capture nodes; a UVC camera's second node is usually metadata, "
                             f"not a second camera")
@@ -267,7 +273,7 @@ def webcam_frames(index=0, scale: float = 1.0, width: int = 1280, height: int = 
     cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, auto_exposure)
     cap.set(cv2.CAP_PROP_AUTO_WB, 0)
     got = int(cap.get(cv2.CAP_PROP_FOURCC))
-    print(f"camera {index!r}: negotiated "
+    print(f"camera {index!r}: backend {cap.getBackendName()}, negotiated "
           f"{int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))} "
           f"@ {cap.get(cv2.CAP_PROP_FPS):g}fps, fourcc "
           f"{''.join(chr((got >> 8 * i) & 0xFF) for i in range(4))}")
