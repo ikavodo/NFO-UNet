@@ -1,5 +1,37 @@
 # Minimal starting point: streaming tracker on a fake stream, with detection overlay
 
+> **ALIGNMENT BUG FOUND AND FIXED 2026-08-31 — the integration results quoted below were
+> computed on a DE-ALIGNED stack and must not be reused.** `align_frames` cropped each frame
+> at `anchor_for_frame(winner, t) - vx*(t - center_t)`. But `anchor_for_frame` already
+> returns the person's position *at frame t*, so subtracting `vx*dt` cancelled the alignment
+> and left a window fixed to `p(center_t)` in **world** coordinates. With a static occluder
+> that is exactly backwards: the occluder stayed sharp and the median removed the *moving
+> person*. Measured on a synthetic bar translating at a known 8 px per strided frame behind a
+> static striped occluder, the "aligned" person drifted **+8.6 px per frame (52 px across the
+> 7-frame window)** against +0.78 px after the fix, and the median then recovered 20% more of
+> the person's own pixels. Regression test:
+> `tracking/tests/sanity_check_integrate.py::check_alignment_follows_the_person`.
+>
+> **What this invalidates.** Every number below that came from `integrate()`: the HOG
+> integrated-vs-centre comparison (30.0% vs 10.0%, and the 240-window occlusion-tercile
+> table), and the quoted 19.75-vs-22.04 MAE figures. The stated *mechanism* is wrong too —
+> "integration aligns the person's centroid but limbs articulate" — the person was not
+> centroid-aligned at all, they were smeared across ~50-100 px of translation, which is a far
+> larger effect than limb articulation. Note also that **neither** harness exists in this
+> repo: `grep -rn HOGDescriptor` returns nothing, and there is no script, metric definition
+> or data behind the MAE figures. Both the pro- and anti-integration measurements are
+> currently unreproducible. Re-run before citing either.
+>
+> **The design constraint this exposed, which is closed-form.** In aligned coordinates a
+> static occluder moves at -vx, so a pixel is occluded for a fraction d ~ min(1, w / (v*(T-1)))
+> of the window, for occluder width w and speed v px per strided frame. The median recovers
+> the pixel only when d < 1/2, i.e. **v*(T-1) > 2w**. Measured on ido_walk.mkv: |vx| median
+> 16.1 px per strided frame, so the window sweeps 96 px and only occluders narrower than
+> ~48 px can be cleared. Wider ones survive as smeared streaks no matter how the fusion is
+> weighted — which is visible in `images/stream/split_montage.png`. That is a property of
+> window length times speed, not of the fusion rule, and it is the first thing to check
+> before tuning sigma.
+
 Read this first if you are starting a fresh session to implement the streaming tracker. It
 exists to make the *surface area* minimal - the set of things you must read and may touch -
 rather than to minimise the file count of the repository.
