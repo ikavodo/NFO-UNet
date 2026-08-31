@@ -68,12 +68,25 @@ boxes, weights = hog.detectMultiScale(integrated_crop, winStride=(8, 8))
   included. Integration buys occlusion robustness by spending exactly the edge crispness HOG
   measures.
 
+Stratifying by how occluded the centre frame actually is does not rescue integration either - the
+centre frame wins in all three occlusion terciles (13.8/16.2/10.0% against median fusion's
+7.5/12.5/2.5%), including the most-occluded one, over 240 windows. And the integrated arm was given
+*more* tuning freedom than the baseline throughout, so the comparison already favours it.
+
 So the demo shows **both** panels side by side - integrated crop and centre-frame crop, same
-geometry, detections drawn on each. That is what was asked for and it gives the
-integrated-vs-centre comparison for free, which is the more interesting measurement anyway. If
-detection quality itself matters, swap HOG for a `cv2.dnn` ONNX model (no new pip dependency, one
-~10-25 MB download) - a CNN is far more blur-tolerant and is the only route by which the
-integrated crop could plausibly *beat* the centre frame.
+geometry - and runs the detector on the centre frame. That gives the integrated-vs-centre
+comparison for free, which is the more interesting measurement anyway.
+
+**Do not plan to swap in a CNN detector: measured, they find nothing here.** `torchvision`
+Faster R-CNN and `ultralytics YOLOv8n` both return 0 persons with top-any-class confidence 0.000 on
+NFO frames, KTH frames, and every crop variant, while both find 4 people at 0.87-0.999 in a stock
+photo - and still do after greyscaling it, so greyscale is not the cause. The footage is (KTH
+intensity std 15.3; NFO's person small and behind foliage). **HOG is the only detector that works
+here at all.** That is also the cleanest evidence for why this tracker exists: if an off-the-shelf
+detector worked on this footage, none of this machinery would be needed.
+
+Integration's value is *reconstruction*, not detectability - if you want to show it pays, measure
+error on the pixels occluded in the centre frame, not whether a gradient detector fires.
 
 Why HOG rather than a modern detector: it needs no model download, no new dependency, and no GPU,
 so the first end-to-end version can exist in an afternoon. Its accuracy is mediocre by current

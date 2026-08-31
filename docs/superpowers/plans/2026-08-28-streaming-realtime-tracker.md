@@ -40,17 +40,57 @@ so the fused image has a sharp torso and smeared legs - and HOG is a histogram o
 gradients over the whole 64x128 window, legs included. Integration buys occlusion robustness by
 spending exactly the edge crispness HOG measures.
 
+**That result survives the obvious objection.** Averaging detectability over all windows is a
+degenerate way to score an occlusion fix - most centre frames are barely occluded, and there fusion
+can only blur an already-good image, so "do nothing" wins by default. Re-run stratified by how
+occluded the person actually is in the centre frame (fraction of the ground-truth box that is
+foreground there), 240 windows across seq1 and seq2:
+
+| stratum | n | centre | median | gaussian 1.0 | gaussian 2.0 |
+|---|---|---|---|---|---|
+| most occluded (fill <= 0.29) | 80 | **13.8%** | 7.5% | 6.2% | 2.5% |
+| middle (0.29-0.39) | 80 | **16.2%** | 12.5% | 10.0% | 10.0% |
+| least occluded (fill > 0.39) | 80 | **10.0%** | 2.5% | 10.0% | 5.0% |
+| all | 240 | **13.3%** | 7.5% | 8.8% | 5.8% |
+
+The centre frame wins in **every** stratum, including the most-occluded tercile where fusion had
+its best chance. Note also that the integrated arm was given *more* tuning freedom than the
+baseline throughout - median plus three gaussian sigmas plus two crop tightnesses, against a single
+centre frame - so the comparison is biased in fusion's favour and it still loses.
+
+**What this does and does not say.** It does not say integration is useless; it says *detectability
+by a gradient-based detector* is the wrong yardstick for it. Integration's actual value is
+reconstruction of occluded pixels, and measured that way it does pay - a parallel session measured
+temporal-gaussian fusion at sigma=1.0 reaching 19.75 MAE on occluded pixels, and found it beats a
+gait-similarity-weighted alternative (22.04), for the same underlying reason visible here: pose
+drift within the window is the cost, and it grows with temporal distance. So show the integrated
+crop as the reconstruction it is, and detect on the centre frame.
+
 Consequences for this plan, already applied below:
 
 1. **Run the detector on the centre-frame crop, and display the integrated crop beside it.** The
    deliverable becomes tracker box + integrated crop + detections with confidence, which is what
    was asked for, and additionally gives the integrated-vs-centre comparison for free - which is
    the genuinely interesting measurement, not a consolation prize.
-2. **If detection quality matters, swap HOG for a `cv2.dnn` ONNX detector.** `cv2.dnn` ships with
-   OpenCV so there is no new pip dependency, but it does need a one-off ~10-25 MB model download,
-   which is the only external artifact anywhere in this plan. A CNN detector is far more robust to
-   blur than HOG, so it is also the only route by which the integrated crop could plausibly *beat*
-   the centre frame. Worth an hour on Day 3 if the comparison is the point.
+2. ~~If detection quality matters, swap HOG for a CNN detector.~~ **MEASURED AND DEAD. COCO-trained
+   CNN detectors find nothing at all on this footage.** Two independent architectures, on NFO full
+   frames, KTH frames, and every crop variant: `torchvision fasterrcnn_mobilenet_v3_large_fpn` and
+   `ultralytics YOLOv8n` both return **0 persons, with top-any-class confidence 0.000** - not even a
+   low-confidence proposal of any class. The positive control passes cleanly, so this is not a
+   harness bug: both models find 4 people at 0.87-0.999 in a stock photo, and *still* find them
+   after greyscaling it and replicating to 3 channels, so greyscale is not the cause either. The
+   cause is the footage (KTH intensity std 15.3; NFO's person small and behind foliage).
+
+   **HOG is therefore not the "mediocre but zero-dependency" option - it is the only detector that
+   works here at all**, and only on a tight 2x-upscaled crop. Do not spend time swapping detectors.
+   This is also strong independent evidence for the premise of the whole project: if an
+   off-the-shelf detector worked on this footage, none of this tracking machinery would be needed.
+
+   Related trap for anyone tempted to retry via OpenCV: `cv2.dnn`'s Darknet importer is broken in
+   this OpenCV 4.13 build - all 80 class scores come back exactly 0.0 for both yolov4-tiny and
+   yolov3-tiny with correctly matched cfg/weights, and `dnn_DetectionModel` returns nothing at
+   conf 0.05, while objectness and box coordinates look sane. Use torchvision or ultralytics if a
+   CNN is ever wanted; both are already installed.
 3. `integrate()` takes `crop_size` directly and has no `person_height` parameter - compute
    `int(round(1.6 * person_height))` at the call site. That removes one of the two planned changes
    to `tracking/core/`.
