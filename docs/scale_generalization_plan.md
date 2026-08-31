@@ -342,6 +342,37 @@ any single number as the dataset's value.
 None of this affects the calibrated density: `fill_frac` is not in `SHAPE_STATS`, so the 0.05
 result rests only on blobs-per-person, tallest-blob fraction and inter-blob gap.
 
+### Person scale is the dominant domain variable, from three unrelated instruments
+
+Worth consolidating, because it keeps reappearing and it is the one thing everything downstream
+depends on:
+
+| instrument | measurement |
+|---|---|
+| HOG detectability (this doc) | fires on 0% of NFO windows at 1x, ~30% at 2x upscale |
+| `docs/training_failure_hypotheses.md` | feeding a 2x-upscaled NFO frame lifted precision 0.52 -> 0.98 |
+| SAM2 mask 2nd moments (parallel session) | KTH major-axis sd 37.0px vs NFO 10.8px on a shared 224 canvas |
+
+All three point at person size as the dominant variable, which is exactly why F1/F3's
+dimensionless parameterization is the load-bearing fix. **But they are not measuring the same
+2-3x quantity, and should not be quoted as one constant.** Measured on the actual mask files
+(`*_sammask.png`, n=90 KTH / 120 NFO, both on a 224x224 canvas):
+
+- The HOG factor is a **detector-window** effect: HOG's 64x128 template needs the person to fill
+  it, which is about the crop, not the dataset.
+- The mask-moment factor **decomposes**, and mostly not into scale. On the shared canvas the
+  person-height ratio is only ~1.63x (KTH 0.53*224 = 119px against NFO's 195px in a 600px frame
+  becoming 73px). Scale alone therefore predicts a 2.7x area ratio; the observed ratio is
+  **20x** (KTH 5188 px^2 vs NFO 251 px^2). A whole NFO person at 73px should occupy ~1950 px^2, so
+  the NFO pseudo-masks capture about **13% of the person's silhouette area** - they are fragments,
+  not silhouettes. Also measured: KTH masks are essentially always one blob (1.01 mean, 1% with
+  more), NFO's are 1.27-1.38 mean with 24-35% fragmented.
+
+So "scale differs by 3x between the datasets" is not supported; "person height differs ~1.6x on a
+common canvas, and NFO's semantic masks additionally recover only a fraction of the person" is.
+The distinction matters for anything that normalizes by person size: normalizing fixes the 1.6x
+and does nothing about the missing 87% of mask area.
+
 ### Correction to F6
 
 F6 claimed the shape term does *fragment selection* on heavily-fragmented NFO rather than
