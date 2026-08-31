@@ -144,8 +144,27 @@ def check_smoother_constants_are_frame_rate_independent():
     print(f"smoother ok: frame-rate independent ({['%.2f' % o for o in outs]} at 12/24/48 fps)")
 
 
+def check_a_frozen_window_yields_no_box():
+    """A window of duplicate frames must produce NO estimate, not a zero-score one. Nothing in
+    the code special-cases this: MOG2 absorbs a static frame into its background model, so
+    duplicates stop producing foreground, no track reaches min_track_length, and score_and_fit
+    returns None. Every parameter of this tracker is defined on motion, so with no motion there
+    is nothing to report - which is the honest behaviour and worth pinning."""
+    moving = make_moving_bar(T=40)
+    frozen = np.concatenate([moving, np.repeat(moving[-1:], 3 * BUFFER, axis=0)])
+    pipe = StreamPipeline(person_height=60.0, suppress_warmup=False)
+    results = [r for r in (pipe.step(f) for f in frozen) if r is not None]
+    inside = [r for r in results if r.frame_index >= len(moving) + SPAN]
+    assert inside, "no emissions landed fully inside the frozen block"
+    boxed = [r.frame_index for r in inside if r.box is not None]
+    assert not boxed, f"frames {boxed} still produced a box inside a fully frozen window"
+    assert all(r.x is None for r in inside), "a position was reported with no motion at all"
+    print(f"frozen window ok: {len(inside)} emissions fully inside the freeze, none with a box")
+
+
 def main():
     check_merged_center_box_is_additive()
+    check_a_frozen_window_yields_no_box()
     check_smoother_has_no_lag_on_constant_velocity()
     check_smoother_gates_an_outlier_but_relocks_on_a_sustained_jump()
     check_smoother_constants_are_frame_rate_independent()
