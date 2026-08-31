@@ -92,15 +92,6 @@ def train(criterion, device, epoch, net, opt, dl, scaler):
             out = net(frames)
             loss = criterion(out, hm)
         scaler.scale(loss).backward()
-        # unscale before clipping (standard AMP pattern) - without this, a criterion whose
-        # gradient scale differs a lot from what the tuned lr/precision expects (e.g. MSELoss's
-        # squared, unbounded error vs. LogisticLoss's bounded log(1+exp(...)) the existing
-        # kth_train hyperparameters were actually tuned against) can produce a large early
-        # update, overflow fp16's narrow dynamic range, and NaN out the run with no recovery -
-        # confirmed happening on kth_train_anisotropic's MSELoss run, never seen on kth_train's
-        # LogisticLoss run
-        scaler.unscale_(opt)
-        torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1.0)
         scaler.step(opt)
         scaler.update()
         xma.append(loss.item())
