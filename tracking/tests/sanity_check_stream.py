@@ -5,7 +5,7 @@
 import numpy as np
 
 from tracking.core.blob_tracker import merged_center
-from tracking.stream.stream import StreamPipeline, SPAN, BUFFER, jitter
+from tracking.stream.stream import Smoother, StreamPipeline, SPAN, BUFFER, jitter
 
 
 def make_moving_bar(T=40, H=120, W=240, speed=3, bar_h=60, bar_w=25):
@@ -105,8 +105,50 @@ def check_streaming_matches_the_offline_evaluator(video='data/ido_walk.mkv', sca
     print(f"offline parity ok: {len(centers)} windows, {n_both} tracked, identical to the bit")
 
 
+def check_smoother_has_no_lag_on_constant_velocity():
+    """Holt's trend term exists precisely so a constant-velocity target is not lagged. A plain
+    first-order EMA would sit v*tau behind; this must not."""
+    sm = Smoother(person_height=100.0, fps=25.0, halflife_s=0.15)
+    v = 5.0
+    for t in range(80):
+        out, _, coast = sm.update((10.0 + v * t, 50.0), (30.0, 90.0))
+    lag = (10.0 + v * 79) - out[0]
+    assert abs(lag) < 0.5, f"constant-velocity lag {lag:.2f}px - the trend term is not working"
+    print(f"smoother ok: constant-velocity lag {lag:+.3f}px (a plain EMA would lag ~{v * 5:.0f}px)")
+
+
+def check_smoother_gates_an_outlier_but_relocks_on_a_sustained_jump():
+    sm = Smoother(person_height=100.0, fps=25.0, halflife_s=0.15, jump_max=0.75, hold_s=0.35)
+    for t in range(40):
+        out, _, _ = sm.update((100.0, 50.0), (30.0, 90.0))
+    settled = out[0]
+    out, _, coast = sm.update((900.0, 50.0), (30.0, 90.0))        # one wild frame
+    assert coast, "a 800px jump on a 100px person should be gated, not followed"
+    assert abs(out[0] - settled) < 5.0, f"gated frame still moved the estimate to {out[0]:.0f}"
+    for t in range(40):                                            # sustained: must re-lock
+        out, _, coast = sm.update((900.0, 50.0), (30.0, 90.0))
+    assert abs(out[0] - 900.0) < 5.0, f"never re-locked; stuck at {out[0]:.0f}"
+    print("smoother ok: single outlier gated, sustained jump re-locked")
+
+
+def check_smoother_constants_are_frame_rate_independent():
+    """Half-lives are in seconds, so the same wall-clock smoothing must result at any fps."""
+    outs = []
+    for fps in (12.0, 24.0, 48.0):
+        sm = Smoother(person_height=100.0, fps=fps, halflife_s=0.2)
+        n = int(round(2.0 * fps))                                  # two seconds either way
+        for t in range(n):
+            out, _, _ = sm.update((0.0 if t < n // 2 else 60.0, 0.0), (30.0, 90.0))
+        outs.append(out[0])
+    assert max(outs) - min(outs) < 2.0, f"fps-dependent smoothing: {outs}"
+    print(f"smoother ok: frame-rate independent ({['%.2f' % o for o in outs]} at 12/24/48 fps)")
+
+
 def main():
     check_merged_center_box_is_additive()
+    check_smoother_has_no_lag_on_constant_velocity()
+    check_smoother_gates_an_outlier_but_relocks_on_a_sustained_jump()
+    check_smoother_constants_are_frame_rate_independent()
     check_jitter_is_zero_on_constant_velocity()
     check_pipeline_emits_for_the_buffer_center()
     check_newest_readout_is_zero_latency()
