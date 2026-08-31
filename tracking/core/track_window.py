@@ -4,13 +4,23 @@ from tracking.core.preprocess import foreground_mask, refine_mask, filter_by_sha
 from tracking.core.blob_tracker import detect_blobs, track_blobs, score_and_fit, merged_center
 
 
-def position_from_track(winner, window_detections, merge_radius):
+def position_from_track(winner, window_detections, merge_radius, center_t: int = None,
+                        return_box: bool = False):
     """Read a center-frame (x, y) position off one scored track. Split out of
     _result_from_detections so the same read-out can be applied to *any* candidate track,
     not only the winning one - needed to study the ranking offline
-    (tracking/eval/stage2_rank_learning.py). Behavior is unchanged."""
-    center_t = len(window_detections) // 2
-    if center_t in winner["history"]:
+    (tracking/eval/stage2_rank_learning.py). Behavior is unchanged.
+
+    center_t: which window index to read the position out at. Defaults to the window
+    center, which is the only choice the offline evaluator ever uses. It is exposed so a
+    streaming caller can measure the cost of reading out at the newest frame instead
+    (zero lookahead latency): the linear fit below is then evaluated at the edge of its own
+    support rather than its center, where its prediction variance is minimal.
+    return_box: also report the merged multi-blob box, not only its center."""
+    if center_t is None:
+        center_t = len(window_detections) // 2
+    extrapolated = center_t not in winner["history"]
+    if not extrapolated:
         anchor_x, anchor_y = winner["history"][center_t][:2]
     else:
         # center frame had no detection in the winning track -> extrapolate x from the
@@ -27,14 +37,18 @@ def position_from_track(winner, window_detections, merge_radius):
     # (head/torso/legs) - merge everything near the tracked anchor point into one
     # combined bbox so the reported position matches a whole-person centroid, not
     # whichever fragment score_and_fit happened to track
-    cx, cy = merged_center(window_detections[center_t], anchor_x, anchor_y, merge_radius)
+    merged = merged_center(window_detections[center_t], anchor_x, anchor_y, merge_radius,
+                           return_box=return_box)
+    (cx, cy, box) = merged if return_box else (merged[0], merged[1], None)
 
     return dict(x=float(cx), y=float(cy), vx=float(winner["vx"]),
-               score=float(winner["score"]), resid_std=float(winner["resid_std"]))
+               score=float(winner["score"]), resid_std=float(winner["resid_std"]),
+               box=box, extrapolated=extrapolated)
 
 
 def _result_from_detections(window_detections, min_track_length, expected_height, height_tolerance,
-                            max_dist, max_age, merge_radius):
+                            max_dist, max_age, merge_radius, center_t: int = None,
+                            return_box: bool = False):
     """Shared by track_window() and track_sequence.track_windows_in_sequence() - given one
     window's already-computed per-frame detections, run Kalman/Hungarian tracking +
     scoring and read off a center-frame position estimate. Returns the same result dict
@@ -44,7 +58,8 @@ def _result_from_detections(window_detections, min_track_length, expected_height
                            expected_height=expected_height, height_tolerance=height_tolerance)
     if winner is None:
         return None
-    return position_from_track(winner, window_detections, merge_radius)
+    return position_from_track(winner, window_detections, merge_radius, center_t=center_t,
+                               return_box=return_box)
 
 
 def track_window(frames: np.ndarray, bg_frames: int = None, var_threshold: float = 16.0,
