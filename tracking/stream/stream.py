@@ -52,7 +52,6 @@ class Result:
     extrapolated: bool                  # readout frame had no detection in the winning track
     score: float | None
     winner: dict | None
-    detections: list = ()      # HOG boxes in full-frame coords, filled in by run()
 
 
 class StreamPipeline:
@@ -126,10 +125,6 @@ def frames_from_video(path: str, scale: float = 1.0):
 
 def annotate(result: Result, fps: float) -> np.ndarray:
     vis = cv2.cvtColor(result.frame, cv2.COLOR_GRAY2BGR)
-    for (dx1, dy1, dx2, dy2), conf in result.detections:
-        cv2.rectangle(vis, (dx1, dy1), (dx2, dy2), (255, 0, 255), 2)
-        cv2.putText(vis, f"HOG {conf:.2f}", (dx1, max(14, dy1 - 6)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 0, 255), 2)
     if result.box is not None:
         x1, y1, x2, y2 = (int(round(v)) for v in result.box)
         colour = (0, 165, 255) if result.extrapolated else (0, 255, 0)
@@ -142,80 +137,8 @@ def annotate(result: Result, fps: float) -> np.ndarray:
         label += f"  score {result.score:.0f}"
         if result.extrapolated:
             label += "  fitted readout"
-    if result.detections:
-        label += f"  |  {len(result.detections)} HOG"
-
     cv2.putText(vis, label, (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
     return vis
-
-
-_HOG = None
-
-
-def hog_detector():
-    """OpenCV's built-in HOG people detector, built once. No model download, no GPU."""
-    global _HOG
-    if _HOG is None:
-        if not hasattr(cv2, 'HOGDescriptor'):
-            raise RuntimeError(
-                f"cv2.HOGDescriptor is absent from OpenCV {cv2.__version__}: HOG was removed "
-                f"in OpenCV 5. Run this with an OpenCV 4 interpreter (on this machine: "
-                f"~/miniconda3/envs/spacejam/bin/python, cv2 4.10.0), or pass --no-hog. "
-                f"Everything except the detector overlay works on either.")
-        _HOG = cv2.HOGDescriptor()
-        _HOG.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
-    return _HOG
-
-
-def detect_person(frame: np.ndarray, box, person_height: float, pad: float = 0.25,
-                  target_px: float = 128.0, win_stride=(8, 8), scale_step: float = 1.05,
-                  hit_threshold: float = 0.0):
-    """HOG on the CENTRE FRAME, restricted to a scale-relative crop around the tracker's
-    merged box. Returns [((x1, y1, x2, y2), confidence), ...] in FULL-FRAME coordinates, so
-    the detector can be drawn straight on top of the merged box.
-
-    target_px replaces the "2x upscale, mandatory" rule from the earlier notes. HOG's
-    detection window is 64x128, so what governs whether it fires is the person's height in the
-    image it is handed RELATIVE TO 128 - not an absolute factor measured once on one dataset at
-    one person size. The crop is resized so person_height maps to target_px, which makes the
-    setting scale-free the same way every other parameter here is. Restricting to the tracker's
-    own box is what makes this cheap and keeps HOG off the foliage; box=None falls back to the
-    whole frame.
-
-    The crop is the MERGED BLOB BOX, grown by pad person-heights on each side. Padding is not
-    cosmetic: HOG's default people detector was trained on 64x128 INRIA windows in which the
-    person occupies roughly the central half of the width, so a crop cut tight to the silhouette
-    is out of distribution for it.
-
-    box=None returns [] rather than scanning the whole frame. A full-frame scan on this footage
-    fires overwhelmingly on foliage, and folding that into the same number as box-restricted
-    detections makes the statistic meaningless.
-
-    weights from detectMultiScale are SVM decision values, not probabilities - report them as
-    the detector's own margin and do not call them a probability. hit_threshold is that same
-    margin's accept cutoff; lowering it below 0 surfaces weaker detections rather than none.
-    """
-    h, w = frame.shape
-    if box is None:
-        return []
-    m = pad * person_height
-    x1, y1 = max(0, int(round(box[0] - m))), max(0, int(round(box[1] - m)))
-    x2, y2 = min(w, int(round(box[2] + m))), min(h, int(round(box[3] + m)))
-    if x2 - x1 < 16 or y2 - y1 < 32:
-        return []
-    crop = frame[y1:y2, x1:x2]
-    k = target_px / person_height
-    if abs(k - 1.0) > 1e-3:
-        crop = cv2.resize(crop, None, fx=k, fy=k,
-                          interpolation=cv2.INTER_AREA if k < 1 else cv2.INTER_CUBIC)
-    if crop.shape[0] < 128 or crop.shape[1] < 64:
-        return []
-    rects, weights = hog_detector().detectMultiScale(crop, winStride=win_stride,
-                                                     padding=(8, 8), scale=scale_step,
-                                                     hitThreshold=hit_threshold)
-    return [((int(x1 + rx / k), int(y1 + ry / k),
-              int(x1 + (rx + rw) / k), int(y1 + (ry + rh) / k)), float(c))
-            for (rx, ry, rw, rh), c in zip(rects, np.ravel(weights))]
 
 
 def jitter(xs_by_index: dict) -> float:
@@ -236,26 +159,19 @@ def in_ranges(f: int, ranges) -> bool:
 
 def run(video: str, person_height: float, scale: float = 0.5, readout: str = 'center',
         out_dir: str = 'images/stream', tag: str = '', display: bool = False,
-        src_fps: float = 24.0, present=(), out_fps: float = None,
-        hog: bool = True, hog_target: float = 128.0, hog_pad: float = 0.25,
-        hog_thresh: float = 0.0) -> dict:
+        src_fps: float = 24.0, present=(), out_fps: float = None) -> dict:
     pipe = StreamPipeline(person_height=person_height, readout=readout)
     if person_height / 7.5 < 40:
         print(f"note: head is ~{person_height / 7.5:.0f}px at this scale; face-level tasks "
               f"are not viable, person detection is the realistic downstream task")
 
-    writer, results, t_start, shown, compute, hog_time = None, [], time.perf_counter(), 0, 0.0, 0.0
+    writer, results, t_start, shown, compute = None, [], time.perf_counter(), 0, 0.0
     for frame in frames_from_video(video, scale):
         t0 = time.perf_counter()
         r = pipe.step(frame)
         compute += time.perf_counter() - t0
         if r is None:
             continue
-        if hog:
-            t1 = time.perf_counter()
-            r.detections = detect_person(r.frame, r.box, person_height, pad=hog_pad,
-                                         target_px=hog_target, hit_threshold=hog_thresh)
-            hog_time += time.perf_counter() - t1
         results.append(r)
         fps = len(results) / (time.perf_counter() - t_start)
         vis = annotate(r, fps)
@@ -294,13 +210,6 @@ def run(video: str, person_height: float, scale: float = 0.5, readout: str = 'ce
                  fps=pipe.seen / compute, wall_fps=shown / wall,
                  jitter_px=jitter(xs), jitter_n=len(xs),
                  latency_frames=SPAN if readout == 'center' else 0)
-    if hog:
-        fired = [r for r in results if r.detections]
-        best = [max(c for _, c in r.detections) for r in fired]
-        stats.update(hog_fired=len(fired) / max(len(results), 1),
-                     hog_fired_when_boxed=sum(1 for r in boxed if r.detections) / max(len(boxed), 1),
-                     hog_mean_best_conf=float(np.mean(best)) if best else float('nan'),
-                     hog_ms_per_frame=1000 * hog_time / max(len(results), 1))
     print("  ".join(f"{k}={v:.3f}" if isinstance(v, float) else f"{k}={v}"
                     for k, v in stats.items()))
     return stats
@@ -416,19 +325,6 @@ def main():
     p.add_argument('--out-dir', default='images/stream')
     p.add_argument('--tag', default='', help='output filename prefix (defaults to --readout)')
     p.add_argument('--display', action='store_true', help='cv2.imshow paced at the source fps')
-    p.add_argument('--no-hog', dest='hog', action='store_false',
-                   help='skip the HOG person detector overlay')
-    p.add_argument('--hog-target', type=float, default=128.0,
-                   help="resize the crop so the person is this tall before HOG; HOG's own "
-                        "window is 64x128, so this is the scale-free version of an upscale factor")
-    p.add_argument('--hog-pad', type=float, default=0.25,
-                   help='margin grown around the merged blob box before HOG, in person heights')
-    p.add_argument('--hog-thresh', type=float, default=0.0,
-                   help="HOG's SVM margin cutoff; below 0 surfaces weaker detections")
-    p.add_argument('--out-fps', type=float, default=None,
-                   help='frame rate stamped on the written mp4; below the source rate this '
-                        'gives slow motion for frame-by-frame inspection (e.g. 6 = 4x slow). '
-                        'Does not affect --display pacing or any measurement.')
     p.add_argument('--compare', action='store_true',
                    help='paired center-vs-newest readout comparison instead of a single run')
     p.add_argument('--measure-presence', action='store_true',
@@ -453,8 +349,7 @@ def main():
         compare_readouts(a.video, height, scale=a.scale, out_dir=a.out_dir, present=present)
     else:
         run(a.video, height, scale=a.scale, readout=a.readout, out_dir=a.out_dir, tag=a.tag,
-            display=a.display, present=present, out_fps=a.out_fps, hog=a.hog,
-            hog_target=a.hog_target, hog_pad=a.hog_pad, hog_thresh=a.hog_thresh)
+            display=a.display, present=present, out_fps=a.out_fps)
 
 
 if __name__ == '__main__':
