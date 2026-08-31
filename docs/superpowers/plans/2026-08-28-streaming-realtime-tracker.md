@@ -91,6 +91,21 @@ Consequences for this plan, already applied below:
    yolov3-tiny with correctly matched cfg/weights, and `dnn_DetectionModel` returns nothing at
    conf 0.05, while objectness and box coordinates look sane. Use torchvision or ultralytics if a
    CNN is ever wanted; both are already installed.
+
+   **DO NOT RETRY THIS. It is now the third independent derivation of the same conclusion.** This
+   repo already measured it: `gen_data/score_frames_yolo.py`, deleted in commit `3c4a66b` (as
+   superseded and unreferenced, not for this reason), records in its own comments that an
+   off-the-shelf YOLO run "came back exactly 0.000 confidence on 100% of frames" of NFO with
+   yolov8n - which is why it escalated to `yolov8l` and dropped the threshold to `conf=0.001` just
+   to get numbers it could *rank* rather than trust. Recover it with
+   `git show 3c4a66b^:gen_data/score_frames_yolo.py` before writing anything new.
+
+   So the sequence is: this project measured 0.000 confidence and worked around it; I then
+   rediscovered the same 0.000 with Faster R-CNN and YOLOv8n; and my own recommendation to add a
+   `cv2.dnn` detector has been withdrawn on measurement. A fourth attempt will find the same thing. Corroborating from a different direction, `docs/training_failure_hypotheses.md`
+   records that feeding a 2x-upscaled NFO frame lifted precision 0.52 -> 0.98, which is the same 2x
+   factor as HOG firing on 0% of windows at 1x and ~30% at 2x - person scale, not detector choice,
+   is what governs whether anything fires on this footage.
 3. `integrate()` takes `crop_size` directly and has no `person_height` parameter - compute
    `int(round(1.6 * person_height))` at the call site. That removes one of the two planned changes
    to `tracking/core/`.
