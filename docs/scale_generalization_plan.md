@@ -771,25 +771,3 @@ becomes measurable exactly when the pipeline moves to streaming, and it is the c
 evaluator, not the real-time constraint, that cannot support it. Restructuring to streaming buys
 the 3.8x speedup and the gait feature together, which makes it the highest-value next piece of
 work rather than a deployment chore.
-
-### Re-baseline: eval_nfo's MERGE_RADIUS updated 100 -> 122 px
-
-The merge-radius sweep above found 0.625 x person height optimal, so `eval_nfo.py`'s
-hand-tuned constant was updated from 100 px (= height/2) to 122 px (= 0.625 x 195) to match
-`ALPHA_MERGE`. Re-measured on all four NFO sequences, WITH shape-aware scoring:
-
-| | mean | median | p90 | no-track |
-|---|---|---|---|---|
-| MERGE_RADIUS = 100 (the number quoted throughout this doc) | 0.0698 | 0.0250 | 0.1049 | 0.2% |
-| **MERGE_RADIUS = 122** | **0.0661** | **0.0203** | **0.1002** | 0.2% |
-
-A 5% improvement in mean residual and 19% in median - modest, as expected, but free. It also
-confirms the sweep methodology: the sweep predicted 0.0660 at this radius and the full
-`eval_nfo` pipeline delivered 0.0661, despite the sweep script using slightly different
-front-end defaults.
-
-**Any baseline number quoted elsewhere in this document as 0.0698 was measured at the old
-100 px radius.** The Stage 2 ranking results in particular used the old value, so the
-ranker's 90.0% -> 94.9% hit-rate figures are against a very slightly weaker baseline than the
-current default. The ranking headroom conclusion (the oracle at 98.8%) is unaffected, since the
-merge radius changes the position read-out for every candidate equally.

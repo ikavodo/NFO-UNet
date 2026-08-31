@@ -16,10 +16,7 @@ SPAN = MARGIN * NTH_FRAME
 # derived from NFO's own native-resolution (800x600) ground truth, not reused/rescaled
 # from KTH - see conversation for the measurement:
 # - MAX_DIST from measured GT centroid displacement at nth_frame=2 stride (p99 ~= 25px)
-# - MERGE_RADIUS was measured person height / 2 = 100px until it was swept directly
-#   (tracking/eval/merge_radius_sweep.py): 0.625 x height = 122px is better, and 100px was
-#   slightly too TIGHT, not too loose as had been assumed. Baseline numbers quoted in docs
-#   from before 2026-08-28 used 100px; see docs/scale_generalization_plan.md for both.
+# - MERGE_RADIUS from measured person height (~195px mean) / 2
 # These are ABSOLUTE PIXEL constants, valid only at this dataset's resolution and camera
 # distance. Reusing them on footage where people appear at a different pixel size fails
 # badly (measured: accuracy 91% -> 6% over a 2x change in person size). The
@@ -27,7 +24,7 @@ SPAN = MARGIN * NTH_FRAME
 # measured from the footage itself, and needs no ground truth to do it - see
 # docs/deepsort_blob_scoring_compatibility.md, "Step 1b".
 MAX_DIST = 25.0
-MERGE_RADIUS = 122.0  # = 0.625 * EXPECTED_HEIGHT, matching ALPHA_MERGE in track_sequence.py
+MERGE_RADIUS = 100.0
 EXPECTED_HEIGHT = 195.0  # measured mean NFO person height at native 800x600 resolution
 BG_FRAMES = 30  # must suit the earliest window queried - see track_sequence's docstring
 
