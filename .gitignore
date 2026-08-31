@@ -159,3 +159,6 @@ cython_debug/
 
 # streaming demo writes annotated videos next to its (small, tracked) montages
 images/stream/*.mp4
+
+# live webcam captures contain footage of the user - keep local, do not commit
+images/stream/live_c920*

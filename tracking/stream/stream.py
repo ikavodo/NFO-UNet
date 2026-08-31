@@ -226,8 +226,39 @@ class Smoother:
 
 # --------------------------------------------------------------------------- demo
 
+def _open_camera(index, width, height, fps, fourcc, auto_exposure):
+    # cv2.CAP_V4L2 EXPLICITLY. Opening a PATH like '/dev/video2' without naming the backend
+    # routes to FFMPEG, which silently ignores every V4L2 property: measured on the C920,
+    # VideoCapture('/dev/video2') negotiates 640x480 with fourcc \x00 and backend FFMPEG, while
+    # VideoCapture('/dev/video2', cv2.CAP_V4L2) gives 1280x720 @30 MJPG. Opening by integer index
+    # happens to pick V4L2 anyway, so this bug only appears with the path form - which is the
+    # form anyone reading `v4l2-ctl --list-devices` will naturally reach for. Measured end to
+    # end on the live app: 8.9 fps via FFMPEG against 24.1 fps via V4L2.
+    cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
+    if not cap.isOpened():
+        return None
+    if fourcc:
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc))
+    if width:
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    if height:
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    if fps:
+        cap.set(cv2.CAP_PROP_FPS, fps)
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, auto_exposure)
+    cap.set(cv2.CAP_PROP_AUTO_WB, 0)
+    got = int(cap.get(cv2.CAP_PROP_FOURCC))
+    print(f"camera {index!r}: backend {cap.getBackendName()}, negotiated "
+          f"{int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))} "
+          f"@ {cap.get(cv2.CAP_PROP_FPS):g}fps, fourcc "
+          f"{''.join(chr((got >> 8 * i) & 0xFF) for i in range(4))}", flush=True)
+    return cap
+
+
 def webcam_frames(index=0, scale: float = 1.0, width: int = 1280, height: int = 720,
-                  fps: float = 30.0, fourcc: str = 'MJPG', auto_exposure: float = 0.25):
+                  fps: float = 30.0, fourcc: str = 'MJPG', auto_exposure: float = 0.25,
+                  reconnect: bool = True, reconnect_wait: float = 2.0):
     """Newest-frame-only webcam source: a daemon thread writes a single slot and the consumer
     takes whatever is there. A fixed-latency pipeline must never accumulate a backlog - if the
     consumer falls behind, the right thing is to DROP frames, not to queue them.
@@ -257,51 +288,50 @@ def webcam_frames(index=0, scale: float = 1.0, width: int = 1280, height: int = 
     # VideoCapture('/dev/video2', cv2.CAP_V4L2) gives 1280x720 @30 MJPG. Opening by integer index
     # happens to pick V4L2 anyway, so this bug only appears with the path form - which is the
     # form anyone reading `v4l2-ctl --list-devices` will naturally reach for.
-    cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
-    assert cap.isOpened(), (f"cannot open camera {index!r}. `v4l2-ctl --list-devices` lists the "
-                            f"capture nodes; a UVC camera's second node is usually metadata, "
-                            f"not a second camera")
-    if fourcc:
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc))
-    if width:
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-    if height:
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-    if fps:
-        cap.set(cv2.CAP_PROP_FPS, fps)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, auto_exposure)
-    cap.set(cv2.CAP_PROP_AUTO_WB, 0)
-    got = int(cap.get(cv2.CAP_PROP_FOURCC))
-    print(f"camera {index!r}: backend {cap.getBackendName()}, negotiated "
-          f"{int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))} "
-          f"@ {cap.get(cv2.CAP_PROP_FPS):g}fps, fourcc "
-          f"{''.join(chr((got >> 8 * i) & 0xFF) for i in range(4))}")
-    slot, stop = [None], threading.Event()
+    opened_once = False
+    while True:
+        cap = _open_camera(index, width, height, fps, fourcc, auto_exposure)
+        if cap is None:
+            assert opened_once, (
+                f"cannot open camera {index!r}. `v4l2-ctl --list-devices` lists the capture "
+                f"nodes; a UVC camera's second node is usually metadata, not a second camera")
+            print(f"camera gone; retrying in {reconnect_wait:g}s", flush=True)
+            time.sleep(reconnect_wait)
+            continue
+        opened_once = True
+        slot, stop = [None], threading.Event()
 
-    def reader():
-        while not stop.is_set():
-            ok, f = cap.read()
-            if not ok:
-                stop.set()
-                break
-            slot[0] = f
+        def reader():
+            while not stop.is_set():
+                ok, f = cap.read()
+                if not ok:
+                    stop.set()
+                    break
+                slot[0] = f
 
-    t = threading.Thread(target=reader, daemon=True)
-    t.start()
-    try:
-        while not stop.is_set():
-            f, slot[0] = slot[0], None
-            if f is None:
-                time.sleep(0.002)
-                continue
-            g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
-            yield g if scale == 1.0 else cv2.resize(g, None, fx=scale, fy=scale,
-                                                    interpolation=cv2.INTER_AREA)
-    finally:
-        stop.set()
-        t.join(timeout=1.0)
-        cap.release()
+        t = threading.Thread(target=reader, daemon=True)
+        t.start()
+        try:
+            while not stop.is_set():
+                f, slot[0] = slot[0], None
+                if f is None:
+                    time.sleep(0.002)
+                    continue
+                g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
+                yield g if scale == 1.0 else cv2.resize(g, None, fx=scale, fy=scale,
+                                                        interpolation=cv2.INTER_AREA)
+        finally:
+            # also runs on GeneratorExit when the consumer stops, and the exception then
+            # propagates past the reconnect loop, so closing the generator does NOT reopen
+            stop.set()
+            t.join(timeout=1.0)
+            cap.release()
+        if not reconnect:
+            return
+        # A USB reset or an unplugged camera must not end an installation that is meant to run
+        # for weeks, so reopen instead of falling out of the generator.
+        print(f"camera read failed; reconnecting in {reconnect_wait:g}s", flush=True)
+        time.sleep(reconnect_wait)
 
 
 def frames_from_source(path, scale: float = 1.0):

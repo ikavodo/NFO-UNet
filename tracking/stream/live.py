@@ -37,7 +37,9 @@ auto white balance are disabled because auto-gain shifts global brightness and M
 as everything-is-foreground. Static camera only, for the same reason.
 """
 import argparse
+import os
 import time
+from collections import deque
 
 import cv2
 import numpy as np
@@ -53,38 +55,63 @@ def hud(vis, lines, colour=(255, 255, 255)):
     return vis
 
 
-def bootstrap(source, probe_frames: int, stable_tol: float, display: bool):
+def bootstrap(source, probe_frames: int, stable_tol: float, display: bool,
+              motion_thresh: int = 20, min_motion: float = 0.001):
     """Consume frames until the person height is both plausible and stable across two attempts.
 
     Returns (height, buffered_frames, measured_fps). The buffered frames are handed back so the
     caller can replay them through the pipeline - they are MOG2's warm-up, and throwing them
     away would mean starting the background model from zero after the bootstrap.
+
+    A MOTION GATE IS REQUIRED, and plausible-plus-stable is not enough on its own. MOG2's first
+    frame is entirely foreground because there is no model yet, so estimate_person_height on a
+    completely STATIC stack returns roughly 80% of the frame height - measured, 73px on a 90px
+    frame - and that answer is perfectly "stable" across retries because it is deterministic. It
+    is also indistinguishable from a real large person by size alone: the C920 run measured a
+    genuine 294px on a 360px frame, 82%. So the estimate is only attempted when the probe window
+    actually contains frame-to-frame change, which a static scene cannot fake. Without this an
+    installation started on an empty room locks a bogus height and then tracks with parameters
+    scaled to it.
     """
-    buf, attempts, t0, retry = [], [], time.perf_counter(), max(1, probe_frames // 4)
-    prev = None
+    # BOUNDED. Only the last probe_frames are ever used, and this loop runs until the height
+    # converges - which may be never, if nobody walks in. An unbounded list here grows at
+    # frame_bytes * fps: 6.9 MB/s at 640x360 grayscale and 30fps, i.e. 25 GB/hour. A deque with
+    # maxlen is the whole fix.
+    buf = deque(maxlen=probe_frames)
+    motion = deque(maxlen=probe_frames)          # per-frame changed-pixel fraction
+    seen, t0, retry = 0, time.perf_counter(), max(1, probe_frames // 4)
+    prev = prev_frame = None
     for frame in source:
+        if prev_frame is not None:
+            motion.append(float((np.abs(frame.astype(np.int16) - prev_frame) > motion_thresh)
+                                .mean()))
+        prev_frame = frame
         buf.append(frame)
+        seen += 1
         h_frame = frame.shape[0]
-        if len(buf) >= probe_frames and len(buf) % retry == 0:
-            est = bootstrap_person_height(np.stack(buf[-probe_frames:]))
+        moving = len(motion) > 1 and float(np.median(motion)) > min_motion
+        if seen >= probe_frames and seen % retry == 0 and moving:
+            est = bootstrap_person_height(np.stack(buf))
             plausible = 0.05 * h_frame <= est <= 0.95 * h_frame
             stable = prev is not None and abs(est - prev) <= stable_tol * max(est, prev)
-            attempts.append((est, plausible, stable))
             if plausible and stable:
-                fps = len(buf) / max(time.perf_counter() - t0, 1e-6)
-                return float(est), buf, fps
+                fps = seen / max(time.perf_counter() - t0, 1e-6)
+                return float(est), deque(buf), fps
             prev = est
         if display:
             vis = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
-            msg = [f"BOOTSTRAP  {len(buf)}/{probe_frames} frames",
+            msg = [f"BOOTSTRAP  {seen} frames seen, need {probe_frames}",
                    "walk across the frame so the person height can be measured"]
+            if len(motion) > 1 and not moving:
+                msg.append(f"no motion detected (median {np.median(motion):.4f} of pixels "
+                           f"changing, need {min_motion}) - not measuring yet")
             if prev is not None:
                 msg.append(f"last estimate {prev:.0f}px ({prev / h_frame:.0%} of frame) "
                            f"- need two agreeing within {stable_tol:.0%}")
             cv2.imshow('live tracker', hud(vis, msg, (0, 255, 255)))
             if cv2.waitKey(1) in (27, ord('q')):
-                return None, buf, 0.0
-    return None, buf, 0.0
+                return None, deque(buf), 0.0
+    return None, deque(buf), 0.0
 
 
 def main():
@@ -112,14 +139,22 @@ def main():
     p.add_argument('--jump-max', type=float, default=0.75)
     p.add_argument('--record', default=None, help='also write an annotated mp4 here')
     p.add_argument('--no-display', dest='display', action='store_false')
+    p.add_argument('--status-every', type=float, default=60.0,
+                   help='seconds between one-line status reports (frames, fps, RSS)')
+    p.add_argument('--max-frames', type=int, default=0,
+                   help='stop after this many emitted frames; 0 = run indefinitely')
+    p.add_argument('--loop', action='store_true',
+                   help='restart --source when it ends, for soak-testing the indefinite path')
     a = p.parse_args()
 
     if a.source:
         cap = cv2.VideoCapture(a.source)
         file_fps = cap.get(cv2.CAP_PROP_FPS) or 24.0
         cap.release()
-        source = frames_from_video(a.source, a.scale)
-        print(f"source {a.source} at {file_fps:g} fps, paced like a camera")
+        source = (_looped_file(a.source, a.scale) if a.loop
+                  else frames_from_video(a.source, a.scale))
+        print(f"source {a.source} at {file_fps:g} fps, paced like a camera"
+              + (", looping" if a.loop else ""), flush=True)
     else:
         cam = int(a.camera) if a.camera.isdigit() else a.camera
         cw, ch = (int(v) for v in a.cam_size.lower().split('x'))
@@ -143,7 +178,11 @@ def main():
     pipe = StreamPipeline(person_height=height)
     sm = Smoother(height, fps, halflife_s=a.halflife, jump_max=a.jump_max)
     writer = None
-    shown, t_start, last_report = 0, time.perf_counter(), time.perf_counter()
+    shown, t_start = 0, time.perf_counter()
+    # fps over a trailing window, not since start: a cumulative average stops reflecting the
+    # current rate within minutes, and this is meant to run for weeks
+    recent = deque(maxlen=int(max(fps, 1) * 2))
+    last_status = t_start
     disp_fps = fps
 
     try:
@@ -158,9 +197,15 @@ def main():
                           f"({1000 * SPAN / fps:.0f} ms)   {'TRACKING' if r.x is not None else 'searching'}"])
             shown += 1
             now = time.perf_counter()
-            if now - last_report >= 1.0:
-                disp_fps = shown / (now - t_start)
-                last_report = now
+            recent.append(now)
+            if len(recent) > 1:
+                disp_fps = (len(recent) - 1) / max(recent[-1] - recent[0], 1e-6)
+            if now - last_status >= a.status_every:
+                print(f"[{(now - t_start) / 3600:6.2f}h] {shown} frames  {disp_fps:5.1f} fps  "
+                      f"rss {rss_mb():6.1f} MB", flush=True)
+                last_status = now
+            if a.max_frames and shown >= a.max_frames:
+                break
             if a.record:
                 if writer is None:
                     h, w = vis.shape[:2]
@@ -184,12 +229,38 @@ def main():
           + (f"; wrote {a.record}" if a.record else ""))
 
 
+def _looped_file(path: str, scale: float):
+    """Repeat a file forever - the soak-test stand-in for a camera that never stops."""
+    while True:
+        n = 0
+        for f in frames_from_video(path, scale):
+            n += 1
+            yield f
+        if n == 0:
+            raise RuntimeError(f"{path} yielded no frames")
+
+
 def _chain(buffered, source):
-    """The bootstrap frames first (they are MOG2's warm-up), then the live stream."""
-    for f in buffered:
-        yield f
+    """The bootstrap frames first (they are MOG2's warm-up), then the live stream.
+
+    Frames are POPPED as they are yielded rather than iterated, so the warm-up block is freed
+    during the replay instead of being pinned for the lifetime of the process by this
+    generator's own frame.
+    """
+    while buffered:
+        yield buffered.popleft()
     for f in source:
         yield f
+
+
+def rss_mb() -> float:
+    """Current resident set size, MB. Cheap enough to print once a minute, and the only honest
+    way to claim a long run is not leaking."""
+    try:
+        with open('/proc/self/statm') as fh:
+            return int(fh.read().split()[1]) * os.sysconf('SC_PAGE_SIZE') / 2 ** 20
+    except (OSError, IndexError, ValueError):
+        return float('nan')
 
 
 if __name__ == '__main__':
