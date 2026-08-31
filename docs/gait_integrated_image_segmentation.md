@@ -98,6 +98,49 @@ Two output flavors are worth comparing, not just one:
   output (e.g. a predicted anisotropic heatmap) as part of a refinement loop, rather than a
   single forward pass - not proposed for the current scope, noted for later.
 
+## Measured result: gait-weighted fusion does NOT beat temporal weighting (negative result)
+
+`eval/compare_fusion_weighting.py` implements and tests the proposal above against the existing
+`fuse()` methods on KTH (real per-frame masks, independent `generate_occlusion_branch` occluder
+per frame at density 0.35, frames aligned by GT bbox center as a stand-in for
+`align_frames`' Kalman motion estimate). Scored as reconstruction MAE against the clean center
+frame, restricted to person pixels that are actually occluded in the center frame.
+
+Two methodological corrections were needed before the numbers meant anything, both of which
+initially produced a *false positive* for the proposal:
+
+1. **Untuned baseline.** Compared against `fuse()`'s literal default-ish `sigma=2.0`,
+   gait-weighting looked ~10% better. But `gait_weights` has two free hyperparameters and the
+   temporal baseline has one; sweeping the temporal sigma erased the entire advantage.
+2. **Degenerate metric.** Scoring MAE over the whole person mask rewards *not fusing at all* -
+   the occluded center frame already has perfect pose, so a weighting that puts ~79% of its mass
+   on the center frame (`sigma=0.5`) won outright while removing no occluder. Fixed by scoring
+   only pixels that are occluded in the center frame - the only ones fusion can improve.
+
+With both fixed (n=34 windows, seq_size=15, nth_frame=1, spanning ~1.5 gait cycles):
+
+| method | MAE on recoverable pixels |
+|---|---|
+| no fusion (center frame only) | 23.93 |
+| `mean` | 25.42 |
+| `median` | 23.08 |
+| gait_weighted | 22.04 |
+| **temporal_gaussian (sigma=1.0)** | **19.75** |
+
+**Temporal proximity is a better proxy for "safe to fuse" than gait-phase similarity here.**
+Immediately adjacent frames are already near-identical in pose *and* carry independently-drawn
+occluders - exactly what fusion needs. Gait-similarity weighting dilutes weight away from those
+ideal neighbours to reach same-phase frames a full period away, where the person has translated
+and residual pose/appearance drift costs more than the occluder it removes. At the shorter
+`seq_size=7, nth_frame=2` window the two are roughly tied (23.94 vs 23.71) and *both* barely beat
+not fusing at all (24.85), so nothing was gained there either.
+
+**Narrower claim that survives:** gait-phase weighting could still matter in the regime this test
+does *not* cover - a person occluded across a long *contiguous* stretch, where every temporally
+nearby frame is also occluded and the only usable material is a distant same-phase frame. That is
+a different experiment (deliberately correlated, persistent occlusion rather than independent
+per-frame occluders) and remains untested.
+
 ## Open questions / not yet built
 
 - No code has been written for this - this is a design doc, following the same review-before-
