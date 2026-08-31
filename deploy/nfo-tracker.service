@@ -1,0 +1,110 @@
+# Person tracker as an unattended service. Headless by design - see the bottom of this file for
+# the on-screen variant.
+#
+# INSTALL
+#   sudo usermod -aG video $USER          # MANDATORY - see PERMISSIONS below
+#   sudo cp deploy/nfo-tracker.service /etc/systemd/system/
+#   sudo mkdir -p /etc/nfo-tracker && sudo cp deploy/nfo-tracker.env /etc/nfo-tracker/env
+#   sudo editor /etc/nfo-tracker/env      # PYTHON, WORKDIR, CAMERA at minimum
+#   sudo editor /etc/systemd/system/nfo-tracker.service   # User=, Group=, WorkingDirectory=, ExecStart= interpreter
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now nfo-tracker
+#   journalctl -u nfo-tracker -f
+#
+# Log out and back in (or reboot) after usermod, or the new group is not in your session.
+#
+# PERMISSIONS - the trap that makes this fail while the terminal works.
+# /dev/video* is root:video 0660 with an ACL. On a desktop, systemd-logind grants the ACTIVE
+# SESSION user read/write via that ACL, which is why running it by hand works. Verified on the
+# development machine: `getfacl /dev/video2` shows `user:akovi:rw-` while `id` shows akovi is NOT
+# in the video group. A service has no session, so it gets no ACL entry and the open fails with
+# permission denied. SupplementaryGroups=video below covers the service side, but the account
+# must actually be in that group too - hence the usermod.
+#
+# WHY THE START LIMIT IS DISABLED.
+# systemd's default StartLimitBurst=5 / StartLimitIntervalSec=10s makes it GIVE UP after five
+# rapid restarts. For something that must run indefinitely that is exactly backwards: at boot the
+# USB camera is often not enumerated yet, the first open fails by design (a mistyped device should
+# fail loudly rather than retry forever), and five quick failures would permanently stop the unit.
+# StartLimitIntervalSec=0 removes the limit; RestartSec=5 keeps the retry loop cheap.
+
+[Unit]
+Description=NFO person tracker (live camera)
+Documentation=file:///home/akovi/PycharmProjects/NFO-UNet/tracking/stream/live.py
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=akovi
+Group=akovi
+SupplementaryGroups=video
+
+EnvironmentFile=/etc/nfo-tracker/env
+Environment=PYTHONUNBUFFERED=1
+# NOT ${WORKDIR}: systemd expands variables only in ExecStart-family settings, so this one has
+# to be a literal absolute path. Edit it at install time along with User= and Group=.
+WorkingDirectory=/home/akovi/PycharmProjects/NFO-UNet
+# The PROGRAM must be a literal absolute path - systemd expands ${VAR} in ExecStart ARGUMENTS
+# but not in the command name, and `systemd-analyze verify` reports exactly that. Edit this line
+# at install time; the arguments below stay configurable through the env file.
+ExecStart=/home/akovi/miniconda3/envs/smuggle-yolo/bin/python -m tracking.stream.live \
+    --camera ${CAMERA} \
+    --cam-size ${CAM_SIZE} \
+    --cam-fps ${CAM_FPS} \
+    --scale ${SCALE} \
+    --status-every ${STATUS_EVERY} \
+    --no-display \
+    $EXTRA_ARGS
+
+Restart=always
+RestartSec=5
+
+# Backstop for the "runs indefinitely" requirement. Measured steady-state RSS: 186 MB on this
+# exact command line (640x360 processing from a 1280x720 camera), and 354 MB in a 60000-frame
+# soak at 960x540, where it stayed flat (353.0 -> 353.5 MB, increments shrinking to zero). Nearly
+# all of it is the numpy/cv2/scipy imports plus the ring buffer. 1G leaves 3-5x headroom, so if
+# something ever does leak systemd kills and restarts this instead of the kernel OOM-killing
+# something else on the box.
+MemoryMax=1G
+
+# The tracker is ~2.5 ms/frame at 640x360 and single-threaded, so it should never saturate a
+# core. This is a guard, not a limit it is expected to reach.
+CPUQuota=150%
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+RestrictSUIDSGID=yes
+# NOT PrivateDevices=yes - that hides /dev/video* and the camera disappears.
+# NOT ProtectHome=yes    - the interpreter and the repo live under /home.
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nfo-tracker
+
+[Install]
+WantedBy=multi-user.target
+
+# ---------------------------------------------------------------------------------------------
+# ON-SCREEN VARIANT (kiosk). Drop --no-display and run it as a USER service, because a system
+# service has no access to the graphical session:
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/nfo-tracker.service ~/.config/systemd/user/
+#   # then, in that copy: delete User=/Group=/SupplementaryGroups=, [Install] WantedBy=default.target,
+#   # remove --no-display, and add:  Environment=DISPLAY=:0
+#   systemctl --user daemon-reload && systemctl --user enable --now nfo-tracker
+#   sudo loginctl enable-linger $USER      # so it survives logout
+#
+# The video group is still required - a lingering user service has no active session either, so
+# it gets no logind ACL.
+#
+# KNOWN REMAINING GAP. Restart=always covers crashes, and the app itself now reconnects on a
+# failed read and forces a reconnect after 10s with no frames, so a dead or unplugged camera is
+# recovered rather than fatal. What is NOT covered is the app wedging while still producing
+# frames - a true watchdog needs sd_notify (WatchdogSec= plus a notify call in the loop), which
+# would add a dependency. The status line in the journal is the manual substitute: if it stops
+# advancing, the process is wedged.

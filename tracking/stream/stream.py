@@ -258,7 +258,8 @@ def _open_camera(index, width, height, fps, fourcc, auto_exposure):
 
 def webcam_frames(index=0, scale: float = 1.0, width: int = 1280, height: int = 720,
                   fps: float = 30.0, fourcc: str = 'MJPG', auto_exposure: float = 0.25,
-                  reconnect: bool = True, reconnect_wait: float = 2.0):
+                  reconnect: bool = True, reconnect_wait: float = 2.0,
+                  stall_timeout: float = 10.0):
     """Newest-frame-only webcam source: a daemon thread writes a single slot and the consumer
     takes whatever is there. A fixed-latency pipeline must never accumulate a backlog - if the
     consumer falls behind, the right thing is to DROP frames, not to queue them.
@@ -311,12 +312,23 @@ def webcam_frames(index=0, scale: float = 1.0, width: int = 1280, height: int = 
 
         t = threading.Thread(target=reader, daemon=True)
         t.start()
+        last = time.monotonic()
         try:
             while not stop.is_set():
                 f, slot[0] = slot[0], None
                 if f is None:
+                    # A camera that stops delivering WITHOUT cap.read() returning False leaves
+                    # the reader thread blocked and this loop spinning on sleep forever - a
+                    # silent hang, which is the one failure a systemd Restart= cannot see
+                    # because the process neither exits nor errors. Treat a dry spell as a dead
+                    # camera and force the reconnect path.
+                    if time.monotonic() - last > stall_timeout:
+                        print(f"no frame for {stall_timeout:g}s; treating the camera as stalled",
+                              flush=True)
+                        break
                     time.sleep(0.002)
                     continue
+                last = time.monotonic()
                 g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
                 yield g if scale == 1.0 else cv2.resize(g, None, fx=scale, fy=scale,
                                                         interpolation=cv2.INTER_AREA)
