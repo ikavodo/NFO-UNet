@@ -25,6 +25,8 @@ On the readout frame (--readout):
   asserted - run the demo twice and compare the printed jitter.
 """
 import argparse
+import os
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -52,6 +54,7 @@ class Result:
     extrapolated: bool                  # readout frame had no detection in the winning track
     score: float | None
     winner: dict | None
+    smooth: tuple = None       # ((x, y), (w, h), coasting) from Smoother, filled by run()
 
 
 class StreamPipeline:
@@ -106,7 +109,161 @@ class StreamPipeline:
                       score=r and r['score'], winner=r and r['winner'])
 
 
+class Smoother:
+    """Holt's linear (double) exponential smoothing of the tracker's output, with a validation
+    gate and coast.
+
+    WHY NOT A PLAIN EMA. A first-order EMA with time constant tau lags a target moving at v by
+    v*tau. Measured on ido_walk the person moves ~8px per frame, so a 0.15s half-life (tau ~ 5
+    frames at 24fps) would cost ~40px of systematic lag on a 421px person - about 10% of a body
+    height - bought with the jitter it removes. Holt's method carries a TREND term as well as a
+    level, so it is unbiased for constant velocity, which is exactly the motion model the
+    tracker already assumes:
+
+        level_t = a*z_t + (1-a)*(level_{t-1} + trend_{t-1})
+        trend_t = b*(level_t - level_{t-1}) + (1-b)*trend_{t-1}
+
+    WHY A GATE. The failure this is actually for - the tracker jumping to a foliage blob for a
+    handful of frames - is not something a linear low-pass can reject: it averages the outlier
+    in and spreads it over MORE frames than it arrived in. So a measurement further than
+    jump_max person-heights from the prediction is rejected and the filter coasts on its own
+    trend, for at most hold_s seconds; past that the jump is accepted, because the person may
+    genuinely have been re-acquired somewhere else. That is the validation-gate-and-coast of
+    classical target tracking (Blackman and Popoli), applied to the OUTPUT rather than to
+    association - track_blobs already gates association with max_dist.
+
+    Both smoothing constants are half-lives IN SECONDS, converted with the real frame interval,
+    so behaviour is identical at 24 fps and at whatever a webcam delivers. A per-frame alpha
+    would be a hidden frame-rate constant - the same class of mistake as a hidden pixel
+    constant, which this codebase spent a lot of effort removing.
+
+    Latency: a half-life h adds a group delay of roughly h to the reported position, on top of
+    the tracker's SPAN=6 frames of lookahead. At the 0.15s default and 24 fps that is ~3.6
+    frames, so the end-to-end budget is ~10 frames (0.4s), not 6.
+    """
+
+    def __init__(self, person_height: float, fps: float, halflife_s: float = 0.15,
+                 trend_halflife_s: float = 0.5, size_halflife_s: float = 0.4,
+                 jump_max: float = 0.75, hold_s: float = 0.35):
+        dt = 1.0 / max(fps, 1e-6)
+        self.a = 1.0 - 0.5 ** (dt / max(halflife_s, 1e-6))
+        self.b = 1.0 - 0.5 ** (dt / max(trend_halflife_s, 1e-6))
+        self.c = 1.0 - 0.5 ** (dt / max(size_halflife_s, 1e-6))
+        self.jump_max = jump_max * person_height
+        self.hold = max(1, int(round(hold_s * fps)))
+        self.reset()
+
+    def reset(self):
+        self.level = None
+        self.trend = np.zeros(2)
+        self.size = None
+        self.misses = 0
+
+    def update(self, xy, wh):
+        """xy: (x, y) or None. wh: (w, h) or None. Returns ((x, y) | None, (w, h) | None,
+        coasting)."""
+        if self.level is None:
+            if xy is None:
+                return None, None, False
+            self.level, self.trend = np.array(xy, float), np.zeros(2)
+            if wh is not None:
+                self.size = np.array(wh, float)
+            return self._out(False)
+
+        pred = self.level + self.trend
+        gated = xy is None or float(np.hypot(*(np.array(xy, float) - pred))) > self.jump_max
+        if gated:
+            self.misses += 1
+            if self.misses > self.hold:
+                self.reset()
+                return self.update(xy, wh)
+            self.level = pred          # coast on the trend
+            return self._out(True)
+
+        self.misses = 0
+        prev, z = self.level, np.array(xy, float)
+        self.level = self.a * z + (1.0 - self.a) * pred
+        self.trend = self.b * (self.level - prev) + (1.0 - self.b) * self.trend
+        if wh is not None:
+            w = np.array(wh, float)
+            self.size = w if self.size is None else self.c * w + (1.0 - self.c) * self.size
+        return self._out(False)
+
+    def _out(self, coasting):
+        return (tuple(self.level),
+                None if self.size is None else tuple(self.size),
+                coasting)
+
+
 # --------------------------------------------------------------------------- demo
+
+def webcam_frames(index: int = 0, scale: float = 1.0, width: int = None, height: int = None):
+    """Newest-frame-only webcam source: a daemon thread writes a single slot and the consumer
+    takes whatever is there. A fixed-latency pipeline must never accumulate a backlog - if the
+    consumer falls behind, the right thing is to DROP frames, not to queue them.
+
+    Auto-exposure and auto white balance are switched off on purpose: auto-gain shifts global
+    brightness, and MOG2 reads a global brightness shift as everything-is-foreground. Static
+    camera only, for the same reason.
+    """
+    cap = cv2.VideoCapture(index)
+    assert cap.isOpened(), f"cannot open camera {index}"
+    if width:
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    if height:
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)   # 0.25 = manual on most V4L2 backends
+    cap.set(cv2.CAP_PROP_AUTO_WB, 0)
+    slot, stop = [None], threading.Event()
+
+    def reader():
+        while not stop.is_set():
+            ok, f = cap.read()
+            if not ok:
+                stop.set()
+                break
+            slot[0] = f
+
+    t = threading.Thread(target=reader, daemon=True)
+    t.start()
+    try:
+        while not stop.is_set():
+            f, slot[0] = slot[0], None
+            if f is None:
+                time.sleep(0.002)
+                continue
+            g = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
+            yield g if scale == 1.0 else cv2.resize(g, None, fx=scale, fy=scale,
+                                                    interpolation=cv2.INTER_AREA)
+    finally:
+        stop.set()
+        t.join(timeout=1.0)
+        cap.release()
+
+
+def frames_from_source(path, scale: float = 1.0):
+    """A video file, a directory of greyscale jpgs (the NFO layout), or a webcam index."""
+    if isinstance(path, int) or (isinstance(path, str) and path.isdigit()):
+        yield from webcam_frames(int(path), scale)
+    elif os.path.isdir(path):
+        for n in sorted(f for f in os.listdir(path) if f.endswith('.jpg')):
+            g = cv2.imread(os.path.join(path, n), 0)
+            yield g if scale == 1.0 else cv2.resize(g, None, fx=scale, fy=scale,
+                                                    interpolation=cv2.INTER_AREA)
+    else:
+        yield from frames_from_video(path, scale)
+
+
+def load_gt(path: str):
+    """nfo_processed groundtruth.txt: `frame,x,y,w,h`, normalised. Returns {frame: (x,y,w,h)}."""
+    gt = {}
+    with open(path) as fh:
+        for line in fh:
+            parts = line.strip().split(',')
+            if len(parts) == 5:
+                gt[int(parts[0])] = tuple(float(v) for v in parts[1:])
+    return gt
+
 
 def frames_from_video(path: str, scale: float = 1.0):
     """Yield greyscale frames one at a time - the fake stream."""
@@ -128,8 +285,17 @@ def annotate(result: Result, fps: float) -> np.ndarray:
     if result.box is not None:
         x1, y1, x2, y2 = (int(round(v)) for v in result.box)
         colour = (0, 165, 255) if result.extrapolated else (0, 255, 0)
-        cv2.rectangle(vis, (x1, y1), (x2, y2), colour, 2)
-        cv2.circle(vis, (int(round(result.x)), int(round(result.y))), 4, colour, -1)
+        thin = 1 if result.smooth else 2      # raw box recedes once a smoothed one is drawn
+        cv2.rectangle(vis, (x1, y1), (x2, y2), colour, thin)
+        cv2.circle(vis, (int(round(result.x)), int(round(result.y))), 3, colour, -1)
+    if result.smooth:
+        (sxy, swh, coasting) = result.smooth
+        if sxy is not None:
+            sc = (0, 255, 255) if coasting else (255, 255, 0)
+            if swh is not None:
+                cv2.rectangle(vis, (int(sxy[0] - swh[0] / 2), int(sxy[1] - swh[1] / 2)),
+                              (int(sxy[0] + swh[0] / 2), int(sxy[1] + swh[1] / 2)), sc, 2)
+            cv2.circle(vis, (int(round(sxy[0])), int(round(sxy[1]))), 5, sc, -1)
     label = f"f{result.frame_index}  {fps:5.1f} fps"
     if result.x is None:
         label += "  no track"
@@ -137,6 +303,8 @@ def annotate(result: Result, fps: float) -> np.ndarray:
         label += f"  score {result.score:.0f}"
         if result.extrapolated:
             label += "  fitted readout"
+    if result.smooth and result.smooth[2]:
+        label += "  COASTING"
     cv2.putText(vis, label, (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
     return vis
 
@@ -159,19 +327,27 @@ def in_ranges(f: int, ranges) -> bool:
 
 def run(video: str, person_height: float, scale: float = 0.5, readout: str = 'center',
         out_dir: str = 'images/stream', tag: str = '', display: bool = False,
-        src_fps: float = 24.0, present=(), out_fps: float = None) -> dict:
+        src_fps: float = 24.0, present=(), out_fps: float = None, smooth: bool = True,
+        halflife: float = 0.15, trend_halflife: float = 0.5, jump_max: float = 0.75,
+        gt_path: str = None) -> dict:
     pipe = StreamPipeline(person_height=person_height, readout=readout)
+    sm = Smoother(person_height, src_fps, halflife_s=halflife,
+                  trend_halflife_s=trend_halflife, jump_max=jump_max) if smooth else None
+    gt = load_gt(gt_path) if gt_path else None
     if person_height / 7.5 < 40:
         print(f"note: head is ~{person_height / 7.5:.0f}px at this scale; face-level tasks "
               f"are not viable, person detection is the realistic downstream task")
 
     writer, results, t_start, shown, compute = None, [], time.perf_counter(), 0, 0.0
-    for frame in frames_from_video(video, scale):
+    for frame in frames_from_source(video, scale):
         t0 = time.perf_counter()
         r = pipe.step(frame)
         compute += time.perf_counter() - t0
         if r is None:
             continue
+        if sm is not None:
+            wh = None if r.box is None else (r.box[2] - r.box[0], r.box[3] - r.box[1])
+            r.smooth = sm.update(None if r.x is None else (r.x, r.y), wh)
         results.append(r)
         fps = len(results) / (time.perf_counter() - t_start)
         vis = annotate(r, fps)
@@ -202,7 +378,10 @@ def run(video: str, person_height: float, scale: float = 0.5, readout: str = 'ce
     extrap = [r for r in results if r.extrapolated]
     montage([r for r in boxed if in_ranges(r.frame_index, present)],
             f"{out_dir}/{tag or readout}_montage.png")
-    xs = {r.frame_index: r.x for r in results if r.x is not None and in_ranges(r.frame_index, present)}
+    keep = lambda r: in_ranges(r.frame_index, present)
+    xs = {r.frame_index: r.x for r in results if r.x is not None and keep(r)}
+    sxs = {r.frame_index: r.smooth[0][0] for r in results
+           if r.smooth and r.smooth[0] is not None and keep(r)}
     stats = dict(readout=readout, emitted=len(results), boxed=len(boxed),
                  extrapolated=len(extrap),
                  # compute cost, never the paced interval - with --display the two differ
@@ -210,6 +389,26 @@ def run(video: str, person_height: float, scale: float = 0.5, readout: str = 'ce
                  fps=pipe.seen / compute, wall_fps=shown / wall,
                  jitter_px=jitter(xs), jitter_n=len(xs),
                  latency_frames=SPAN if readout == 'center' else 0)
+    if sm is not None:
+        stats.update(jitter_smoothed=jitter(sxs), jitter_n_smoothed=len(sxs),
+                     coasting=sum(1 for r in results if r.smooth and r.smooth[2]) / max(len(results), 1))
+    if gt is not None:
+        H, W = results[0].frame.shape[:2]
+        for tag, get in (('raw', lambda r: (r.x, r.y) if r.x is not None else None),
+                         ('smoothed', lambda r: r.smooth[0] if r.smooth else None)):
+            res = []
+            for r in results:
+                p = get(r)
+                if p is None or r.frame_index not in gt:
+                    continue
+                g = gt[r.frame_index]
+                res.append(float(np.hypot((p[0] - (g[0] + g[2] / 2) * W) / W,
+                                          (p[1] - (g[1] + g[3] / 2) * H) / H)))
+            if res:
+                res = np.array(res)
+                stats[f'resid_{tag}'] = float(res.mean())
+                stats[f'hit_{tag}'] = float((res <= 0.1).mean())
+                stats[f'n_{tag}'] = len(res)
     print("  ".join(f"{k}={v:.3f}" if isinstance(v, float) else f"{k}={v}"
                     for k, v in stats.items()))
     return stats
@@ -317,7 +516,20 @@ def measure_presence(video: str, scale: float = 0.5, out_dir: str = 'images/stre
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument('--video', default='data/ido_walk.mkv')
+    p.add_argument('--video', default='data/ido_walk.mkv',
+                   help='video file, directory of greyscale jpgs, or a webcam index (e.g. 0)')
+    p.add_argument('--no-smooth', dest='smooth', action='store_false',
+                   help='report the raw per-frame tracker output with no smoothing')
+    p.add_argument('--halflife', type=float, default=0.15,
+                   help='position half-life in SECONDS (frame-rate independent)')
+    p.add_argument('--trend-halflife', type=float, default=0.5,
+                   help="half-life of Holt's trend term, in seconds")
+    p.add_argument('--jump-max', type=float, default=0.75,
+                   help='reject-and-coast gate on the smoother, in person heights')
+    p.add_argument('--src-fps', type=float, default=24.0,
+                   help='source frame rate; sets the smoother constants and --display pacing')
+    p.add_argument('--gt', default=None,
+                   help='nfo_processed groundtruth.txt to score residual/hit against')
     p.add_argument('--scale', type=float, default=0.5, help='resize factor applied to every frame')
     p.add_argument('--person-height', type=float, default=None,
                    help='person height in pixels AFTER --scale; estimated from the footage if omitted')
@@ -344,7 +556,8 @@ def main():
 
     height = a.person_height
     if height is None:
-        probe = np.stack([f for i, f in enumerate(frames_from_video(a.video, a.scale)) if i % 4 == 0][:60])
+        assert not a.video.isdigit(), "--person-height is required for a webcam source"
+        probe = np.stack([f for i, f in enumerate(frames_from_source(a.video, a.scale)) if i % 4 == 0][:60])
         height = estimate_person_height(probe)
         print(f"estimated person height {height:.1f}px from {len(probe)} probe frames "
               f"(pass --person-height to override; the estimator is unreliable on footage "
@@ -353,7 +566,9 @@ def main():
         compare_readouts(a.video, height, scale=a.scale, out_dir=a.out_dir, present=present)
     else:
         run(a.video, height, scale=a.scale, readout=a.readout, out_dir=a.out_dir, tag=a.tag,
-            display=a.display, present=present, out_fps=a.out_fps)
+            display=a.display, present=present, out_fps=a.out_fps, smooth=a.smooth,
+            halflife=a.halflife, trend_halflife=a.trend_halflife, jump_max=a.jump_max,
+            src_fps=a.src_fps, gt_path=a.gt)
 
 
 if __name__ == '__main__':
