@@ -32,7 +32,9 @@ def check_merged_center_box_is_additive():
 
 def check_pipeline_emits_for_the_buffer_center():
     frames = make_moving_bar()
-    pipe = StreamPipeline(person_height=60.0, readout='center')
+    # suppress_warmup=False: this checks ring-buffer geometry, not MOG2's adaptation, and the
+    # synthetic clip is shorter than the default bg_frames warm-up
+    pipe = StreamPipeline(person_height=60.0, readout='center', suppress_warmup=False)
     results = [r for r in (pipe.step(f) for f in frames) if r is not None]
     assert SPAN == 6 and BUFFER == 13, f"geometry changed: SPAN={SPAN}, BUFFER={BUFFER}"
     assert len(results) == len(frames) - (BUFFER - 1), \
@@ -51,7 +53,7 @@ def check_pipeline_emits_for_the_buffer_center():
 
 def check_newest_readout_is_zero_latency():
     frames = make_moving_bar()
-    pipe = StreamPipeline(person_height=60.0, readout='newest')
+    pipe = StreamPipeline(person_height=60.0, readout='newest', suppress_warmup=False)
     results = [r for r in (pipe.step(f) for f in frames) if r is not None]
     assert results[0].frame_index == BUFFER - 1, \
         f"newest readout should describe frame {BUFFER - 1} first, got {results[0].frame_index}"
@@ -82,7 +84,8 @@ def check_streaming_matches_the_offline_evaluator(video='data/ido_walk.mkv', sca
 
     frames = np.stack([f for _, f in zip(range(limit), frames_from_video(video, scale))])
     stream = {}
-    pipe = StreamPipeline(person_height=person_height, readout='center')
+    # track_windows_in_sequence has no warm-up suppression, so parity requires it off here
+    pipe = StreamPipeline(person_height=person_height, readout='center', suppress_warmup=False)
     for f in frames:
         r = pipe.step(f)
         if r is not None:
