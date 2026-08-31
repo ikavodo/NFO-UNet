@@ -34,17 +34,39 @@ local window around the argmax, computed identically for both models.
 Shape statistics of the masks the anisotropic target is derived from (n~1500 each,
 `*_sammask.png`; KTH = single-prompt SAM2, NFO = union-of-checkpoints pseudo-masks):
 
-| statistic | KTH (train domain) | NFO (deploy domain) |
-|---|---|---|
-| eccentricity | 0.936 +/- 0.062 (p5 0.810, p95 0.981) | 0.934 +/- 0.060 (p5 0.822, p95 0.989) |
-| major-axis sd | 32.6 px | 10.4 px |
-| blobs per mask | 4.75 mean, 11% have >1 | 1.40 mean, 32% have >1 |
+A first pass compared all masks unconditionally and found eccentricity nearly identical (KTH
+0.936 +/- 0.062 vs NFO 0.934 +/- 0.060). A peer session correctly challenged that as comparing
+different objects: KTH masks are whole silhouettes (~5188 px^2) while the average NFO pseudo-mask
+is a ~300 px^2 fragment, and a thin sliver of a torso is highly eccentric too, so the agreement
+could be coincidental. Re-measured conditioning on masks that actually cover the person -
+coverage `(mask ∩ box)/box` in [0.30, 1.0] and at most 25% of mask lying outside the box, which
+excludes both fragments and over-segmentation blowouts:
 
-**Eccentricity - the statistic that actually carries the gait-phase signal - transfers almost
-exactly.** Same mean, same spread, same tails. That is a real positive for this direction: a
-KTH-trained anisotropic head predicts eccentricity into the correct numeric regime on NFO.
+| statistic | KTH person01_jogging_d1 | NFO seq1 | seq2 | seq3 | seq4 |
+|---|---|---|---|---|---|
+| coverage (mask∩box)/box, all masks | 0.382 | 0.215 | 0.256 | 0.289 | 0.200 |
+| eccentricity, all masks | 0.933 +/- 0.080 | 0.950 +/- 0.054 | 0.926 +/- 0.050 | 0.934 +/- 0.036 | 0.909 +/- 0.097 |
+| **eccentricity, well-covered** | **0.959 +/- 0.020** | **0.950 +/- 0.018** | **0.945 +/- 0.021** | **0.941 +/- 0.024** | **0.948 +/- 0.014** |
+| well-covered n / total | 78 / 90 | 98 / 395 | 113 / 399 | 183 / 400 | 59 / 400 |
+| major-axis sd, well-covered | 34.3 px | 12.1 | 10.7 | 10.8 | 10.7 |
+| mask area, well-covered | 2476 px^2 | 440 | 406 | 420 | 405 |
 
-**Absolute scale does not transfer: 3.1x** (32.6 vs 10.4 px). This independently reproduces this
+**The eccentricity claim survives, and is better evidenced than before.** On the properly
+conditioned subset KTH 0.959 vs NFO 0.941-0.950 - agreement within 0.01-0.02, with tight and
+comparable spreads (+/-0.02 on both sides, versus +/-0.05-0.10 unconditioned). The alternative
+outcome the peer raised (that the well-covered subset would be nearly empty, which would itself
+be the finding) does not hold: 15-46% of NFO frames qualify.
+
+The fragment concern is nonetheless real for the *average* NFO mask, and it is a mask-quality
+property rather than a domain-scale property. Measured person height is 127.6 px (KTH) vs
+52.6-55.5 px (NFO), a **2.34x** genuine scale ratio - consistent with this repo's documented
+45-64 px NFO / median-109 px KTH figures. Scale alone therefore predicts a 5.5x area ratio, but
+the all-masks area ratio is ~17x (5188 vs ~300), so the average NFO mask captures roughly a third
+of the scale-predicted silhouette. On the **well-covered** subset that deficit essentially
+vanishes: 405-440 px^2 against a scale-prediction of 2476 / 2.34^2 = ~452 px^2, i.e. 90-97%.
+
+**Absolute scale does not transfer: ~2.9-3.2x** on well-covered masks (34.3 vs 10.7-12.1 px),
+decomposing into a 2.34x genuine person-scale ratio plus a residual ~1.3x. This independently reproduces this
 project's known dominant KTH->NFO factor from a new instrument (mask 2nd moments), matching
 `docs/training_failure_hypotheses.md`'s 2x-upscale result (precision 0.52 -> 0.98) and a peer
 session's finding that OpenCV HOG fires on 0% of NFO windows at 1x but 30% at 2x.
@@ -83,3 +105,14 @@ informative as measured here. Only the eccentricity and scale rows above are tru
 - A 3px dilation alone raises KTH box fill 0.382 -> 0.541 (+42%), so mask-construction choices
   (the NFO pseudo-masks union multiple propagations and clip to a dilated box) materially move
   any fill-based statistic.
+- Two measurement traps hit while producing the table above, both worth avoiding:
+  (i) **blob counts must filter speckle.** An unfiltered `connectedComponentsWithStats` count on
+  KTH masks gave a nonsensical 4.75 blobs/mask with only 11% of masks having >1 (mutually
+  inconsistent on their face); with a 20 px minimum blob area it is 1.01 mean / 1% >1, i.e. KTH
+  masks are single whole silhouettes. NFO is 1.13-1.39 filtered.
+  (ii) **two different "fill" definitions.** `(mask ∩ box)/box` answers "how much of the box is
+  person" and is the one to use; `mask_area/box_area` double-counts mask lying outside the box and
+  gave 0.732 where the correct figure is 0.382 for the same KTH masks (8% of KTH mask area falls
+  outside the annotation box; NFO's is 0.1-1.2% because those pseudo-masks are clipped to the box
+  by construction). Also: selecting a "high fill" subset by top quartile selects KTH's
+  over-segmentation *failures*, not its best masks - bound the criterion from above as well.
