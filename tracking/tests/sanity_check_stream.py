@@ -165,8 +165,24 @@ def check_a_frozen_window_yields_no_box():
     print(f"frozen window ok: {len(inside)} emissions fully inside the freeze, none with a box")
 
 
+def check_live_bootstrap_finds_the_person_height():
+    """The live app has nobody to ask for the person height, so it retries the estimate on a
+    rolling buffer and accepts the first one that is plausible AND stable across two attempts.
+    On a clean synthetic clip it must converge, and land inside the 0.75x-1.5x band the NFO
+    sweep showed the tracker is flat over."""
+    from tracking.stream.live import bootstrap
+    bar_h = 100
+    frames = make_moving_bar(T=120, H=200, W=400, speed=2, bar_h=bar_h, bar_w=30)
+    h, warm, fps = bootstrap(iter(frames), probe_frames=60, stable_tol=0.25, display=False)
+    assert h is not None, "bootstrap never converged on a clean synthetic clip"
+    assert 0.5 * bar_h <= h <= 2.0 * bar_h, f"bootstrapped {h:.0f}px for a {bar_h}px bar"
+    assert len(warm) >= 60, f"only {len(warm)} frames buffered for MOG2 warm-up"
+    print(f"live bootstrap ok: {h:.0f}px for a {bar_h}px bar over {len(warm)} frames")
+
+
 def main():
     check_merged_center_box_is_additive()
+    check_live_bootstrap_finds_the_person_height()
     check_a_frozen_window_yields_no_box()
     check_smoother_has_no_lag_on_constant_velocity()
     check_smoother_gates_an_outlier_but_relocks_on_a_sustained_jump()
