@@ -180,8 +180,29 @@ def check_live_bootstrap_finds_the_person_height():
     print(f"live bootstrap ok: {h:.0f}px for a {bar_h}px bar over {len(warm)} frames")
 
 
+def check_bootstrap_buffer_is_bounded():
+    """The bootstrap loop runs until the person height converges, which on a scene nobody walks
+    into is NEVER. Its frame buffer must therefore be capped: an unbounded one grows at
+    frame_bytes * fps, which is 6.9 MB/s at 640x360 grayscale and 30fps, i.e. 25 GB/hour. This
+    is the structural guarantee behind the soak test rather than a re-measurement of it."""
+    from tracking.stream.live import bootstrap
+    probe = 30
+
+    def motionless(n):
+        for _ in range(n):
+            yield np.full((90, 160), 40, dtype=np.uint8)
+
+    h, warm, fps = bootstrap(motionless(2000), probe_frames=probe, stable_tol=0.25,
+                             display=False)
+    assert h is None, f"converged on a motionless clip, which cannot contain a person: {h}"
+    assert len(warm) == probe, \
+        f"buffer held {len(warm)} frames after 2000 non-converging frames, cap is {probe}"
+    print(f"bootstrap buffer ok: capped at {len(warm)} frames after 2000 without convergence")
+
+
 def main():
     check_merged_center_box_is_additive()
+    check_bootstrap_buffer_is_bounded()
     check_live_bootstrap_finds_the_person_height()
     check_a_frozen_window_yields_no_box()
     check_smoother_has_no_lag_on_constant_velocity()
