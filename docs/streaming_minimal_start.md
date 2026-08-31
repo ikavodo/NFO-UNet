@@ -55,8 +55,25 @@ hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
 boxes, weights = hog.detectMultiScale(integrated_crop, winStride=(8, 8))
 ```
 
-`weights` are SVM decision values - use them as the certainty to draw next to each box. Verified
-working in this environment. It runs on grayscale, which suits the integrated image directly.
+`weights` are SVM decision values - use them as the certainty to draw next to each box.
+
+**Two things measured on 60 real seq1 windows before writing any code, both mandatory:**
+
+- **Upscale the crop 2x before detecting.** At 1x, HOG fired on 0% of windows. Not a nicety.
+- **Detect on the CENTRE-FRAME crop, not the integrated one.** HOG fires on 30.0% of centre-frame
+  crops against 10.0% of median-integrated crops, and temporal gaussian weighting does not rescue
+  it (13.3% at its best sigma). The reason is structural: integration aligns the person's
+  *centroid*, but limbs articulate across the 13-frame span, so the fused image has a sharp torso
+  and smeared legs - and HOG is a histogram of oriented gradients over the whole window, legs
+  included. Integration buys occlusion robustness by spending exactly the edge crispness HOG
+  measures.
+
+So the demo shows **both** panels side by side - integrated crop and centre-frame crop, same
+geometry, detections drawn on each. That is what was asked for and it gives the
+integrated-vs-centre comparison for free, which is the more interesting measurement anyway. If
+detection quality itself matters, swap HOG for a `cv2.dnn` ONNX model (no new pip dependency, one
+~10-25 MB download) - a CNN is far more blur-tolerant and is the only route by which the
+integrated crop could plausibly *beat* the centre frame.
 
 Why HOG rather than a modern detector: it needs no model download, no new dependency, and no GPU,
 so the first end-to-end version can exist in an afternoon. Its accuracy is mediocre by current
