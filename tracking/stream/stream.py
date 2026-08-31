@@ -325,6 +325,10 @@ def main():
     p.add_argument('--out-dir', default='images/stream')
     p.add_argument('--tag', default='', help='output filename prefix (defaults to --readout)')
     p.add_argument('--display', action='store_true', help='cv2.imshow paced at the source fps')
+    p.add_argument('--out-fps', type=float, default=None,
+                   help='frame rate stamped on the written mp4; below the source rate this '
+                        'gives slow motion for frame-by-frame inspection (e.g. 6 = 4x slow). '
+                        'Does not affect --display pacing or any measurement.')
     p.add_argument('--compare', action='store_true',
                    help='paired center-vs-newest readout comparison instead of a single run')
     p.add_argument('--measure-presence', action='store_true',
