@@ -36,7 +36,6 @@ from tracking.core.preprocess import refine_mask, filter_by_shape, estimate_pers
 from tracking.core.blob_tracker import detect_blobs, _Track
 from tracking.core.track_window import _result_from_detections
 from tracking.core.track_sequence import scale_relative_params
-from tracking.core.integrate_image import align_frames, fuse
 
 SEQ_SIZE, NTH_FRAME = 7, 2
 SPAN = (SEQ_SIZE // 2) * NTH_FRAME      # 6 - frames of lookahead for a centered readout
@@ -52,11 +51,8 @@ class Result:
     box: tuple | None                   # merged multi-blob box (x1, y1, x2, y2)
     extrapolated: bool                  # readout frame had no detection in the winning track
     score: float | None
-    # the stride-2 window itself, as REFERENCES into the ring buffer (not a stacked copy,
-    # so retaining many Results costs no extra frame memory) plus the scored winning track -
-    # together these are everything align_frames/fuse need to integrate this window
-    window_frames: list
     winner: dict | None
+    detections: list = ()      # HOG boxes in full-frame coords, filled in by run()
 
 
 class StreamPipeline:
@@ -108,9 +104,7 @@ class StreamPipeline:
                       frame=self.frames[buf_i],
                       x=r and r['x'], y=r and r['y'], box=r and r['box'],
                       extrapolated=bool(r and r['extrapolated']),
-                      score=r and r['score'],
-                      window_frames=[self.frames[i] for i in range(0, BUFFER, NTH_FRAME)],
-                      winner=r and r['winner'])
+                      score=r and r['score'], winner=r and r['winner'])
 
 
 # --------------------------------------------------------------------------- demo
@@ -132,6 +126,10 @@ def frames_from_video(path: str, scale: float = 1.0):
 
 def annotate(result: Result, fps: float) -> np.ndarray:
     vis = cv2.cvtColor(result.frame, cv2.COLOR_GRAY2BGR)
+    for (dx1, dy1, dx2, dy2), conf in result.detections:
+        cv2.rectangle(vis, (dx1, dy1), (dx2, dy2), (255, 0, 255), 2)
+        cv2.putText(vis, f"HOG {conf:.2f}", (dx1, max(14, dy1 - 6)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 0, 255), 2)
     if result.box is not None:
         x1, y1, x2, y2 = (int(round(v)) for v in result.box)
         colour = (0, 165, 255) if result.extrapolated else (0, 255, 0)
@@ -144,54 +142,78 @@ def annotate(result: Result, fps: float) -> np.ndarray:
         label += f"  score {result.score:.0f}"
         if result.extrapolated:
             label += "  fitted readout"
+    if result.detections:
+        label += f"  |  {len(result.detections)} HOG"
+
     cv2.putText(vis, label, (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
     return vis
 
 
-def integrated_panels(result: Result, crop_size: int, sigma: float = 1.0):
-    """The centre-frame crop and two fusions of the SAME aligned stack.
+_HOG = None
 
-    align_frames is called once and the three panels differ only in the fusion rule, so the
-    comparison isolates that one variable. The centre-frame crop is the do-nothing baseline
-    and shares the integrated panels' geometry exactly, which is the only way the visual
-    comparison means anything.
 
-    Fusion rules, and what each one is actually doing:
-      median   - a pixel is recovered exactly when the occluder covers it in fewer than half
-                 the T aligned frames. Breakdown point 1/2, no dependence on temporal
-                 distance, so it pays the full pose-drift cost of the window's edges.
-      gaussian - a weighted mean, so it has NO breakdown point (one occluded frame always
-                 leaks in) but down-weights the temporally distant frames where limb
-                 articulation has moved. Effective sample count n_eff = (sum w)^2 / sum w^2,
-                 which is 3.5 of 7 frames at sigma=1.0.
-    Which wins is therefore a function of occluder duty cycle vs pose drift, not a matter of
-    taste - and it is not settled in this repo. See the note in the plan doc.
+def hog_detector():
+    """OpenCV's built-in HOG people detector, built once. No model download, no GPU."""
+    global _HOG
+    if _HOG is None:
+        if not hasattr(cv2, 'HOGDescriptor'):
+            raise RuntimeError(
+                f"cv2.HOGDescriptor is absent from OpenCV {cv2.__version__}: HOG was removed "
+                f"in OpenCV 5. Run this with an OpenCV 4 interpreter (on this machine: "
+                f"~/miniconda3/envs/spacejam/bin/python, cv2 4.10.0), or pass --no-hog. "
+                f"Everything except the detector overlay works on either.")
+        _HOG = cv2.HOGDescriptor()
+        _HOG.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+    return _HOG
+
+
+def detect_person(frame: np.ndarray, centre, person_height: float, pad: float = 0.25,
+                  target_px: float = 128.0, win_stride=(8, 8), scale_step: float = 1.05,
+                  hit_threshold: float = 0.0):
+    """HOG on the CENTRE FRAME, restricted to a scale-relative crop around the tracker's
+    merged box. Returns [((x1, y1, x2, y2), confidence), ...] in FULL-FRAME coordinates, so
+    the detector can be drawn straight on top of the merged box.
+
+    target_px replaces the "2x upscale, mandatory" rule from the earlier notes. HOG's
+    detection window is 64x128, so what governs whether it fires is the person's height in the
+    image it is handed RELATIVE TO 128 - not an absolute factor measured once on one dataset at
+    one person size. The crop is resized so person_height maps to target_px, which makes the
+    setting scale-free the same way every other parameter here is. Restricting to the tracker's
+    own box is what makes this cheap and keeps HOG off the foliage; box=None falls back to the
+    whole frame.
+
+    The crop is PERSON-SHAPED, not the merged box: HOG's window has a fixed 1:2 aspect, and
+    the merged box does not (measured on ido_walk its median height is 309px against a 421px
+    person, so it both under-covers and has an arbitrary aspect). So only the box's CENTRE is
+    used, and the window is (0.9 + 2*pad) x (1.5 + 2*pad) person heights around it.
+
+    weights from detectMultiScale are SVM decision values, not probabilities - report them as
+    the detector's own margin and do not call them a probability. hit_threshold is that same
+    margin's accept cutoff; lowering it below 0 surfaces weaker detections rather than none.
     """
-    frames = np.stack(result.window_frames)
-    aligned = align_frames(frames, result.winner, crop_size)
-    return [('centre frame (baseline)', aligned[len(aligned) // 2]),
-            (f'gaussian sigma={sigma:g}', fuse(aligned, 'gaussian', gaussian_sigma=sigma)),
-            ('median', fuse(aligned, 'median'))]
-
-
-def annotate_split(result: Result, fps: float, crop_size: int, panel_h: int = 360,
-                   sigma: float = 1.0) -> np.ndarray:
-    """Split screen: annotated full frame, then the three crops at a common panel height."""
-    left = annotate(result, fps)
-    left = cv2.resize(left, (round(panel_h * left.shape[1] / left.shape[0]), panel_h))
-    # the panel count must NOT depend on whether a track was found: cv2.VideoWriter is
-    # opened at the first frame's size and then SILENTLY DROPS every frame of a different
-    # size, which truncated the written video to the subset of frames that had no track
-    panels = (integrated_panels(result, crop_size, sigma) if result.winner is not None
-              else [(n, None) for n in ('centre frame (baseline)', f'gaussian sigma={sigma:g}',
-                                        'median')])
-    tiles = [left]
-    for name, img in panels:
-        tile = (np.zeros((panel_h, panel_h, 3), np.uint8) if img is None else
-                cv2.cvtColor(cv2.resize(img, (panel_h, panel_h)), cv2.COLOR_GRAY2BGR))
-        cv2.putText(tile, name, (8, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-        tiles.append(tile)
-    return np.hstack(tiles)
+    h, w = frame.shape
+    if centre is None:
+        x1, y1, x2, y2 = 0, 0, w, h
+    else:
+        cx, cy = centre
+        hw, hh = (0.45 + pad) * person_height, (0.75 + pad) * person_height
+        x1, y1 = max(0, int(round(cx - hw))), max(0, int(round(cy - hh)))
+        x2, y2 = min(w, int(round(cx + hw))), min(h, int(round(cy + hh)))
+    if x2 - x1 < 16 or y2 - y1 < 32:
+        return []
+    crop = frame[y1:y2, x1:x2]
+    k = target_px / person_height
+    if abs(k - 1.0) > 1e-3:
+        crop = cv2.resize(crop, None, fx=k, fy=k,
+                          interpolation=cv2.INTER_AREA if k < 1 else cv2.INTER_CUBIC)
+    if crop.shape[0] < 128 or crop.shape[1] < 64:
+        return []
+    rects, weights = hog_detector().detectMultiScale(crop, winStride=win_stride,
+                                                     padding=(8, 8), scale=scale_step,
+                                                     hitThreshold=hit_threshold)
+    return [((int(x1 + rx / k), int(y1 + ry / k),
+              int(x1 + (rx + rw) / k), int(y1 + (ry + rh) / k)), float(c))
+            for (rx, ry, rw, rh), c in zip(rects, np.ravel(weights))]
 
 
 def jitter(xs_by_index: dict) -> float:
@@ -212,26 +234,30 @@ def in_ranges(f: int, ranges) -> bool:
 
 def run(video: str, person_height: float, scale: float = 0.5, readout: str = 'center',
         out_dir: str = 'images/stream', tag: str = '', display: bool = False,
-        src_fps: float = 24.0, present=(), split: bool = False,
-        crop_factor: float = 1.6, sigma: float = 1.0, panel_h: int = 360,
-        out_fps: float = None) -> dict:
+        src_fps: float = 24.0, present=(), out_fps: float = None,
+        hog: bool = True, hog_target: float = 128.0, hog_pad: float = 0.25,
+        hog_thresh: float = 0.0) -> dict:
     pipe = StreamPipeline(person_height=person_height, readout=readout)
-    crop = int(round(crop_factor * person_height))
-    render = ((lambda r, f: annotate_split(r, f, crop, panel_h, sigma)) if split else annotate)
     if person_height / 7.5 < 40:
         print(f"note: head is ~{person_height / 7.5:.0f}px at this scale; face-level tasks "
               f"are not viable, person detection is the realistic downstream task")
 
-    writer, results, t_start, shown, compute = None, [], time.perf_counter(), 0, 0.0
+    writer, results, t_start, shown, compute, hog_time = None, [], time.perf_counter(), 0, 0.0, 0.0
     for frame in frames_from_video(video, scale):
         t0 = time.perf_counter()
         r = pipe.step(frame)
         compute += time.perf_counter() - t0
         if r is None:
             continue
+        if hog:
+            t1 = time.perf_counter()
+            centre = None if r.x is None else (r.x, r.y)
+            r.detections = detect_person(r.frame, centre, person_height, pad=hog_pad,
+                                         target_px=hog_target, hit_threshold=hog_thresh)
+            hog_time += time.perf_counter() - t1
         results.append(r)
         fps = len(results) / (time.perf_counter() - t_start)
-        vis = render(r, fps)
+        vis = annotate(r, fps)
         if writer is None:
             frame_h, frame_w = h, w = vis.shape[:2]
             writer = cv2.VideoWriter(f"{out_dir}/{tag or readout}_stream.mp4",
@@ -258,8 +284,7 @@ def run(video: str, person_height: float, scale: float = 0.5, readout: str = 'ce
     boxed = [r for r in results if r.box is not None]
     extrap = [r for r in results if r.extrapolated]
     montage([r for r in boxed if in_ranges(r.frame_index, present)],
-            f"{out_dir}/{tag or readout}_montage.png", render=render,
-            cols=1 if split else 3, width=1280 if split else 480)
+            f"{out_dir}/{tag or readout}_montage.png")
     xs = {r.frame_index: r.x for r in results if r.x is not None and in_ranges(r.frame_index, present)}
     stats = dict(readout=readout, emitted=len(results), boxed=len(boxed),
                  extrapolated=len(extrap),
@@ -268,20 +293,26 @@ def run(video: str, person_height: float, scale: float = 0.5, readout: str = 'ce
                  fps=pipe.seen / compute, wall_fps=shown / wall,
                  jitter_px=jitter(xs), jitter_n=len(xs),
                  latency_frames=SPAN if readout == 'center' else 0)
+    if hog:
+        fired = [r for r in results if r.detections]
+        best = [max(c for _, c in r.detections) for r in fired]
+        stats.update(hog_fired=len(fired) / max(len(results), 1),
+                     hog_fired_when_boxed=sum(1 for r in boxed if r.detections) / max(len(boxed), 1),
+                     hog_mean_best_conf=float(np.mean(best)) if best else float('nan'),
+                     hog_ms_per_frame=1000 * hog_time / max(len(results), 1))
     print("  ".join(f"{k}={v:.3f}" if isinstance(v, float) else f"{k}={v}"
                     for k, v in stats.items()))
     return stats
 
 
-def montage(results: list[Result], path: str, n: int = 6, cols: int = 3, width: int = 480,
-            render=annotate):
+def montage(results: list[Result], path: str, n: int = 6, cols: int = 3, width: int = 480):
     """Contact sheet of n evenly spaced annotated results - the visual trace of the run."""
     if not results:
         return
     picks = [results[i] for i in np.linspace(0, len(results) - 1, n).astype(int)]
     tiles = []
     for r in picks:
-        vis = render(r, float('nan'))
+        vis = annotate(r, float('nan'))
         tiles.append(cv2.resize(vis, (width, int(width * vis.shape[0] / vis.shape[1]))))
     rows = [np.hstack(tiles[i:i + cols]) for i in range(0, len(tiles), cols)]
     cv2.imwrite(path, np.vstack([r for r in rows if r.shape == rows[0].shape]))
@@ -384,14 +415,15 @@ def main():
     p.add_argument('--out-dir', default='images/stream')
     p.add_argument('--tag', default='', help='output filename prefix (defaults to --readout)')
     p.add_argument('--display', action='store_true', help='cv2.imshow paced at the source fps')
-    p.add_argument('--split', action='store_true',
-                   help='split screen: full frame, centre-frame crop, and two fusions of the '
-                        'same aligned stack, all recomputed per frame')
-    p.add_argument('--crop-factor', type=float, default=1.6,
-                   help='integrated crop side, as a multiple of person height')
-    p.add_argument('--sigma', type=float, default=1.0,
-                   help="temporal gaussian sigma, in strided-frame units")
-    p.add_argument('--panel-height', type=int, default=360)
+    p.add_argument('--no-hog', dest='hog', action='store_false',
+                   help='skip the HOG person detector overlay')
+    p.add_argument('--hog-target', type=float, default=128.0,
+                   help="resize the crop so the person is this tall before HOG; HOG's own "
+                        "window is 64x128, so this is the scale-free version of an upscale factor")
+    p.add_argument('--hog-pad', type=float, default=0.25,
+                   help='margin around the person-shaped crop fed to HOG, in person heights')
+    p.add_argument('--hog-thresh', type=float, default=0.0,
+                   help="HOG's SVM margin cutoff; below 0 surfaces weaker detections")
     p.add_argument('--out-fps', type=float, default=None,
                    help='frame rate stamped on the written mp4; below the source rate this '
                         'gives slow motion for frame-by-frame inspection (e.g. 6 = 4x slow). '
@@ -420,8 +452,8 @@ def main():
         compare_readouts(a.video, height, scale=a.scale, out_dir=a.out_dir, present=present)
     else:
         run(a.video, height, scale=a.scale, readout=a.readout, out_dir=a.out_dir, tag=a.tag,
-            display=a.display, present=present, split=a.split, crop_factor=a.crop_factor,
-            sigma=a.sigma, panel_h=a.panel_height, out_fps=a.out_fps)
+            display=a.display, present=present, out_fps=a.out_fps, hog=a.hog,
+            hog_target=a.hog_target, hog_pad=a.hog_pad, hog_thresh=a.hog_thresh)
 
 
 if __name__ == '__main__':

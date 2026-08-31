@@ -1,5 +1,49 @@
 # Minimal starting point: streaming tracker on a fake stream, with detection overlay
 
+> **2026-08-31, second finding: A FIRING RATE IS NOT A DETECTION RATE. The "HOG fires on
+> 30.0% of centre-frame crops" figure below is not evidence that HOG detects the person - it
+> was never checked for WHERE it fired.** Re-measured on data/ido_walk.mkv (person 421px at
+> scale 0.5), HOG on a person-shaped centre-frame crop centred on the tracker's own position,
+> over the 277 tracked person-present frames:
+>
+> | HOG SVM margin cutoff | frames firing | mean best margin | IoU(best HOG box, merged tracker box) |
+> |---|---|---|---|
+> | >= 0 (default) | 11 / 277 = 4.0% | 0.28 | median **0.09**, fraction > 0.3: **0.00** |
+> | >= -0.5 | 151 / 277 = 54.4% | 0.18 | boxes land on leaves and stems |
+>
+> **Not one of the 11 positive-margin detections overlaps the tracked person by IoU > 0.3.**
+> HOG is firing on vertical foliage, which produces pedestrian-like oriented-gradient patterns.
+> Corroborated from the other side: on data/ido_rotate.mkv, where the plant fills the frame and
+> the tracker's winning-track scores are 0-4 (matching ido_walk's person-ABSENT regime, median
+> 2, against 22-151 when present), HOG fires on 84.5% of frames at margin >= -0.5 with a HIGHER
+> mean margin (0.495) than on the clip that does contain a person. A detector more confident on
+> the person-free clip is detecting the plant.
+>
+> So **HOG does not work on this footage either** - which strengthens the project's premise
+> rather than weakening it, and makes HOG the third detector family to fail here after
+> torchvision Faster R-CNN and YOLOv8n. Any future detector comparison must score IoU against a
+> person box, never a bare firing rate.
+>
+> The "upscale 2x, mandatory" rule was the right observation with the wrong parameterisation.
+> HOG's window is 64x128, so what governs firing is the person's height in the image handed to
+> the detector RELATIVE TO 128, not a factor measured once at one person size. Swept via
+> `--hog-target`: 128 -> 0.0%, 192 -> 0.0%, 256 -> 3.1%, 320 -> 3.1%, 384 -> 4.6% at margin
+> >= 0. Nothing fires below ~2x the window height, and NFO's 195px person at "2x" is 390px -
+> the old finding reproduces, now with a mechanism.
+>
+> **Integrated-image work stopped here by direction (2026-08-31): it is not helping.** The demo
+> path (--split, annotate_split, integrated_panels) is removed. For the record,
+> tracking/eval/buffer_depth.py measured that under median fusion the reachable fraction FALLS
+> monotonically with depth (0.214 at T=7 to 0.007 at T=61), because the measured not-detected
+> duty cycle inside the person's box is 0.59, already past the median's 1/2 breakdown point,
+> while the at-least-one-clean-look fraction RISES and saturates (0.569 -> 0.821 by T~31-41).
+> Buffer depth was never the lever. The align_frames fix and its regression test are kept - only
+> the demo path was removed, not the core.
+>
+> **Environment:** cv2.HOGDescriptor was REMOVED in OpenCV 5. The detector path needs an OpenCV
+> 4 interpreter (`~/miniconda3/envs/spacejam/bin/python` here, cv2 4.10.0); hog_detector()
+> raises with that instruction rather than an AttributeError. Everything else runs on either.
+
 > **ALIGNMENT BUG FOUND AND FIXED 2026-08-31 — the integration results quoted below were
 > computed on a DE-ALIGNED stack and must not be reused.** `align_frames` cropped each frame
 > at `anchor_for_frame(winner, t) - vx*(t - center_t)`. But `anchor_for_frame` already
