@@ -1,5 +1,45 @@
 # Streaming Real-Time Tracker Implementation Plan (3-day version)
 
+> **SUPERSEDED 2026-08-31 by the built minimal version — read this box before following the
+> plan below.** The whole thing was built in one file, `tracking/stream/stream.py`, plus
+> checks in `tracking/tests/sanity_check_stream.py`, and measured on `data/ido_walk.mkv`
+> (1920x1080, 24 fps, 423 frames, person walking behind a large potted plant). What the
+> measurements changed:
+>
+> - **Task 3 (the incremental engine) is unnecessary — do not build it.** The windowed
+>   engine runs at **6.4 ms/frame (156 fps) at 960x540 and 19.1 ms/frame (52 fps) at full
+>   1920x1080**, i.e. 2.2x real time for 24 fps footage at native resolution. The measured
+>   3.8x speedup buys nothing, and it was the plan's only real risk.
+> - **The engine-parity diff is replaced by something strictly stronger:** the streaming
+>   path is **bit-identical** to `track_windows_in_sequence` (168 windows on real footage,
+>   max |dx| = 0.0), because both run one continuous MOG2 pass with the same history and the
+>   same window geometry. That is now `check_streaming_matches_the_offline_evaluator`.
+> - **Task 2's HOG overlay was dropped** (user scoped the deliverable to the merged-blob
+>   box). `merged_center(return_box=True)` and `position_from_track(center_t=, return_box=)`
+>   are the only changes to `tracking/core/`; `integrate_image.py` was not touched.
+> - **Task 4 (support-map box) not needed for the deliverable.**
+> - **On the centred readout ("is the middle frame redundant?"):** it is *nearly* redundant
+>   for a merged-blob box. Paired comparison, same frames, same windows, same winning tracks,
+>   only `center_t` differing, 224 person-present frames: **median |dx| = 0.000 px** (the two
+>   readouts agree exactly on more than half of frames), p90 |dx| = 35.8 px, jitter 35.6 px
+>   (centred) vs 39.7 px (newest, zero latency), fitted-fallback rate 16.5% vs 21.0%. The
+>   closed-form OLS penalty for reading the fit out at the window edge instead of its centre
+>   is 1.80x in standard error (n=7, S_tt=28), but `merged_center` is piecewise-constant in
+>   the anchor, so it absorbs most of that: the observed jitter penalty is ~1.1x, not 1.8x.
+>   The centred window's *incremental* latency cost is also only **2 frames, not 6**, because
+>   `min_track_length=3` at `nth_frame=2` already imposes 4 frames of confirmation delay on
+>   any causal readout. Where the centre is still load-bearing is motion-compensated
+>   integration (mean |dt| 3.2 vs 6.0 frames for the same 13-frame fusion depth) — i.e. the
+>   reconstruction, not the box.
+> - **The 13-frame buffer is not redundant** as long as one result per input frame is wanted:
+>   consecutive centres use opposite stride-2 parities, so all 13 slots are read. Accepting
+>   12 Hz output would shrink it to 7 and halve the front-end — pointless at 156 fps.
+> - **Known gap, deliberately not fixed:** there is no person-present gate, so the tracker
+>   reports its best candidate even when nobody is in frame. Measured separation on
+>   ido_walk.mkv: winning-track score median 21 (present) vs 2 (absent); merged-box height
+>   median 309 px vs 71 px. A gate is cheap; `tracking/eval/stage1_gate_learning.py` already
+>   exists for it.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A live-looking demo: an NFO sequence played as a fake stream, with the tracked person's box and a motion-compensated integrated crop shown per frame, and an object detector's boxes plus confidences drawn on that crop.

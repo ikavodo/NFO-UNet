@@ -156,3 +156,6 @@ cython_debug/
 # MacOS
 .DS_Store
 
+
+# streaming demo writes annotated videos next to its (small, tracked) montages
+images/stream/*.mp4

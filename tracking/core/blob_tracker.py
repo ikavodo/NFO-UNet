@@ -132,7 +132,8 @@ def track_blobs(detections, max_dist: float, max_age: int = 6):
     return dead
 
 
-def merged_center(detections_at_frame, anchor_x: float, anchor_y: float, merge_radius: float):
+def merged_center(detections_at_frame, anchor_x: float, anchor_y: float, merge_radius: float,
+                  return_box: bool = False):
     """Merge all detections within merge_radius of (anchor_x, anchor_y) into one combined
     bbox, and return its center. A single frame's foreground mask commonly fragments a
     person into disconnected blobs (head/torso/legs) - track_blobs/score_and_fit track
@@ -144,15 +145,20 @@ def merged_center(detections_at_frame, anchor_x: float, anchor_y: float, merge_r
     itself is needed.
 
     Falls back to (anchor_x, anchor_y) if no detections are within range.
+
+    return_box: also return the merged box itself as (x1, y1, x2, y2) - the box was always
+    computed here and thrown away. None when nothing was in range. Off by default, so
+    existing callers are unaffected.
     """
     nearby = [d for d in detections_at_frame if np.hypot(d['x'] - anchor_x, d['y'] - anchor_y) <= merge_radius]
     if not nearby:
-        return anchor_x, anchor_y
+        return (anchor_x, anchor_y, None) if return_box else (anchor_x, anchor_y)
     x1 = min(d['bbox'][0] for d in nearby)
     y1 = min(d['bbox'][1] for d in nearby)
     x2 = max(d['bbox'][2] for d in nearby)
     y2 = max(d['bbox'][3] for d in nearby)
-    return (x1 + x2) / 2, (y1 + y2) / 2
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+    return (cx, cy, (x1, y1, x2, y2)) if return_box else (cx, cy)
 
 
 def score_and_fit(tracks, min_track_length: int = 3, expected_height: float = None,

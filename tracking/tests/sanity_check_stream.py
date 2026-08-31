@@ -1,0 +1,117 @@
+"""Assert-based checks for the streaming pipeline. Run:
+
+    python -m tracking.tests.sanity_check_stream
+"""
+import numpy as np
+
+from tracking.core.blob_tracker import merged_center
+from tracking.stream.stream import StreamPipeline, SPAN, BUFFER, jitter
+
+
+def make_moving_bar(T=40, H=120, W=240, speed=3, bar_h=60, bar_w=25):
+    """A bright bar drifting right on a flat background - the person stand-in."""
+    frames = np.full((T, H, W), 40, dtype=np.uint8)
+    for t in range(T):
+        x = 20 + speed * t
+        frames[t, 30:30 + bar_h, x:x + bar_w] = 220
+    return frames
+
+
+def check_merged_center_box_is_additive():
+    dets = [dict(x=10.0, y=10.0, area=100, bbox=(5, 0, 15, 20)),
+            dict(x=12.0, y=40.0, area=100, bbox=(8, 30, 16, 50)),
+            dict(x=500.0, y=500.0, area=100, bbox=(495, 495, 505, 505))]  # far away, excluded
+    cx, cy = merged_center(dets, 11.0, 25.0, merge_radius=40.0)
+    cx2, cy2, box = merged_center(dets, 11.0, 25.0, merge_radius=40.0, return_box=True)
+    assert (cx, cy) == (cx2, cy2), f"return_box changed the center: {(cx, cy)} vs {(cx2, cy2)}"
+    assert box == (5, 0, 16, 50), f"expected the merged box (5, 0, 16, 50), got {box}"
+    assert ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2) == (cx, cy), "center is not the box center"
+    assert merged_center([], 1.0, 2.0, 40.0, return_box=True) == (1.0, 2.0, None)
+    print("merged_center ok: box returned, center unchanged")
+
+
+def check_pipeline_emits_for_the_buffer_center():
+    frames = make_moving_bar()
+    pipe = StreamPipeline(person_height=60.0, readout='center')
+    results = [r for r in (pipe.step(f) for f in frames) if r is not None]
+    assert SPAN == 6 and BUFFER == 13, f"geometry changed: SPAN={SPAN}, BUFFER={BUFFER}"
+    assert len(results) == len(frames) - (BUFFER - 1), \
+        f"expected {len(frames) - (BUFFER - 1)} emissions, got {len(results)}"
+    assert results[0].frame_index == SPAN, \
+        f"first emission should describe frame {SPAN}, got {results[0].frame_index}"
+    assert all(np.array_equal(r.frame, frames[r.frame_index]) for r in results), \
+        "Result.frame is not the frame it claims to describe"
+    xs = [r.x for r in results if r.x is not None]
+    assert len(xs) > len(results) // 2, f"only {len(xs)}/{len(results)} results tracked anything"
+    assert xs == sorted(xs), "tracked x should increase monotonically for a rightward bar"
+    boxed = [r for r in results if r.box is not None]
+    assert len(boxed) > len(results) // 2, f"only {len(boxed)}/{len(results)} results carry a box"
+    print(f"pipeline ok: {len(results)} emissions, {len(boxed)} with boxes, x monotonic")
+
+
+def check_newest_readout_is_zero_latency():
+    frames = make_moving_bar()
+    pipe = StreamPipeline(person_height=60.0, readout='newest')
+    results = [r for r in (pipe.step(f) for f in frames) if r is not None]
+    assert results[0].frame_index == BUFFER - 1, \
+        f"newest readout should describe frame {BUFFER - 1} first, got {results[0].frame_index}"
+    assert results[-1].frame_index == len(frames) - 1, \
+        f"newest readout should reach the last frame, got {results[-1].frame_index}"
+    print(f"newest readout ok: describes frames {results[0].frame_index}..{results[-1].frame_index}")
+
+
+def check_jitter_is_zero_on_constant_velocity():
+    assert abs(jitter(dict(enumerate([0.0, 3.0, 6.0, 9.0, 12.0])))) < 1e-9, "constant velocity must give zero jitter"
+    assert jitter(dict(enumerate([0.0, 0.0, 10.0, 0.0, 0.0]))) > 1.0, "a spike must register as jitter"
+    print("jitter metric ok")
+
+
+def check_streaming_matches_the_offline_evaluator(video='data/ido_walk.mkv', scale=0.25,
+                                                  person_height=210.0, limit=180):
+    """The streaming path must be IDENTICAL to track_windows_in_sequence, not merely close:
+    both run one continuous MOG2 pass in chronological order with the same history, the same
+    morphology and the same window geometry, so any difference is a bug in the ring buffer's
+    bookkeeping rather than an approximation. This is a stronger and cheaper gate than
+    comparing two streaming engines against each other."""
+    import os
+    if not os.path.exists(video):
+        print(f"skip offline-parity check: {video} not present")
+        return
+    from tracking.core.track_sequence import track_windows_in_sequence
+    from tracking.stream.stream import frames_from_video, NTH_FRAME
+
+    frames = np.stack([f for _, f in zip(range(limit), frames_from_video(video, scale))])
+    stream = {}
+    pipe = StreamPipeline(person_height=person_height, readout='center')
+    for f in frames:
+        r = pipe.step(f)
+        if r is not None:
+            stream[r.frame_index] = r
+    centers = sorted(stream)
+    # expected_height must be non-None for track_windows_in_sequence to keep the derived
+    # shape term that scale_relative_params (and therefore StreamPipeline) always uses
+    offline = track_windows_in_sequence(frames, centers, span=SPAN, nth_frame=NTH_FRAME,
+                                        person_height=person_height, expected_height=1.0)
+    assert len(centers) == len(frames) - (BUFFER - 1), f"emitted {len(centers)} windows"
+    worst, n_both = 0.0, 0
+    for c in centers:
+        a, b = stream[c], offline[c]
+        assert (a.x is None) == (b is None), f"frame {c}: streaming {a.x} vs offline {b}"
+        if b is None:
+            continue
+        n_both += 1
+        worst = max(worst, abs(a.x - b['x']), abs(a.y - b['y']))
+    assert worst == 0.0, f"streaming and offline disagree by up to {worst:.6f}px"
+    print(f"offline parity ok: {len(centers)} windows, {n_both} tracked, identical to the bit")
+
+
+def main():
+    check_merged_center_box_is_additive()
+    check_jitter_is_zero_on_constant_velocity()
+    check_pipeline_emits_for_the_buffer_center()
+    check_newest_readout_is_zero_latency()
+    check_streaming_matches_the_offline_evaluator()
+
+
+if __name__ == '__main__':
+    main()
