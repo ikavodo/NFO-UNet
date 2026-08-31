@@ -5,7 +5,7 @@ import numpy as np
 
 from tracking.core.blob_tracker import detect_blobs, score_and_fit, track_blobs
 from tracking.eval.eval_nfo import BG_FRAMES, EXPECTED_HEIGHT, MAX_DIST, MERGE_RADIUS, NTH_FRAME, SPAN
-from tracking.core.integrate_image import align_frames, integrate
+from tracking.core.integrate_image import align_frames, crop_at, integrate
 from tracking.core.preprocess import filter_by_shape, foreground_mask, refine_mask
 
 
@@ -45,7 +45,22 @@ def check_alignment_follows_the_person():
     print(f"alignment ok: person drifts {step:+.2f}px/frame inside the aligned crop")
 
 
+def check_crop_at_always_returns_the_requested_size():
+    """Including when the crop falls entirely outside the image, which a long integration
+    buffer reaches as soon as the person leaves the frame."""
+    img = np.arange(60 * 80, dtype=np.uint8).reshape(60, 80)
+    for cx, cy, where in [(40, 30, 'inside'), (0, 0, 'corner'), (79, 59, 'far corner'),
+                          (-500, 30, 'fully left'), (900, 30, 'fully right'),
+                          (40, -400, 'fully above'), (40, 700, 'fully below')]:
+        c = crop_at(img, cx, cy, 32)
+        assert c.shape == (32, 32), f"{where}: got {c.shape}, want (32, 32)"
+        assert c.dtype == img.dtype
+    assert crop_at(img, -500, 30, 32).max() == 0, "a fully-outside crop should be all zeros"
+    print("crop_at ok: exact size for inside, edge and fully-outside crops")
+
+
 def main():
+    check_crop_at_always_returns_the_requested_size()
     check_alignment_follows_the_person()
     seq, center = 'seq1', 17
     if not os.path.isdir(f'data/nfo_final/nfo_final/{seq}'):

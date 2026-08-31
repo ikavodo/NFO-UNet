@@ -3,14 +3,22 @@ import cv2
 
 
 def crop_at(img, cx, cy, size):
+    """size x size crop centred on (cx, cy), zero-padded where it leaves the image.
+
+    Always returns exactly (size, size). The pads are derived from the CLAMPED bounds, which
+    matters once the crop can fall entirely outside the frame - deriving them from the
+    unclamped bounds (as this did until 2026-08-31) left an empty slice next to an oversized
+    pad and returned a wrong-shaped array. That happens as soon as a long integration buffer
+    is used, since the crop follows ax + vx*t and the person eventually leaves the frame.
+    """
     h, w = img.shape
     x0, y0 = int(cx - size / 2), int(cy - size / 2)
     x1, y1 = x0 + size, y0 + size
-    pad_l, pad_t = max(0, -x0), max(0, -y0)
-    pad_r, pad_b = max(0, x1 - w), max(0, y1 - h)
-    x0, y0, x1, y1 = max(0, x0), max(0, y0), min(w, x1), min(h, y1)
-    crop = img[y0:y1, x0:x1]
-    return cv2.copyMakeBorder(crop, pad_t, pad_b, pad_l, pad_r, cv2.BORDER_CONSTANT, value=0)
+    xa, ya, xb, yb = max(0, x0), max(0, y0), min(w, x1), min(h, y1)
+    if xb <= xa or yb <= ya:
+        return np.zeros((size, size), dtype=img.dtype)
+    return cv2.copyMakeBorder(img[ya:yb, xa:xb], ya - y0, y1 - yb, xa - x0, x1 - xb,
+                              cv2.BORDER_CONSTANT, value=0)
 
 
 def anchor_for_frame(winner, t):
