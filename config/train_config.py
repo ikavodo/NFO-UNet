@@ -106,10 +106,16 @@ kth_train = {
 # {-1,1} target that LogisticLoss is paired with per the kth_train comment above - using
 # LogisticLoss here would reproduce the exact GAUSS/LogisticLoss mismatch already documented
 # as unsuitable.
+# lr lowered 1e-3 -> 1e-4: kth_train's lr=1e-3 was tuned against LogisticLoss's bounded
+# log(1+exp(...)) gradient scale, not MSELoss's squared, unbounded error - reusing it verbatim
+# produced a real NaN mid-training (epoch 32) under fp16 autocast (see train_main.py's added
+# gradient clipping, which is the general-purpose fix; this lr reduction is the config-specific
+# half of the same fix, since the underlying mismatch is real regardless of clipping).
 kth_train_anisotropic = kth_train.copy()
 kth_train_anisotropic.update({
     'hm_filter': HeatMap.ANISO,
     'criterion': torch.nn.MSELoss(),
+    'lr': 1e-4,
 })
 
 
