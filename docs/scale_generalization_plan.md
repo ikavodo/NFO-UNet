@@ -308,11 +308,39 @@ matched density, so the few-thick-bands idea is not needed.
 
 `fill_frac` is excluded from the score for a reason that is itself a finding: adding occlusion
 can only lower it, and synthetic KTH's **unoccluded** fill (0.230) is already less than half
-NFO's **occluded** fill (0.475). MOG2 recovers a much smaller share of the person on KTH than
-on NFO. So on the statistic that measures how much of the person survives segmentation,
-**un-occluded synthetic KTH is already harder than real occluded NFO** - our benchmark's
-difficulty comes mostly from KTH's own segmentation noise, not from the occluder we added. No
-density setting can fix that; it is a property of the source footage.
+NFO's **occluded** fill (0.475). So on the statistic that measures how much of the person
+survives **MOG2 motion segmentation**, un-occluded synthetic KTH is already harder than real
+occluded NFO - the benchmark's difficulty comes mostly from KTH's own segmentation noise, not
+from the occluder we added. No density setting can fix that; it is a property of the footage.
+
+**Scope this claim carefully - it is specific to MOG2 masks, and the ordering REVERSES for
+semantic masks.** A parallel session measured the same statistic on SAM2 masks and got the
+opposite ordering: KTH 0.382 against NFO 0.239. Both are correct, because they measure different
+objects, and the reversal is informative rather than contradictory:
+
+- **MOG2 (motion) fill: NFO > KTH.** NFO's person moves against a static background at decent
+  contrast, so motion segmentation finds them. KTH is low-contrast (intensity std 15.3) and
+  low-resolution, so it does not.
+- **SAM2 (semantic) fill: KTH > NFO.** KTH's person is clean and unoccluded, so a single point
+  prompt gives a tight accurate silhouette. NFO's person is fragmented behind foliage, so even a
+  union of checkpoint propagations clipped to a dilated GT box only reaches 0.239.
+
+Which is to say: KTH is hard to *segment by motion* and easy to *delineate semantically*; NFO is
+the reverse. Anyone quoting a fill number must say which mask source produced it. Only the MOG2
+figure is relevant to this tracker, which consumes MOG2 masks and never sees a SAM mask.
+
+**One confound was raised and checked, and it does not hold.** KTH's stored `groundtruth.txt`
+boxes are temporally smoothed (`gen_kth_data/main.py:extract_mean_bb`, a weighted moving average)
+while NFO's are not, which would deflate KTH's fill by construction if the smoothing loosened the
+boxes. Measured on person01_jogging_d1 (n=90 frames having both a GT box and a SAM mask): the
+stored box is **0.73x** the tight SAM-mask box by area - *tighter*, not looser, IoU 0.863 - and
+recomputing MOG2 fill against the tight box changes it by 0.96x (0.330 vs 0.318). So the box
+choice is not driving the ordering. KTH's MOG2 fill does vary by sequence (0.230 pooled over
+three walking sequences, 0.330 on this jogging one), which is worth remembering before treating
+any single number as the dataset's value.
+
+None of this affects the calibrated density: `fill_frac` is not in `SHAPE_STATS`, so the 0.05
+result rests only on blobs-per-person, tallest-blob fraction and inter-blob gap.
 
 ### Correction to F6
 
