@@ -360,18 +360,42 @@ dimensionless parameterization is the load-bearing fix. **But they are not measu
 
 - The HOG factor is a **detector-window** effect: HOG's 64x128 template needs the person to fill
   it, which is about the crop, not the dataset.
-- The mask-moment factor **decomposes**, and mostly not into scale. On the shared canvas the
-  person-height ratio is only ~1.63x (KTH 0.53*224 = 119px against NFO's 195px in a 600px frame
-  becoming 73px). Scale alone therefore predicts a 2.7x area ratio; the observed ratio is
-  **20x** (KTH 5188 px^2 vs NFO 251 px^2). A whole NFO person at 73px should occupy ~1950 px^2, so
-  the NFO pseudo-masks capture about **13% of the person's silhouette area** - they are fragments,
-  not silhouettes. Also measured: KTH masks are essentially always one blob (1.01 mean, 1% with
-  more), NFO's are 1.27-1.38 mean with 24-35% fragmented.
+- The mask-moment factor **decomposes** into a genuine scale term plus a mask-quality term. The
+  person-height ratio on the shared canvas is **2.35x**, measured from stored GT box heights
+  (KTH 127.5px pooled over 6 sequences n=623; NFO 54.2px pooled over seq1-4 n=3507). Scale alone
+  therefore predicts a 5.5x area ratio, while the observed all-masks ratio is ~17x
+  (KTH 5188 px^2 vs NFO ~300 px^2) - so the *average* NFO mask holds about **a third** of the
+  scale-predicted silhouette area. Also measured: KTH masks are essentially always one blob
+  (1.01 mean, 1% with more, at a 20px minimum blob area), NFO's are 1.27-1.38 mean with 24-35%
+  fragmented.
 
-So "scale differs by 3x between the datasets" is not supported; "person height differs ~1.6x on a
-common canvas, and NFO's semantic masks additionally recover only a fraction of the person" is.
-The distinction matters for anything that normalizes by person size: normalizing fixes the 1.6x
-and does nothing about the missing 87% of mask area.
+  **Correction:** an earlier version of this section said 1.63x and "13% of the silhouette". Both
+  were wrong. The scale error came from using 224/600 when
+  `gen_data/gen_kth_data/kth_utils.py:pad_img_and_bb_to_square` pads the *smaller* dimension up to
+  the larger, so NFO's 800x600 becomes 800x800 before the resize and the factor is 224/800 = 0.28:
+  a 195px person lands at 54.6px, matching the 54.2px measured. The "13%" then compounded that
+  error with a second one - pooling over all masks, including a fragment tail. Conditioned on masks
+  that actually cover the person, the parallel session measured 405-440 px^2 against a ~452 px^2
+  prediction, i.e. **90-97%**, on 15-46% of NFO frames. So the fragment deficit is a property of
+  the **tail**, not of NFO's masks generally.
+
+So "the datasets differ 3x in scale" is not supported, but neither was my under-correction:
+person height differs **2.35x** on a common canvas, and a substantial minority of NFO masks are
+fragments while the well-covered ones are close to scale-complete. For anything that normalizes by
+person size, that means normalization handles the 2.35x and a **coverage gate** handles the tail -
+they are separate fixes and both are needed.
+
+Two measurement traps from the same exchange, worth not re-deriving:
+
+- **Do not select "masks that cover the person" by top-quantile fill.** On KTH that selects the
+  over-segmentation *failures* - masks several times the box area where SAM grabbed background -
+  and reports a spuriously low eccentricity. Bound the coverage criterion from above as well as
+  below (the parallel session used coverage in [0.30, 1.0] plus at most 25% of mask area outside
+  the box).
+- **Two incompatible fill definitions exist**, and they differ by ~2x on the same masks:
+  `(mask AND box) / box` = 0.382 versus `mask_area / box_area` = 0.732 on KTH, because 8% of KTH
+  mask area falls outside the annotation box (NFO's is 0.1-1.2%, being clipped to the box by
+  construction). Use the intersection form. The MOG2 fill numbers above already do.
 
 ### Correction to F6
 
