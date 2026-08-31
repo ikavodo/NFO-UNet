@@ -167,7 +167,7 @@ def hog_detector():
     return _HOG
 
 
-def detect_person(frame: np.ndarray, centre, person_height: float, pad: float = 0.25,
+def detect_person(frame: np.ndarray, box, person_height: float, pad: float = 0.25,
                   target_px: float = 128.0, win_stride=(8, 8), scale_step: float = 1.05,
                   hit_threshold: float = 0.0):
     """HOG on the CENTRE FRAME, restricted to a scale-relative crop around the tracker's
@@ -182,23 +182,25 @@ def detect_person(frame: np.ndarray, centre, person_height: float, pad: float = 
     own box is what makes this cheap and keeps HOG off the foliage; box=None falls back to the
     whole frame.
 
-    The crop is PERSON-SHAPED, not the merged box: HOG's window has a fixed 1:2 aspect, and
-    the merged box does not (measured on ido_walk its median height is 309px against a 421px
-    person, so it both under-covers and has an arbitrary aspect). So only the box's CENTRE is
-    used, and the window is (0.9 + 2*pad) x (1.5 + 2*pad) person heights around it.
+    The crop is the MERGED BLOB BOX, grown by pad person-heights on each side. Padding is not
+    cosmetic: HOG's default people detector was trained on 64x128 INRIA windows in which the
+    person occupies roughly the central half of the width, so a crop cut tight to the silhouette
+    is out of distribution for it.
+
+    box=None returns [] rather than scanning the whole frame. A full-frame scan on this footage
+    fires overwhelmingly on foliage, and folding that into the same number as box-restricted
+    detections makes the statistic meaningless.
 
     weights from detectMultiScale are SVM decision values, not probabilities - report them as
     the detector's own margin and do not call them a probability. hit_threshold is that same
     margin's accept cutoff; lowering it below 0 surfaces weaker detections rather than none.
     """
     h, w = frame.shape
-    if centre is None:
-        x1, y1, x2, y2 = 0, 0, w, h
-    else:
-        cx, cy = centre
-        hw, hh = (0.45 + pad) * person_height, (0.75 + pad) * person_height
-        x1, y1 = max(0, int(round(cx - hw))), max(0, int(round(cy - hh)))
-        x2, y2 = min(w, int(round(cx + hw))), min(h, int(round(cy + hh)))
+    if box is None:
+        return []
+    m = pad * person_height
+    x1, y1 = max(0, int(round(box[0] - m))), max(0, int(round(box[1] - m)))
+    x2, y2 = min(w, int(round(box[2] + m))), min(h, int(round(box[3] + m)))
     if x2 - x1 < 16 or y2 - y1 < 32:
         return []
     crop = frame[y1:y2, x1:x2]
@@ -251,8 +253,7 @@ def run(video: str, person_height: float, scale: float = 0.5, readout: str = 'ce
             continue
         if hog:
             t1 = time.perf_counter()
-            centre = None if r.x is None else (r.x, r.y)
-            r.detections = detect_person(r.frame, centre, person_height, pad=hog_pad,
+            r.detections = detect_person(r.frame, r.box, person_height, pad=hog_pad,
                                          target_px=hog_target, hit_threshold=hog_thresh)
             hog_time += time.perf_counter() - t1
         results.append(r)
@@ -421,7 +422,7 @@ def main():
                    help="resize the crop so the person is this tall before HOG; HOG's own "
                         "window is 64x128, so this is the scale-free version of an upscale factor")
     p.add_argument('--hog-pad', type=float, default=0.25,
-                   help='margin around the person-shaped crop fed to HOG, in person heights')
+                   help='margin grown around the merged blob box before HOG, in person heights')
     p.add_argument('--hog-thresh', type=float, default=0.0,
                    help="HOG's SVM margin cutoff; below 0 surfaces weaker detections")
     p.add_argument('--out-fps', type=float, default=None,
