@@ -179,14 +179,18 @@ def annotate_split(result: Result, fps: float, crop_size: int, panel_h: int = 36
     """Split screen: annotated full frame, then the three crops at a common panel height."""
     left = annotate(result, fps)
     left = cv2.resize(left, (round(panel_h * left.shape[1] / left.shape[0]), panel_h))
+    # the panel count must NOT depend on whether a track was found: cv2.VideoWriter is
+    # opened at the first frame's size and then SILENTLY DROPS every frame of a different
+    # size, which truncated the written video to the subset of frames that had no track
+    panels = (integrated_panels(result, crop_size, sigma) if result.winner is not None
+              else [(n, None) for n in ('centre frame (baseline)', f'gaussian sigma={sigma:g}',
+                                        'median')])
     tiles = [left]
-    if result.winner is None:
-        tiles += [np.zeros((panel_h, panel_h, 3), np.uint8)]
-    else:
-        for name, img in integrated_panels(result, crop_size, sigma):
-            tile = cv2.cvtColor(cv2.resize(img, (panel_h, panel_h)), cv2.COLOR_GRAY2BGR)
-            cv2.putText(tile, name, (8, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-            tiles.append(tile)
+    for name, img in panels:
+        tile = (np.zeros((panel_h, panel_h, 3), np.uint8) if img is None else
+                cv2.cvtColor(cv2.resize(img, (panel_h, panel_h)), cv2.COLOR_GRAY2BGR))
+        cv2.putText(tile, name, (8, 26), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        tiles.append(tile)
     return np.hstack(tiles)
 
 
@@ -209,7 +213,8 @@ def in_ranges(f: int, ranges) -> bool:
 def run(video: str, person_height: float, scale: float = 0.5, readout: str = 'center',
         out_dir: str = 'images/stream', tag: str = '', display: bool = False,
         src_fps: float = 24.0, present=(), split: bool = False,
-        crop_factor: float = 1.6, sigma: float = 1.0, panel_h: int = 360) -> dict:
+        crop_factor: float = 1.6, sigma: float = 1.0, panel_h: int = 360,
+        out_fps: float = None) -> dict:
     pipe = StreamPipeline(person_height=person_height, readout=readout)
     crop = int(round(crop_factor * person_height))
     render = ((lambda r, f: annotate_split(r, f, crop, panel_h, sigma)) if split else annotate)
@@ -228,9 +233,13 @@ def run(video: str, person_height: float, scale: float = 0.5, readout: str = 'ce
         fps = len(results) / (time.perf_counter() - t_start)
         vis = render(r, fps)
         if writer is None:
-            h, w = vis.shape[:2]
+            frame_h, frame_w = h, w = vis.shape[:2]
             writer = cv2.VideoWriter(f"{out_dir}/{tag or readout}_stream.mp4",
-                                     cv2.VideoWriter_fourcc(*'mp4v'), src_fps, (w, h))
+                                     cv2.VideoWriter_fourcc(*'mp4v'),
+                                     out_fps or src_fps, (w, h))
+        assert vis.shape[:2] == (frame_h, frame_w), (
+            f"frame {r.frame_index} is {vis.shape[:2]} but the writer was opened at "
+            f"{(frame_h, frame_w)}; cv2.VideoWriter would drop it silently")
         writer.write(vis)
         if display:
             cv2.imshow('stream', vis)
@@ -383,6 +392,10 @@ def main():
     p.add_argument('--sigma', type=float, default=1.0,
                    help="temporal gaussian sigma, in strided-frame units")
     p.add_argument('--panel-height', type=int, default=360)
+    p.add_argument('--out-fps', type=float, default=None,
+                   help='frame rate stamped on the written mp4; below the source rate this '
+                        'gives slow motion for frame-by-frame inspection (e.g. 6 = 4x slow). '
+                        'Does not affect --display pacing or any measurement.')
     p.add_argument('--compare', action='store_true',
                    help='paired center-vs-newest readout comparison instead of a single run')
     p.add_argument('--measure-presence', action='store_true',
@@ -408,7 +421,7 @@ def main():
     else:
         run(a.video, height, scale=a.scale, readout=a.readout, out_dir=a.out_dir, tag=a.tag,
             display=a.display, present=present, split=a.split, crop_factor=a.crop_factor,
-            sigma=a.sigma, panel_h=a.panel_height)
+            sigma=a.sigma, panel_h=a.panel_height, out_fps=a.out_fps)
 
 
 if __name__ == '__main__':
