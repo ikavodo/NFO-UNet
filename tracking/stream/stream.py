@@ -440,20 +440,58 @@ def calibration():
 
 
 def confidence_of(score) -> float:
-    """Calibrated P(person present) for a score, or nan when uncalibrated."""
+    """Calibrated P(person present) for a score, or nan when there is no calibration at all.
+
+    score=None - no candidate track this frame - maps to score 0.0 rather than to nan, because 0.0
+    is exactly how the fit encodes that case (features_for uses `max(r.score or 0.0, 0.0)`), and it
+    lands at P=0.10. That is a real calibrated statement - "nothing found, and on this footage that
+    means about a 10% chance a person is there anyway" - and far more useful on a meter than a blank
+    reading 'n/a', which invites the viewer to read absence of a number as absence of a person.
+    """
     from tracking.core.calibration import confidence
     cal = calibration()
-    return float('nan') if cal is None or score is None else confidence(score, cal)
+    return float('nan') if cal is None else confidence(score or 0.0, cal)
 
 
-def annotate(result: Result, fps: float) -> np.ndarray:
+def conf_meter(vis, p, gate=None, colour=(0, 255, 0), caption='', y=64):
+    """One frame-level probability per panel: a 0..1 meter, the gate ticked on it, and the value.
+
+    Drawn identically by BOTH panels of the live split screen, because the whole point is that the
+    two numbers answer the SAME question - is a person present in this frame - in the same units. A
+    per-box label would answer a different question (is THIS box a person), and mixing the two is
+    how a side-by-side starts flattering one side.
+
+    The meter carries the comparison, not the digits: "0.47" versus "0.89" needs reading and
+    remembering a threshold, two bars against a common tick does not. A probability is the only
+    thing that HAS a natural full scale - an unbounded score could never have been drawn this way.
+    """
+    x, w, h = 10, 150, 12
+    cv2.rectangle(vis, (x, y), (x + w, y + h), (35, 35, 35), -1)
+    if p == p:
+        cv2.rectangle(vis, (x, y), (x + int(w * max(0.0, min(1.0, p))), y + h), colour, -1)
+    cv2.rectangle(vis, (x, y), (x + w, y + h), (230, 230, 230), 1)
+    if gate is not None:
+        gx = x + int(w * max(0.0, min(1.0, gate)))
+        cv2.line(vis, (gx, y - 5), (gx, y + h + 5), (255, 255, 255), 2)
+    text = f"P {p:.2f}" if p == p else "P  n/a"
+    if caption:
+        text += f"  {caption}"
+    # equal thickness in both passes: cv2's Hershey advance depends on thickness, so an outline
+    # drawn thicker than its fill diverges rightward (see hud)
+    for dx, dy, col in ((1, 1, (0, 0, 0)), (0, 0, (255, 255, 255))):
+        cv2.putText(vis, text, (x + w + 8 + dx, y + h + dy), cv2.FONT_HERSHEY_SIMPLEX, 0.6, col, 2)
+    return vis
+
+
+def annotate(result: Result, fps: float, gate: float = None) -> np.ndarray:
     vis = cv2.cvtColor(result.frame, cv2.COLOR_GRAY2BGR)
+    colour = (0, 165, 255) if result.extrapolated else (0, 255, 0)
     if result.box is not None:
         x1, y1, x2, y2 = (int(round(v)) for v in result.box)
-        colour = (0, 165, 255) if result.extrapolated else (0, 255, 0)
         thin = 1 if result.smooth else 2      # raw box recedes once a smoothed one is drawn
         cv2.rectangle(vis, (x1, y1), (x2, y2), colour, thin)
         cv2.circle(vis, (int(round(result.x)), int(round(result.y))), 3, colour, -1)
+    conf_meter(vis, confidence_of(result.score), gate, colour, 'person in frame')
     if result.smooth:
         (sxy, swh, coasting) = result.smooth
         if sxy is not None:
@@ -465,12 +503,9 @@ def annotate(result: Result, fps: float) -> np.ndarray:
     label = f"f{result.frame_index}  {fps:5.1f} fps"
     if result.x is None:
         label += "  no track"
-    else:
-        conf = confidence_of(result.score)
-        label += ("  score %.0f" % result.score if conf != conf
-                  else f"  P {conf:.2f}  (score {result.score:.0f})")
-        if result.extrapolated:
-            label += "  fitted readout"
+    elif result.extrapolated:
+        # state words, not numbers: the probability is on the meter beside the box
+        label += "  fitted readout"
     if result.smooth and result.smooth[2]:
         label += "  COASTING"
     cv2.putText(vis, label, (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)

@@ -8,6 +8,25 @@
 ESC or q quits. `--source` exists so the whole application can be exercised without a camera
 attached - it is the same code path, only the frame producer differs.
 
+WHAT IS ON SCREEN, AND WHY IT IS TWO KINDS OF NUMBER
+
+Each panel carries one `P ... person in frame` meter, drawn by the same conf_meter at the same
+position and scale, because both answer the SAME question: is a person present in this frame. The
+tracker's comes from Platt-scaling its track score; YOLO's from recalibrating its max box confidence
+through a logit link against the same labels and the same emitted frames. Watch the two meters
+rather than the digits: the tracker's moves continuously, YOLO's snaps between 0.48 (found nothing,
+no opinion) and 1.00 (found something, certain), because a detector has no graded middle here.
+
+YOLO's boxes additionally keep their own `conf`, which is NOT the same notion and is deliberately
+not called P. It answers "is this box a person", from one frame's appearance; the meter answers
+"is a person in the frame", from 13 frames of motion. Frame-level AUC is 0.948 for the tracker
+against 0.663 for YOLO - yet conditional on YOLO firing, a person was present 233/233 times. Both
+facts at once: its confidence is a good answer to its own question and a poor answer to the meter's,
+because its failure mode is not firing at all.
+
+Neither number is a localisation confidence. Both say whether someone is there, not whether the box
+is in the right place.
+
 WHAT IT DOES DIFFERENTLY FROM tracking.stream.stream
 
 stream.py is the measurement harness: it writes an mp4 and a montage, scores against ground
@@ -47,6 +66,7 @@ import cv2
 import numpy as np
 
 from tracking.stream.stream import (BUFFER, SPAN, Smoother, StreamPipeline, annotate,
+                                    conf_meter,
                                     bootstrap_person_height, frames_from_video, webcam_frames)
 
 
@@ -165,12 +185,20 @@ def bar(vis, text):
     return vis
 
 
-def yolo_panel(grey, boxes, title):
+def yolo_panel(grey, boxes, title, p=float('nan'), gate=None):
+    """Plain boxes plus the SAME conf_meter the tracker panel draws, at the same position and scale.
+    p is YOLO's FRAME-level calibrated probability - the same question the tracker's meter answers -
+    not a per-box confidence, which would be a different claim wearing the same units."""
     vis = cv2.cvtColor(grey, cv2.COLOR_GRAY2BGR)
-    for (x1, y1, x2, y2), s in boxes:
+    for (x1, y1, x2, y2), c in boxes:
         cv2.rectangle(vis, (x1, y1), (x2, y2), (255, 0, 255), 2)
-        cv2.putText(vis, f'{s:.2f}', (x1, max(14, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                    (255, 0, 255), 2)
+        # YOLO's own per-box number is KEPT, and named 'conf' rather than 'P', because it answers a
+        # different question from the meter: is THIS BOX a person, from this one frame's appearance.
+        # The meter answers whether a person is in the frame at all. Same panel, two notions.
+        for dx, dy, col in ((1, 1, (0, 0, 0)), (0, 0, (255, 0, 255))):
+            cv2.putText(vis, f'conf {c:.2f}', (x1 + dx, max(16, y1 - 8) + dy),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, col, 2)
+    conf_meter(vis, p, gate, (255, 0, 255), 'person in frame')
     return bar(vis, title)
 
 
@@ -308,10 +336,24 @@ def main():
     if file_fps:
         fps = file_fps
 
+    from tracking.core.calibration import (DEFAULT_PATH, YOLO_PATH, confidence as _conf, load,
+                                           score_for_confidence)
     if a.min_confidence is not None:
-        from tracking.core.calibration import load, score_for_confidence
-        a.min_score = score_for_confidence(a.min_confidence, load())
+        a.min_score = score_for_confidence(a.min_confidence, load(DEFAULT_PATH))
         print(f'gate: P(present) >= {a.min_confidence:.2f}  ==  score >= {a.min_score:.2f}')
+    gate_p = a.min_confidence          # None means "no gate", and the meter then shows no tick
+
+    # YOLO's reported conf is an UNCALIBRATED sigmoid class score, so it is recalibrated against the
+    # same labels and the same emitted frames before being shown next to the tracker's probability.
+    # Without this the two panels would display numbers that look comparable and are not.
+    ycal = None
+    if a.yolo is not None:
+        try:
+            ycal = load(YOLO_PATH)
+        except Exception:
+            print('NOTE: no YOLO calibration - showing its RAW confidence, which is not on the '
+                  'same scale as the tracker\'s. Fit one: python -m tracking.eval.calibrate_score '
+                  '--method yolo')
 
     pipe = StreamPipeline(person_height=height, min_score=a.min_score)
     sm = Smoother(height, fps, halflife_s=a.halflife, jump_max=a.jump_max)
@@ -336,23 +378,31 @@ def main():
                 continue
             wh = None if r.box is None else (r.box[2] - r.box[0], r.box[3] - r.box[1])
             r.smooth = sm.update(None if r.x is None else (r.x, r.y), wh)
-            vis = annotate(r, disp_fps)
+            vis = annotate(r, disp_fps, gate_p)
             hud(vis, ["", ""] * (yolo is not None) + ["", f"person {height:.0f}px   latency {SPAN} frames "
                           f"({1000 * SPAN / fps:.0f} ms)   {'TRACKING' if r.x is not None else 'searching'}"])
             if yolo is not None:
-                bar(vis, 'blob + Kalman tracker')
+                gate_txt = '' if gate_p is None else f'   gate P>={gate_p:.2f}'
+                bar(vis, f'blob + Kalman tracker{gate_txt}   '
+                         f'{"TRACKING" if r.x is not None else "searching"}')
                 ms, _, _ = yolo.stats()
                 hit = yolo.take(r.frame_index, 2 * BUFFER)
                 # "no answer yet" is NOT "an answer of nothing" - say which, or an empty panel
                 # reads as a confident non-detection when it is really a cold model
+                name = os.path.basename(a.yolo)
                 if hit is None:
-                    left = yolo_panel(r.frame, [], f'YOLO {os.path.basename(a.yolo)}   warming up')
+                    left = yolo_panel(r.frame, [], f'YOLO {name}   warming up')
                 else:
                     j, det = hit
-                    left = yolo_panel(r.frame, det, f'YOLO {os.path.basename(a.yolo)} '
-                                      f'conf>={a.yolo_conf:g}   f{j} ({r.frame_index - j:+d} vs '
-                                      f'tracker)   {ms:.0f} ms {a.yolo_device}   '
-                                      f'{str(len(det)) + " person" if det else "nothing"}')
+                    # same units as the other panel: calibrated P, not YOLO's raw conf
+                    floor = (ycal.meta or {}).get('min_raw') or 0.01 if ycal else 0.0
+                    raw = max([c for _, c in det], default=0.0)
+                    p_yolo = _conf(max(raw, floor), ycal) if ycal else raw
+                    found = f'{len(det)} box' if det else 'nothing'
+                    left = yolo_panel(r.frame, det,
+                                      f'YOLO {name}   {found}   [f{j}, '
+                                      f'{r.frame_index - j:+d} vs tracker, {ms:.0f} ms]',
+                                      p_yolo, None)
                 vis = np.hstack([left, vis])
             shown += 1
             now = time.perf_counter()

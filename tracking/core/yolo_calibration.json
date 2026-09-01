@@ -1,0 +1,20 @@
+{
+ "a": 1.770116462882855,
+ "b": 8.048193751904302,
+ "transform": "logit",
+ "meta": {
+  "method": "yolo",
+  "clips": [
+   "ido_walk",
+   "walk_noisy1",
+   "walk_noisy2"
+  ],
+  "n": 1202,
+  "min_raw": 0.01,
+  "auc": 0.6633,
+  "ece_in_sample": 0.0146,
+  "ece_leave_one_clip_out": 0.0767,
+  "form": "P(present) = sigmoid(a * logit(x) + b)",
+  "weights": "data/yolo11m.pt"
+ }
+}
