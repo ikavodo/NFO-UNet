@@ -3,6 +3,7 @@
     python -m tracking.stream.live                      # default camera
     python -m tracking.stream.live --camera 1
     python -m tracking.stream.live --source data/ido_walk.mkv    # a file, paced like a camera
+    python -m tracking.stream.live --yolo               # + a side-by-side YOLO detector panel
 
 ESC or q quits. `--source` exists so the whole application can be exercised without a camera
 attached - it is the same code path, only the frame producer differs.
@@ -38,6 +39,7 @@ as everything-is-foreground. Static camera only, for the same reason.
 """
 import argparse
 import os
+import threading
 import time
 from collections import deque
 
@@ -48,11 +50,128 @@ from tracking.stream.stream import (BUFFER, SPAN, Smoother, StreamPipeline, anno
                                     bootstrap_person_height, frames_from_video, webcam_frames)
 
 
+# yolo11m, not yolo11n: on this footage the nano model returned ~0% real recall and 85% false
+# positives on a STATIC shelf object, while the medium model gave 5-26% real recall and 0% false
+# positives. A panel showing the nano model would misrepresent what a detector baseline can do.
+YOLO_WEIGHTS = 'data/yolo11m.pt'
+
+
 def hud(vis, lines, colour=(255, 255, 255)):
+    """Both passes at the SAME thickness, offset by a pixel, i.e. a drop shadow rather than an
+    outline. cv2's Hershey glyph ADVANCE depends on thickness - this line measures 498px at
+    thickness 1 and 521px at 2 - so a black outline drawn thicker than the white fill drifts
+    progressively rightward and the text renders as two visibly diverging copies. It read as an mp4
+    compression ghost; it was in the raw array all along.
+    """
     for i, text in enumerate(lines):
-        cv2.putText(vis, text, (10, 26 + 26 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 4)
-        cv2.putText(vis, text, (10, 26 + 26 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.7, colour, 1)
+        y = 26 + 26 * i
+        cv2.putText(vis, text, (11, y + 1), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+        cv2.putText(vis, text, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, colour, 2)
     return vis
+
+
+def pick_aligned(pending, target):
+    """Newest buffered detection whose frame index is NOT NEWER than `target`, or None.
+
+    Offline, YOLO runs on every frame and the tracker's index is always in the buffer, so pairing is
+    a dict lookup. Live it cannot: YOLO costs ~48ms against the tracker's ~8ms, so it sees roughly
+    every other frame and the exact index is usually absent. Never reaching FORWARD is the
+    load-bearing half - a detector shown a later frame than the tracker is being flattered, and the
+    person crosses ~9px/frame here, so a few frames of leak is most of a body width of unearned
+    agreement.
+    """
+    older = [k for k in pending if k <= target]
+    return (max(older), pending[max(older)]) if older else None
+
+
+class YoloWorker:
+    """YOLO on a background thread, newest-frame-wins, so the TRACKER never waits for it.
+
+    Not an optimisation - a correctness requirement. Run YOLO inline and the loop drops to ~20fps,
+    and because webcam_frames keeps a single slot and discards what the consumer misses, the tracker
+    would then receive an IRREGULARLY STRIDED stream. Both its constant-velocity model (nth_frame=2
+    assumes uniform spacing) and MOG2's 1/history learning rate assume a fixed frame interval, so
+    that shows up as degraded tracking, not merely a slower demo. Threaded, the main loop stays
+    tracker-only at ~8ms, consumes the camera at full rate, and YOLO simply skips frames it cannot
+    reach - which is the stage that is allowed to skip.
+    """
+
+    def __init__(self, weights: str, conf: float, device: str):
+        os.environ.setdefault('YOLO_VERBOSE', 'False')
+        from ultralytics import YOLO
+        from tracking.eval.yolo_vs_tracker import yolo_boxes
+        self._infer, self._model = yolo_boxes, YOLO(weights)
+        self._conf, self._device = conf, device
+        self._job = None                  # (index, frame): newest submission only, older dropped
+        self._out = {}                    # index -> [(box, conf), ...]
+        self._lock = threading.Lock()
+        self._wake, self._stop = threading.Event(), threading.Event()
+        self._ms, self._n, self._skipped = 0.0, 0, 0
+        # Warm the model HERE, on the main thread, before the loop starts. The first CUDA predict
+        # costs seconds (kernel autotune, cuDNN algorithm selection), and left in the worker it
+        # would blank the panel for the whole first stretch of footage - a 6.4s test clip completed
+        # ZERO inferences before this - as well as landing that one-off compile cost in the
+        # reported ms/frame. Startup already blocks for the height bootstrap, so this is free.
+        self._infer(self._model, np.zeros((288, 288), np.uint8), self._conf, self._device)
+        self._thread = threading.Thread(target=self._loop, daemon=True, name='yolo')
+        self._thread.start()
+
+    def submit(self, index: int, frame):
+        with self._lock:
+            self._skipped += self._job is not None      # overwritten before it was ever started
+            self._job = (index, frame)
+        self._wake.set()
+
+    def _loop(self):
+        while not self._stop.is_set():
+            if not self._wake.wait(0.05):
+                continue
+            self._wake.clear()
+            with self._lock:
+                job, self._job = self._job, None
+            if job is None:
+                continue
+            t0 = time.perf_counter()
+            boxes = self._infer(self._model, job[1], self._conf, self._device)
+            with self._lock:
+                self._out[job[0]] = boxes
+                self._ms += time.perf_counter() - t0
+                self._n += 1
+
+    def take(self, target: int, keep: int):
+        """Pair with the tracker's readout, then evict what can never be asked for again."""
+        with self._lock:
+            hit = pick_aligned(self._out, target)
+            for stale in [k for k in self._out if k < target - keep]:
+                del self._out[stale]
+            return hit
+
+    def stats(self):
+        with self._lock:
+            return (1000 * self._ms / self._n if self._n else float('nan'), self._n, self._skipped)
+
+    def close(self):
+        self._stop.set()
+        self._wake.set()
+        self._thread.join(timeout=2.0)
+
+
+def bar(vis, text):
+    """Title along the BOTTOM: the top of a live panel is already spoken for by annotate's
+    per-frame label and the HUD, and a top bar would paint over both."""
+    h = vis.shape[0]
+    cv2.rectangle(vis, (0, h - 30), (vis.shape[1] - 1, h - 1), (0, 0, 0), -1)
+    cv2.putText(vis, text, (8, h - 9), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    return vis
+
+
+def yolo_panel(grey, boxes, title):
+    vis = cv2.cvtColor(grey, cv2.COLOR_GRAY2BGR)
+    for (x1, y1, x2, y2), s in boxes:
+        cv2.rectangle(vis, (x1, y1), (x2, y2), (255, 0, 255), 2)
+        cv2.putText(vis, f'{s:.2f}', (x1, max(14, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                    (255, 0, 255), 2)
+    return bar(vis, title)
 
 
 def bootstrap(source, probe_frames: int, stable_tol: float, display: bool,
@@ -139,6 +258,12 @@ def main():
     p.add_argument('--jump-max', type=float, default=0.75)
     p.add_argument('--min-score', type=float, default=0.0,
                    help='presence gate: report nothing when the winning track scores below this')
+    p.add_argument('--yolo', nargs='?', const=YOLO_WEIGHTS, default=None, metavar='WEIGHTS',
+                   help='add a side-by-side YOLO person-detector panel (bare flag uses '
+                        f'{os.path.basename(YOLO_WEIGHTS)}). Runs on a background thread so the '
+                        'tracker keeps full frame rate; YOLO skips frames it cannot reach.')
+    p.add_argument('--yolo-conf', type=float, default=0.25)
+    p.add_argument('--yolo-device', default='cuda', help="'cuda' or 'cpu'")
     p.add_argument('--record', default=None, help='also write an annotated mp4 here')
     p.add_argument('--no-display', dest='display', action='store_false')
     p.add_argument('--status-every', type=float, default=60.0,
@@ -187,24 +312,49 @@ def main():
     last_status = t_start
     disp_fps = fps
 
+    yolo = None if a.yolo is None else YoloWorker(a.yolo, a.yolo_conf, a.yolo_device)
+    fed = 0
+
     try:
         for frame in _chain(warm, source):
+            if yolo is not None:
+                yolo.submit(fed, frame)
+            fed += 1
             r = pipe.step(frame)
             if r is None:
                 continue
             wh = None if r.box is None else (r.box[2] - r.box[0], r.box[3] - r.box[1])
             r.smooth = sm.update(None if r.x is None else (r.x, r.y), wh)
             vis = annotate(r, disp_fps)
-            hud(vis, ["", f"person {height:.0f}px   latency {SPAN} frames "
+            hud(vis, ["", ""] * (yolo is not None) + ["", f"person {height:.0f}px   latency {SPAN} frames "
                           f"({1000 * SPAN / fps:.0f} ms)   {'TRACKING' if r.x is not None else 'searching'}"])
+            if yolo is not None:
+                bar(vis, 'blob + Kalman tracker')
+                ms, _, _ = yolo.stats()
+                hit = yolo.take(r.frame_index, 2 * BUFFER)
+                # "no answer yet" is NOT "an answer of nothing" - say which, or an empty panel
+                # reads as a confident non-detection when it is really a cold model
+                if hit is None:
+                    left = yolo_panel(r.frame, [], f'YOLO {os.path.basename(a.yolo)}   warming up')
+                else:
+                    j, det = hit
+                    left = yolo_panel(r.frame, det, f'YOLO {os.path.basename(a.yolo)} '
+                                      f'conf>={a.yolo_conf:g}   f{j} ({r.frame_index - j:+d} vs '
+                                      f'tracker)   {ms:.0f} ms {a.yolo_device}   '
+                                      f'{str(len(det)) + " person" if det else "nothing"}')
+                vis = np.hstack([left, vis])
             shown += 1
             now = time.perf_counter()
             recent.append(now)
             if len(recent) > 1:
                 disp_fps = (len(recent) - 1) / max(recent[-1] - recent[0], 1e-6)
             if now - last_status >= a.status_every:
+                extra = ''
+                if yolo is not None:
+                    ms, n, skipped = yolo.stats()
+                    extra = f"  yolo {ms:.0f} ms x{n} ({100 * skipped / max(n + skipped, 1):.0f}% frames skipped)"
                 print(f"[{(now - t_start) / 3600:6.2f}h] {shown} frames  {disp_fps:5.1f} fps  "
-                      f"rss {rss_mb():6.1f} MB", flush=True)
+                      f"rss {rss_mb():6.1f} MB{extra}", flush=True)
                 last_status = now
             if a.max_frames and shown >= a.max_frames:
                 break
@@ -223,6 +373,8 @@ def main():
                 if cv2.waitKey(delay) in (27, ord('q')):
                     break
     finally:
+        if yolo is not None:
+            yolo.close()
         if writer is not None:
             writer.release()
         cv2.destroyAllWindows()
