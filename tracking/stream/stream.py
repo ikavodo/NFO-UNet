@@ -154,14 +154,16 @@ class Smoother:
     def __init__(self, person_height: float, fps: float, halflife_s: float = 0.15,
                  trend_halflife_s: float = 0.5, size_halflife_s: float = 0.4,
                  jump_max: float = 0.75, hold_s: float = 0.35,
-                 init_m: int = 3, init_n: int = 5):
+                 init_m: int = 3, init_n: int = 5, damping: float = 0.9):
         dt = 1.0 / max(fps, 1e-6)
         self.a = 1.0 - 0.5 ** (dt / max(halflife_s, 1e-6))
         self.b = 1.0 - 0.5 ** (dt / max(trend_halflife_s, 1e-6))
         self.c = 1.0 - 0.5 ** (dt / max(size_halflife_s, 1e-6))
         self.jump_max = jump_max * person_height
+        self.coast_from = None          # level at which the current coast began
         self.hold = max(1, int(round(hold_s * fps)))
         self.init_m, self.init_n = init_m, init_n
+        self.damping = damping
         self.reset()
 
     def reset(self):
@@ -169,6 +171,7 @@ class Smoother:
         self.trend = np.zeros(2)
         self.size = None
         self.misses = 0
+        self.coast_from = None
         self.init_buf = deque(maxlen=self.init_n)
 
     def update(self, xy, wh):
@@ -206,10 +209,28 @@ class Smoother:
             if self.misses > self.hold:
                 self.reset()
                 return self.update(xy, wh)
-            self.level = pred          # coast on the trend
+            # COAST, BUT BOUNDED. Advancing level by the trend with no measurement extrapolates
+            # linearly and without limit: measured on walk_noisy2 the smoothed x reached -1000
+            # and +1050 in a 960px-wide frame, and on walk_noisy1 +1240, which is what dominated
+            # their smoothed jitter. A coast has no evidence behind it, so it may not carry the
+            # estimate further than a MEASUREMENT would have been allowed to jump - the same
+            # gate, reused, so this introduces no new constant. The trend is also damped each
+            # coast step (damped-trend exponential smoothing, Gardner and McKenzie 1985), which
+            # makes the extrapolation decelerate instead of holding a stale velocity.
+            if self.coast_from is None:
+                self.coast_from = self.level.copy()
+            self.trend = self.trend * self.damping
+            step = pred - self.level
+            cand = self.level + step
+            off = cand - self.coast_from
+            dist = float(np.hypot(*off))
+            if dist > self.jump_max:
+                cand = self.coast_from + off * (self.jump_max / dist)
+            self.level = cand
             return self._out(True)
 
         self.misses = 0
+        self.coast_from = None
         prev, z = self.level, np.array(xy, float)
         self.level = self.a * z + (1.0 - self.a) * pred
         self.trend = self.b * (self.level - prev) + (1.0 - self.b) * self.trend
@@ -453,7 +474,7 @@ def run(video, person_height: float = None, scale: float = 0.5, readout: str = '
         src_fps: float = 24.0, present=(), out_fps: float = None, smooth: bool = True,
         halflife: float = 0.15, trend_halflife: float = 0.5, jump_max: float = 0.75,
         gt_path: str = None, probe_frames: int = 240, montage_all: bool = False,
-        suppress_warmup: bool = True, init_m: int = 1) -> dict:
+        suppress_warmup: bool = True, init_m: int = 3) -> dict:
     source = frames_from_source(video, scale)
     warmup = []
     if person_height is None:
@@ -678,7 +699,7 @@ def main():
     p.add_argument('--person-height', type=float, default=None,
                    help='person height in pixels AFTER --scale; bootstrapped from the first '
                         '--probe-frames contiguous frames if omitted')
-    p.add_argument('--init-m', type=int, default=1,
+    p.add_argument('--init-m', type=int, default=3,
                    help='M-of-5 track initiation for the smoother; 1 disables it (lock on the '
                         'first measurement)')
     p.add_argument('--montage-all', action='store_true',
