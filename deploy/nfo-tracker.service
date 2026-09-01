@@ -70,6 +70,10 @@ RestartSec=5
 # something ever does leak systemd kills and restarts this instead of the kernel OOM-killing
 # something else on the box.
 MemoryMax=1G
+# RAISE THIS TO 3G IF YOU ADD --yolo. Measured RSS with the YOLO panel enabled on CUDA is 2013 MB
+# (CUDA context, caching allocator, yolo11m weights) against 353 MB for the tracker alone, so the
+# 1G cap here would have systemd OOM-kill the service within seconds of the first inference. The GPU also wants
+# CPUQuota nearer 250%, since ultralytics does its letterboxing on the CPU.
 
 # The tracker is ~2.5 ms/frame at 640x360 and single-threaded, so it should never saturate a
 # core. This is a guard, not a limit it is expected to reach.
