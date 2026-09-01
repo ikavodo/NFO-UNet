@@ -22,12 +22,13 @@ recall alone; the interesting question on this footage is whether it fires on th
 """
 import argparse
 import os
+import time
 
 import cv2
 import numpy as np
 
-from tracking.stream.stream import (Smoother, StreamPipeline, annotate, bootstrap_person_height,
-                                    frames_from_source)
+from tracking.stream.stream import (BUFFER, SPAN, Smoother, StreamPipeline, annotate,
+                                    bootstrap_person_height, frames_from_source)
 
 DEFAULT_WEIGHTS = '/home/akovi/PycharmProjects/YOLO-26-CAM/models/yolo11n.pt'
 PRESENT = {
@@ -38,13 +39,13 @@ PRESENT = {
 }
 
 
-def yolo_boxes(model, grey, conf):
+def yolo_boxes(model, grey, conf, device=None):
     """Person boxes as [((x1,y1,x2,y2), conf), ...]. The greyscale frame is replicated to 3
     channels because that is what a COCO-trained network expects, and a previous investigation
     confirmed greyscaling is not itself the cause of failure - the same models still find 4 people
     at 0.87-0.999 in a greyscaled stock photo."""
     r = model.predict(np.repeat(grey[:, :, None], 3, axis=2), classes=[0], conf=conf,
-                      verbose=False)[0]
+                      device=device, verbose=False)[0]
     if r.boxes is None or len(r.boxes) == 0:
         return []
     xy = r.boxes.xyxy.cpu().numpy()
@@ -73,6 +74,11 @@ def main():
     p.add_argument('--conf', type=float, default=0.25, help="ultralytics' own default")
     p.add_argument('--min-score', type=float, default=5.0, help='tracker presence gate')
     p.add_argument('--src-fps', type=float, default=24.0)
+    p.add_argument('--device', default='cuda', help="'cuda' or 'cpu'")
+    p.add_argument('--readout', choices=('center', 'newest'), default='center',
+                   help="'newest' makes the tracker causal, which removes the SPAN offset entirely "
+                        "and with it the need for the YOLO buffer - both then answer about the same "
+                        "newest frame. Costs +11%% jitter and 27%% more fitted readouts, measured.")
     p.add_argument('--out-dir', default='images/stream')
     a = p.parse_args()
     assert os.path.exists(a.weights), f'no weights at {a.weights}'
@@ -83,20 +89,42 @@ def main():
 
     frames = list(frames_from_source(f'data/{a.clip}.mkv', a.scale))
     h = bootstrap_person_height(np.stack(frames[:240]))
-    pipe = StreamPipeline(h, min_score=a.min_score)
+    pipe = StreamPipeline(h, min_score=a.min_score, readout=a.readout)
+    hold = SPAN if a.readout == 'center' else 0
     sm = Smoother(h, a.src_fps)
     present = PRESENT.get(a.clip, [])
     inp = lambda i: any(lo <= i <= hi for lo, hi in present)
 
-    writer, rows, tally = None, [], {}
-    for f in frames:
+    # THE ALIGNMENT. YOLO infers on the NEWEST frame, as a real-time system must - it has no
+    # reason to wait. The tracker emits for the frame SPAN=6 behind the newest, because its window
+    # is centred. So YOLO's answers are buffered by frame index and the one from SPAN frames ago is
+    # flushed when the tracker catches up to it. Pairing them per loop iteration instead would put
+    # the panels 6 frames (250ms at 24fps) out of sync AND flatter YOLO, which would be showing a
+    # later frame than the tracker.
+    #
+    # This is a restructure of a previously correct-by-accident version that ran YOLO on the
+    # tracker's already-emitted frame. Same pixels reach YOLO either way, so the recall and
+    # false-positive numbers must come out IDENTICAL - which is the check that the buffering is
+    # right rather than merely plausible.
+    pending, writer, rows, tally = {}, None, [], {}
+    yolo_ms, track_ms, n_yolo = 0.0, 0.0, 0
+    for i, f in enumerate(frames):
+        t0 = time.perf_counter()
+        pending[i] = yolo_boxes(model, f, a.conf, a.device)
+        yolo_ms += time.perf_counter() - t0
+        n_yolo += 1
+        for stale in [k for k in pending if k < i - 2 * BUFFER]:
+            del pending[stale]                       # bound it even if the tracker never emits
+        t0 = time.perf_counter()
         r = pipe.step(f)
+        track_ms += time.perf_counter() - t0
         if r is None:
             continue
         wh = None if r.box is None else (r.box[2] - r.box[0], r.box[3] - r.box[1])
         r.smooth = sm.update(None if r.x is None else (r.x, r.y), wh)
-        det = yolo_boxes(model, r.frame, a.conf)
-        left = panel(r.frame, f'YOLO {os.path.basename(a.weights)} conf>={a.conf:g}',
+        det = pending.pop(r.frame_index, [])
+        left = panel(r.frame, f'YOLO {os.path.basename(a.weights)} conf>={a.conf:g} '
+                              f'(newest frame, held {hold})',
                      boxes=det, fired=f'{len(det)} person' if det else 'nothing')
         right = panel(r.frame, f'blob + Kalman tracker  min-score {a.min_score:g}', result=r,
                       fired='box' if r.box is not None else 'nothing')
@@ -122,7 +150,14 @@ def main():
     out_png = f'{a.out_dir}/{a.clip}_yolo_vs_tracker.png'
     cv2.imwrite(out_png, np.vstack(tiles))
 
-    print(f'{a.clip}: person height {h:.0f}px, {len(rows)} emitted frames')
+    print(f'{a.clip}: person height {h:.0f}px, {len(rows)} emitted frames, readout '
+          f'{a.readout}, YOLO held {hold} frames (buffer depth {hold + 1})')
+    per = lambda ms: 1000 * ms / max(n_yolo, 1)
+    print(f'  timing: YOLO {per(yolo_ms):5.1f} ms/frame on {a.device}, tracker '
+          f'{per(track_ms):4.1f} ms/frame CPU  ->  serial {per(yolo_ms) + per(track_ms):5.1f} ms '
+          f'({1000 / (per(yolo_ms) + per(track_ms)):4.1f} fps), '
+          f'parallel {max(per(yolo_ms), per(track_ms)):5.1f} ms '
+          f'({1000 / max(per(yolo_ms), per(track_ms)):4.1f} fps)')
     if tally:
         print(f"{'segment':>9}{'frames':>8}{'YOLO fires':>12}{'tracker box':>13}")
         for k in ('PRESENT', 'absent'):
