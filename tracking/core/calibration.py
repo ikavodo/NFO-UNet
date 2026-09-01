@@ -29,21 +29,48 @@ import os
 from dataclasses import dataclass
 
 DEFAULT_PATH = os.path.join(os.path.dirname(__file__), 'score_calibration.json')
+YOLO_PATH = os.path.join(os.path.dirname(__file__), 'yolo_calibration.json')
 
 
 @dataclass(frozen=True)
 class Calibration:
-    """P(present) = sigma(a * log1p(score) + b). `meta` records what it was fitted on."""
+    """P(present) = sigma(a * link(x) + b), where `link` depends on what x is.
+
+    transform='log1p'  x is an unbounded score (the tracker's), so link = log1p
+    transform='logit'  x is ALREADY a probability (YOLO's conf), so link = logit
+
+    The second case is recalibration rather than calibration: a detector's sigmoid output looks like
+    a probability and is not one - detectors are systematically over-confident - so mapping it
+    through its own logit and refitting two parameters is the standard correction. a<1 flattens the
+    curve, which is exactly what pulling back over-confidence looks like. a=1, b=0 is the identity
+    in both links, which pins the convention.
+
+    `meta` records what it was fitted on.
+    """
     a: float
     b: float
+    transform: str = 'log1p'
     meta: dict = None
 
 
+def _link(x: float, transform: str) -> float:
+    if transform == 'logit':
+        q = min(max(float(x), 1e-9), 1 - 1e-9)     # conf of exactly 0 or 1 must not give inf
+        return math.log(q / (1 - q))
+    return math.log1p(max(float(x), 0.0))          # a negative score must not raise from log1p
+
+
+def _unlink(u: float, transform: str) -> float:
+    if transform == 'logit':
+        return 1.0 / (1.0 + math.exp(-max(min(u, 60.0), -60.0)))
+    return max(math.expm1(u), 0.0)
+
+
 def confidence(score: float, cal: Calibration) -> float:
-    """Calibrated P(person present) for one score. Clamped rather than fussy: a negative score is
-    impossible by construction but must not raise from log1p, and the exponent is bounded so a
-    huge score returns 1.0 instead of overflowing."""
-    z = cal.a * math.log1p(max(float(score), 0.0)) + cal.b
+    """Calibrated P(person present) for one score or one raw detector confidence. Clamped rather
+    than fussy at both ends, so no input can raise or overflow: the exponent is bounded, so a huge
+    score returns 1.0 instead of inf."""
+    z = cal.a * _link(score, cal.transform) + cal.b
     return 1.0 / (1.0 + math.exp(-max(min(z, 60.0), -60.0)))
 
 
@@ -53,14 +80,16 @@ def score_for_confidence(p: float, cal: Calibration) -> float:
     gives a finite ceiling rather than inf, so both extremes stay usable."""
     p = min(max(float(p), 1e-12), 1 - 1e-12)
     z = math.log(p / (1 - p))
-    return max(math.expm1((z - cal.b) / cal.a), 0.0)
+    return _unlink((z - cal.b) / cal.a, cal.transform)
 
 
 def load(path: str = DEFAULT_PATH) -> Calibration:
     with open(path) as f:
         d = json.load(f)
-    return Calibration(a=d['a'], b=d['b'], meta=d.get('meta'))
+    return Calibration(a=d['a'], b=d['b'], transform=d.get('transform', 'log1p'),
+                       meta=d.get('meta'))
 
 
 def save(cal: Calibration, path: str = DEFAULT_PATH) -> None:
-    json.dump({'a': cal.a, 'b': cal.b, 'meta': cal.meta}, open(path, 'w'), indent=1)
+    json.dump({'a': cal.a, 'b': cal.b, 'transform': cal.transform, 'meta': cal.meta},
+              open(path, 'w'), indent=1)

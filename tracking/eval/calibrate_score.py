@@ -24,11 +24,52 @@ import argparse
 import numpy as np
 from scipy.optimize import minimize
 
-from tracking.core.calibration import Calibration, confidence, save, score_for_confidence
+from tracking.core.calibration import (DEFAULT_PATH, YOLO_PATH, Calibration, confidence, save,
+                                       score_for_confidence)
 from tracking.eval.presence_learning import LABELS, auc, features_for
 
 
-def fit_platt(u, y, l2: float = 1e-3):
+def yolo_confidences(clip, weights, conf_floor=0.01, scale=0.5, device='cuda'):
+    """Per-emission max person-confidence from YOLO, aligned to the tracker's emitted frames.
+
+    Aligned deliberately: calibrating YOLO on ALL frames while the tracker is calibrated only on the
+    frames it emits would compare the two on different denominators, and the tracker's warm-up
+    suppression alone would shift the base rate. Same frames, same labels, same fit.
+
+    conf_floor well below the runtime threshold because a calibration needs the LOW end of the
+    range: fitting only on conf>=0.25 detections would leave the fit blind to exactly the region
+    where 'probably nothing' lives, which is most of this footage.
+    """
+    import os as _os
+    _os.environ.setdefault('YOLO_VERBOSE', 'False')
+    from ultralytics import YOLO
+
+    from tracking.eval.yolo_vs_tracker import yolo_boxes
+    from tracking.stream.stream import (StreamPipeline, bootstrap_person_height,
+                                        frames_from_source)
+    frames = list(frames_from_source(f'data/{clip}.mkv', scale))
+    h = bootstrap_person_height(np.stack(frames[:240]))
+    model = YOLO(weights, task='detect' if weights.endswith('.engine') else None)
+    pipe = StreamPipeline(h)
+    present, out, lab = LABELS[clip], [], []
+    pending = {}
+    for i, f in enumerate(frames):
+        dets = yolo_boxes(model, f, conf_floor, device if not weights.endswith('.engine') else None)
+        pending[i] = max((c for _, c in dets), default=0.0)
+        r = pipe.step(f)
+        if r is None:
+            continue
+        out.append(pending.pop(r.frame_index, 0.0))
+        lab.append(int(any(a <= r.frame_index <= b for a, b in present)))
+    return np.array(out, float), np.array(lab, int)
+
+
+def _lk(x, transform):
+    from tracking.core.calibration import _link
+    return _link(x, transform)
+
+
+def fit_platt(u, y, l2: float = 1e-3, transform: str = 'log1p'):
     """Maximum-likelihood a, b for sigma(a*u + b). A whisper of L2 keeps a from running away if a
     clip happens to be perfectly separable, which would push the slope to infinity and turn every
     probability into 0 or 1 - confident nonsense being the classic failure of an uncalibrated fit."""
@@ -37,7 +78,7 @@ def fit_platt(u, y, l2: float = 1e-3):
         return np.mean(np.log1p(np.exp(z)) - y * z) + l2 * w[0] ** 2
 
     w = minimize(nll, np.array([1.0, -1.0]), method='L-BFGS-B').x
-    return Calibration(a=float(w[0]), b=float(w[1]))
+    return Calibration(a=float(w[0]), b=float(w[1]), transform=transform)
 
 
 def ece(p, y, bins=10):
@@ -58,35 +99,61 @@ def main():
     p = argparse.ArgumentParser(description=__doc__,
                                formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--clips', nargs='+', default=sorted(LABELS))
+    p.add_argument('--method', choices=('tracker', 'yolo'), default='tracker',
+                   help="'yolo' recalibrates the detector's own confidence against the same labels "
+                        'and the same emitted frames, so the two panels of the live split screen '
+                        'show comparable numbers rather than numbers that merely look comparable')
+    p.add_argument('--weights', default='data/yolo11m.pt')
+    p.add_argument('--min-raw', type=float, default=0.01,
+                   help="floor for --method yolo: conf=0 (no detection at all) is clamped up to "
+                        "this before the logit, because logit(0) is -20.7 and one artificial "
+                        "extreme dominates a two-parameter fit. Both panels answer the FRAME-level "
+                        "question - is a person present - so no-detection frames stay in the fit "
+                        "as its low end rather than being dropped. Conditioning on a detection "
+                        "instead gives a useless-but-true P=0.99 for every box, because on this "
+                        "footage YOLO's detections are 233/233 correct and its problem is recall.")
     p.add_argument('--no-save', dest='save', action='store_false')
-    p.add_argument('--out', default='images/stream/score_calibration.png')
+    p.add_argument('--out', default=None)
     a = p.parse_args()
+    if a.out is None:
+        a.out = f'images/stream/{"score" if a.method == "tracker" else "yolo"}_calibration.png'
 
+    link = 'log1p' if a.method == 'tracker' else 'logit'
     per = {}
     for c in a.clips:
-        X, y, _ = features_for(c)
-        per[c] = (X[:, 0], y)                      # column 0 is already log1p(score)
-        print(f'  {c}: {len(y)} emissions, {y.sum()} person-present '
-              f'({100 * y.mean():.0f}%), score AUC {auc(X[:, 0], y):.3f}')
+        if a.method == 'tracker':
+            X, yy, _ = features_for(c)
+            raw = np.expm1(X[:, 0])                # features_for stores log1p(score); undo it
+        else:
+            raw, yy = yolo_confidences(c, a.weights)
+            fired = raw >= a.min_raw
+            print(f'    {c}: YOLO fired on {fired.sum()}/{len(raw)} emissions '
+                  f'({100 * fired.mean():.0f}%), and when it fired a person was present '
+                  f'{yy[fired].sum()}/{fired.sum()} times')
+            raw = np.maximum(raw, a.min_raw)
+        per[c] = (np.array([_lk(v, link) for v in raw]), yy, raw)
+        print(f'  {c}: {len(yy)} emissions, {yy.sum()} person-present '
+              f'({100 * yy.mean():.0f}%), raw AUC {auc(per[c][0], yy):.3f}')
 
     u = np.concatenate([per[c][0] for c in a.clips])
     y = np.concatenate([per[c][1] for c in a.clips])
-    cal = fit_platt(u, y)
-    p_in = np.array([confidence(np.expm1(v), cal) for v in u])
+    raw_all = np.concatenate([per[c][2] for c in a.clips])
+    cal = fit_platt(u, y, transform=link)
+    p_in = np.array([confidence(v, cal) for v in raw_all])
 
     # leave-one-clip-out: the only honest read on whether P=0.8 means 80% on unseen footage
     p_out = np.zeros_like(p_in)
     at = 0
     for c in a.clips:
-        uc, yc = per[c]
+        uc, yc, rawc = per[c]
         tr = [d for d in a.clips if d != c]
         cal_c = fit_platt(np.concatenate([per[d][0] for d in tr]),
-                          np.concatenate([per[d][1] for d in tr]))
-        p_out[at:at + len(uc)] = [confidence(np.expm1(v), cal_c) for v in uc]
+                          np.concatenate([per[d][1] for d in tr]), transform=link)
+        p_out[at:at + len(uc)] = [confidence(v, cal_c) for v in rawc]
         at += len(uc)
 
-    print(f'\nfit over {len(y)} emissions from {len(a.clips)} clips: '
-          f'P(present) = sigma({cal.a:.3f} * log1p(score) + {cal.b:.3f})')
+    print(f'\nfit over {len(y)} rows from {len(a.clips)} clips: '
+          f'P(present) = sigma({cal.a:.3f} * {link}(x) + {cal.b:.3f})')
     print(f'  AUC   raw score {auc(u, y):.3f}   calibrated {auc(p_in, y):.3f}   '
           f'(identical by construction - a monotone map cannot reorder)')
     e_in, curve_in = ece(p_in, y)
@@ -95,11 +162,13 @@ def main():
     print(f'  Brier in-sample {np.mean((p_in - y) ** 2):.3f}   '
           f'leave-one-clip-out {np.mean((p_out - y) ** 2):.3f}')
 
-    print('\n  what the existing thresholds mean, now that they have units:')
-    for s in (0.0, 1.0, 5.0, 20.0, 100.0):
-        print(f'    --min-score {s:5.0f}  ==  P(present) >= {confidence(s, cal):.2f}')
+    raws = (0.0, 1.0, 5.0, 20.0, 100.0) if link == 'log1p' else (0.05, 0.25, 0.5, 0.75, 0.95)
+    unit = 'score' if link == 'log1p' else 'raw conf'
+    print(f'\n  what the raw {unit} values mean, now that they are calibrated:')
+    for v in raws:
+        print(f'    {unit} {v:6.2f}  ==  P(present) {confidence(v, cal):.2f}')
     for q in (0.25, 0.5, 0.75, 0.9):
-        print(f'    --min-confidence {q:.2f}  ==  --min-score {score_for_confidence(q, cal):.1f}')
+        print(f'    P(present) {q:.2f}  ==  {unit} {score_for_confidence(q, cal):.2f}')
 
     import matplotlib
     matplotlib.use('Agg')
@@ -111,15 +180,15 @@ def main():
         ax[0].plot([c[0] for c in curve], [c[1] for c in curve], mk, label=lab)
     ax[0].set_xlabel('predicted P(person present)')
     ax[0].set_ylabel('observed fraction present')
-    ax[0].set_title('Reliability of the calibrated score')
+    ax[0].set_title(f'Reliability of the calibrated {a.method}')
     ax[0].legend(fontsize=8)
     ax[0].grid(alpha=.3)
 
     # x range 0-30, not 0-400: the logistic saturates by score ~20, so a wide axis is 95% empty
     # white space. The histograms behind the curve show where the scores ACTUALLY fall, which is
     # what makes the gate position meaningful rather than decorative.
-    scores = np.expm1(u)
-    top = 30
+    scores = raw_all
+    top = 30 if link == 'log1p' else 1.0
     for m, lab, col in ((y == 1, 'person present', 'tab:green'),
                         (y == 0, 'absent', 'tab:red')):
         ax[1].hist(np.clip(scores[m], 0, top), bins=40, range=(0, top), density=True,
@@ -136,20 +205,24 @@ def main():
         twin.plot([s_q, s_q], [0, q], ':', color='k', lw=1)
         twin.annotate(f'P={q:g} @ {s_q:.1f}', (s_q, q), fontsize=7, xytext=(4, -4),
                       textcoords='offset points')
-    ax[1].set_xlabel('track score  (span * net_disp / (1 + resid_std))')
-    ax[1].set_title('The gate, in units anyone can read')
+    ax[1].set_xlabel('track score  (span * net_disp / (1 + resid_std))' if link == 'log1p'
+                     else f"YOLO's own reported confidence (uncalibrated)")
+    ax[1].set_title(f'{a.method}: the gate, in units anyone can read')
     ax[1].grid(alpha=.3)
     fig.tight_layout()
     fig.savefig(a.out, dpi=130)
     print(f'\nwrote {a.out}')
 
     if a.save:
-        cal = Calibration(a=cal.a, b=cal.b, meta={
-            'clips': list(a.clips), 'n': int(len(y)), 'auc': round(float(auc(u, y)), 4),
+        cal = Calibration(a=cal.a, b=cal.b, transform=cal.transform, meta={
+            'method': a.method, 'clips': list(a.clips), 'n': int(len(y)),
+            'min_raw': a.min_raw if a.method == 'yolo' else None, 'auc': round(float(auc(u, y)), 4),
             'ece_in_sample': round(float(e_in), 4), 'ece_leave_one_clip_out': round(float(e_out), 4),
-            'form': 'P(present) = sigmoid(a * log1p(score) + b)'})
-        save(cal)
-        print(f'saved calibration: a={cal.a:.4f} b={cal.b:.4f}')
+            'form': f'P(present) = sigmoid(a * {link}(x) + b)',
+            'weights': a.weights if a.method == 'yolo' else None})
+        path = DEFAULT_PATH if a.method == 'tracker' else YOLO_PATH
+        save(cal, path)
+        print(f'saved {a.method} calibration ({link} link): a={cal.a:.4f} b={cal.b:.4f} -> {path}')
 
 
 if __name__ == '__main__':

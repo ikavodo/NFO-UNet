@@ -52,3 +52,43 @@ def test_a_negative_score_is_clamped_rather_than_producing_a_domain_error():
     # log1p of a negative number is a domain error; scores are non-negative by construction but
     # the gate must not crash if one ever arrives
     assert 0.0 <= confidence(-1.0, CAL) <= 1.0
+
+
+# --- recalibrating something that is ALREADY a probability -------------------------------------
+#
+# YOLO reports a confidence in (0,1), but a network's sigmoid output is not a calibrated posterior -
+# detectors are systematically over-confident. Printing YOLO's raw conf as "P" beside the tracker's
+# Platt-calibrated P would look like parity without being parity, so YOLO gets the same treatment.
+# The only difference is the link input: log1p for an unbounded score, logit for a probability,
+# which is the standard way to recalibrate one probability into another.
+
+LOGIT_CAL = Calibration(a=0.8, b=0.3, transform='logit')
+
+
+def test_a_probability_input_is_mapped_through_its_logit():
+    # a=1, b=0 through the logit link must be the identity, which pins the convention
+    ident = Calibration(a=1.0, b=0.0, transform='logit')
+    for q in (0.1, 0.4, 0.75, 0.99):
+        assert confidence(q, ident) == pytest.approx(q, abs=1e-9)
+
+
+def test_logit_transform_stays_in_range_at_the_boundaries():
+    # conf exactly 0 or 1 must not produce inf through the logit
+    assert 0.0 <= confidence(0.0, LOGIT_CAL) <= 1.0
+    assert 0.0 <= confidence(1.0, LOGIT_CAL) <= 1.0
+
+
+def test_logit_round_trips_like_the_log1p_link():
+    for q in (0.05, 0.3, 0.6, 0.95):
+        assert score_for_confidence(confidence(q, LOGIT_CAL), LOGIT_CAL) == pytest.approx(q, rel=1e-6)
+
+
+def test_an_overconfident_detector_is_pulled_toward_the_middle():
+    # a<1 flattens the curve, which is what correcting over-confidence looks like: a raw 0.95
+    # must come back LOWER, not higher
+    assert confidence(0.95, Calibration(a=0.5, b=0.0, transform='logit')) < 0.95
+
+
+def test_the_default_transform_is_unchanged_for_existing_calibrations():
+    # the committed score_calibration.json has no 'transform' key and must keep working
+    assert Calibration(a=1.0, b=0.0).transform == 'log1p'
