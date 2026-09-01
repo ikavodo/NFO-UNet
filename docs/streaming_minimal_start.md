@@ -44,8 +44,9 @@
 > the old finding reproduces, now with a mechanism.
 >
 > **Integrated-image work stopped here by direction (2026-08-31): it is not helping.** The demo
-> path (--split, annotate_split, integrated_panels) is removed. For the record,
-> tracking/eval/buffer_depth.py measured that under median fusion the reachable fraction FALLS
+> path (--split, annotate_split, integrated_panels) is removed, and so is the script itself as of
+> the 2026-09-01 cleanup - recover it with `git show ae20bae:tracking/eval/buffer_depth.py`. For
+> the record, tracking/eval/buffer_depth.py measured that under median fusion the reachable fraction FALLS
 > monotonically with depth (0.214 at T=7 to 0.007 at T=61), because the measured not-detected
 > duty cycle inside the person's box is 0.59, already past the median's 1/2 breakdown point,
 > while the at-least-one-clean-look fraction RISES and saturates (0.569 -> 0.821 by T~31-41).
@@ -84,7 +85,9 @@
 > the pixel only when d < 1/2, i.e. **v*(T-1) > 2w**. Measured on ido_walk.mkv: |vx| median
 > 16.1 px per strided frame, so the window sweeps 96 px and only occluders narrower than
 > ~48 px can be cleared. Wider ones survive as smeared streaks no matter how the fusion is
-> weighted — which is visible in `images/stream/split_montage.png`. That is a property of
+> weighted — which was visible in the split-screen montage, deleted with the rest of the
+> integration work in the 2026-09-01 cleanup; the renderer that made it is recoverable with
+> `git show 51d9077:tracking/stream/stream.py`. That is a property of
 > window length times speed, not of the fusion rule, and it is the first thing to check
 > before tuning sigma.
 
@@ -117,7 +120,11 @@ only `numpy`, `cv2`, `scipy`. No torch, no `config/`, no `dataset/`, no `network
 | `tracking/core/integrate_image.py` | 113 | `align_frames`, `fuse`, `integrate`, `crop_at`, `anchor_for_frame` |
 
 The other ~55 Python files in the repo are the U-Net training stack and the offline
-experiments. They are **inert**: nothing on the tracking path imports them. Ignore them; do not
+experiments. They are inert for the DEPLOYED path - `tracking/core` and `tracking/stream` import
+only numpy, cv2 and scipy - but NOT for the whole of `tracking/`, and the earlier blanket claim
+here was wrong: `tracking/eval/kill_test_scale.py` imports `utils.occlusion_utils` and
+`tracking/tests/sanity_check_kth.py` imports `utils.fs_utils`, so deleting `utils/` breaks both.
+Ignore them; do not
 delete them.
 
 ## The three things the minimal build needs
