@@ -171,3 +171,11 @@ tracking/visualize/integrated_image_comparison.png
 
 # downloaded detector weights: regeneratable, keep out of the repo
 data/*.pt
+
+# TensorRT build artifacts. NEVER commit these: an engine is compiled for one GPU compute
+# capability, one TRT version and one CUDA version, so a committed engine is a file that works on
+# exactly one machine and fails cryptically everywhere else - including on the Zotac it would look
+# ready for. Rebuild on the target with tracking/stream/export_trt.py.
+*.engine
+*.engine.json
+*.onnx
