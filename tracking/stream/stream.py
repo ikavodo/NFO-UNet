@@ -97,6 +97,7 @@ class StreamPipeline:
         # three clips, 1x left 57%/62%/75% of emissions carrying a box against 0%/13%/22% in the
         # same clips' MID-clip absent windows. The multiplier is what closes that gap.
         self.warmup = int(round(warmup_mult * bg_frames)) if suppress_warmup else 0
+        self.mask = None                # latest refined foreground mask, for the warm-up display
         # one persistent subtractor: preprocess.foreground_mask builds a fresh MOG2 per
         # call, which is exactly what a stream must not do
         self.mog = cv2.createBackgroundSubtractorMOG2(history=bg_frames,
@@ -115,6 +116,7 @@ class StreamPipeline:
             dets = sorted(dets, key=lambda d: -d['area'])[:self.max_detections]
         self.frames.append(frame)
         self.dets.append(dets)
+        self.mask = mask                # kept so the app can render what MOG2 is converging to
         self.seen += 1
         if len(self.frames) < BUFFER or self.seen < self.warmup:
             return None
@@ -451,6 +453,51 @@ def confidence_of(score) -> float:
     from tracking.core.calibration import confidence
     cal = calibration()
     return float('nan') if cal is None else confidence(score or 0.0, cal)
+
+
+def warmup_state(seen: int, warmup: int, have: int, need: int):
+    """(progress, caption) while output is still suppressed, or None once ready.
+
+    Two independent constraints gate the first emission and they are easy to conflate. MOG2 needs
+    ~2x bg_frames before its per-pixel mixtures stop calling everything foreground; separately the
+    13-frame buffer has to fill before a centred window exists. Reports MOG2 while it is
+    outstanding, because under the defaults (60 against 13) it is the one that finishes last, and
+    falls through to the buffer when suppress_warmup=False makes that the only wait.
+    """
+    if seen < warmup:
+        return min(max(seen / max(warmup, 1), 0.0), 1.0), f'MOG2 warming up  {seen}/{warmup}'
+    if have < need:
+        return min(max(have / max(need, 1), 0.0), 1.0), f'filling window  {have}/{need}'
+    return None
+
+
+def warmup_panel(frame, mask, state, colour=(0, 200, 255)):
+    """The frame with the live foreground mask tinted over it, plus warm-up progress.
+
+    SHOWING THE MASK IS THE POINT, not decoration. The dead ~2s used to be a frozen window with no
+    indication the camera worked; what belongs there is the one moment the mechanism is visible -
+    MOG2's mask going from near-everything to sparse is what background-model convergence looks
+    like, and it explains to a viewer WHY the tracker waits instead of asking them to trust that it
+    must. It also makes an operator error obvious: if the tint never thins out, the camera is moving
+    or the scene is not static.
+    """
+    vis = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+    if mask is not None:
+        m = mask[0] if mask.ndim == 3 else mask
+        if m.shape[:2] == vis.shape[:2]:
+            tint = np.zeros_like(vis)
+            tint[m > 0] = (0, 0, 255)
+            cv2.addWeighted(vis, 1.0, tint, 0.45, 0, vis)
+    if state is not None:
+        frac, caption = state
+        x, w, h, y = 10, 150, 12, 64
+        cv2.rectangle(vis, (x, y), (x + w, y + h), (35, 35, 35), -1)
+        cv2.rectangle(vis, (x, y), (x + int(w * frac), y + h), colour, -1)
+        cv2.rectangle(vis, (x, y), (x + w, y + h), (230, 230, 230), 1)
+        for dx, dy, col in ((1, 1, (0, 0, 0)), (0, 0, (255, 255, 255))):
+            cv2.putText(vis, caption, (x + w + 8 + dx, y + h + dy), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6, col, 2)
+    return vis
 
 
 def conf_meter(vis, p, gate=None, colour=(0, 255, 0), caption='', y=64):

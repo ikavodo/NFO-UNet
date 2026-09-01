@@ -66,7 +66,7 @@ import cv2
 import numpy as np
 
 from tracking.stream.stream import (BUFFER, SPAN, Smoother, StreamPipeline, annotate,
-                                    conf_meter,
+                                    conf_meter, warmup_panel, warmup_state,
                                     bootstrap_person_height, frames_from_video, webcam_frames)
 
 
@@ -358,7 +358,7 @@ def main():
     pipe = StreamPipeline(person_height=height, min_score=a.min_score)
     sm = Smoother(height, fps, halflife_s=a.halflife, jump_max=a.jump_max)
     writer = None
-    shown, t_start = 0, time.perf_counter()
+    shown, warmed, t_start = 0, 0, time.perf_counter()
     # fps over a trailing window, not since start: a cumulative average stops reflecting the
     # current rate within minutes, and this is meant to run for weeks
     recent = deque(maxlen=int(max(fps, 1) * 2))
@@ -375,6 +375,54 @@ def main():
             fed += 1
             r = pipe.step(frame)
             if r is None:
+                # SUPPRESS THE BOX, NOT THE FRAME. step() returns None until MOG2 has converged and
+                # the buffer has filled, and the loop used to `continue` straight past it - which
+                # left the window frozen for ~2s, stopped ESC/q from responding (waitKey lives in
+                # the display branch below), and gave no sign the camera was working at all. The
+                # boxes genuinely must be withheld: at 1x bg_frames, 57-75% of emissions in a
+                # person-absent window carried one. The picture must not be.
+                state = warmup_state(pipe.seen, pipe.warmup, len(pipe.frames), BUFFER)
+                vis = warmup_panel(frame, pipe.mask, state)
+                # No instruction to the operator here, deliberately. This phase REPLAYS the
+                # buffered bootstrap frames, so it is over in well under a second and nothing the
+                # person does now affects it - an earlier draft said "STAY OUT OF FRAME", which is
+                # advice about a moment that has already passed. Describe what is on screen instead.
+                # Two short lines because a 640px panel (720p at --scale 0.5) truncates one long one.
+                lines = ["", ""] * (yolo is not None) + [
+                    "", f"person {height:.0f}px   boxes withheld",
+                    "red = not yet in the background model"]
+                hud(vis, lines, (0, 200, 255))
+                if yolo is not None:
+                    # YOLO has no warm-up, so it is already answering - which is worth SEEING side
+                    # by side with a tracker that is not. Unaligned here on purpose: there is no
+                    # tracker readout to align to yet, so this is simply its newest result.
+                    ms, _, _ = yolo.stats()
+                    hit = yolo.take(fed - 1, 2 * BUFFER)
+                    if hit is None:
+                        left = yolo_panel(frame, [], f'YOLO {os.path.basename(a.yolo)}   '
+                                                     f'warming up')
+                    else:
+                        j, det = hit
+                        floor = (ycal.meta or {}).get('min_raw') or 0.01 if ycal else 0.0
+                        raw = max([c for _, c in det], default=0.0)
+                        left = yolo_panel(
+                            frame, det, f'YOLO {os.path.basename(a.yolo)}   '
+                                        f'{len(det)} box' if det else
+                                        f'YOLO {os.path.basename(a.yolo)}   nothing',
+                            _conf(max(raw, floor), ycal) if ycal else raw, None)
+                    vis = np.hstack([left, bar(vis, 'blob + Kalman tracker   '
+                                                    'waiting for the background model')])
+                warmed += 1
+                if a.record:
+                    if writer is None:
+                        hh, ww = vis.shape[:2]
+                        writer = cv2.VideoWriter(a.record, cv2.VideoWriter_fourcc(*'mp4v'),
+                                                 fps, (ww, hh))
+                    writer.write(vis)
+                if a.display:
+                    cv2.imshow('live tracker', vis)
+                    if cv2.waitKey(1) in (27, ord('q')):
+                        break
                 continue
             wh = None if r.box is None else (r.box[2] - r.box[0], r.box[3] - r.box[1])
             r.smooth = sm.update(None if r.x is None else (r.x, r.y), wh)
@@ -440,7 +488,8 @@ def main():
             writer.release()
         cv2.destroyAllWindows()
     wall = time.perf_counter() - t_start
-    print(f"{shown} frames displayed in {wall:.1f}s = {shown / max(wall, 1e-6):.1f} fps"
+    print(f"{shown} tracked frames displayed in {wall:.1f}s = {shown / max(wall, 1e-6):.1f} fps"
+          + (f", plus {warmed} warm-up frames" if warmed else "")
           + (f"; wrote {a.record}" if a.record else ""))
 
 
