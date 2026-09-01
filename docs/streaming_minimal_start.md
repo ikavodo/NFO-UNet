@@ -29,9 +29,33 @@
 > on both. Greyscale is not the cause either - that was ruled out previously, the same models
 > finding 4 people at 0.87-0.999 in a greyscaled stock photo.
 >
-> So the classical tracker beats a modern COCO detector on this footage by 90% vs 0% real recall at
-> 1% vs 85% false positives, and this is now the strongest single piece of evidence for why the
-> project exists. Reproduce with `python -m tracking.eval.yolo_vs_tracker --clip walk_noisy1`.
+> **REVISED SAME DAY with yolo11m (20.11M params, 7.7x nano): MODEL CAPACITY WAS A REAL CONFOUND,
+> and I had guessed it was not.** The medium model eliminates the phantom completely and produces
+> GENUINE detections:
+>
+> | | walk_noisy1 | ido_walk | walk_noisy2 | detections track the person? |
+> |---|---|---|---|---|
+> | yolo11n recall / FP | 44% / 85% | 5% / 0% | 0% / 0% | NO - centre sd 0.0px |
+> | **yolo11m recall / FP** | **17% / 0%** | **26% / 0%** | **5% / 0%** | **YES - centre sd 222-274px** |
+> | tracker recall / FP | 90% / 1% | 74% / 3% | 79% / 2% | yes |
+>
+> yolo11m's detection centres spread 222-274px across a ~900px traverse with box heights 292-351px
+> against a 420px person, so they follow the person rather than sitting on furniture, and there are
+> ZERO false positives on person-absent frames. So the correct claim is not "COCO detectors find
+> nobody" - it is narrower and more useful:
+>
+>   - the NANO model is actively harmful here: ~0% real recall and an 85% false-positive rate from
+>     one static object it scores at 0.26-0.34 on every frame;
+>   - a properly sized model works but with 3-15x less recall than the tracker (5-26% against
+>     74-90%), on footage where the person is 78% of frame height.
+>
+> Do not quote the nano numbers as the detector baseline. Reproduce with
+> `python -m tracking.eval.yolo_vs_tracker --clip walk_noisy1 --weights data/yolo11m.pt`.
+>
+> THROUGHPUT, measured at 540x960 input (ultralytics letterboxes to network imgsz=640) on an
+> RTX PRO 4000 Blackwell laptop GPU: yolo11n 17.8ms GPU / 24.7ms CPU; yolo11m 38.7ms GPU (25.8fps)
+> / 102.7ms CPU (9.7fps); the blob tracker 7.3ms CPU single-threaded. So in any split-screen demo
+> YOLO is the bottleneck by 5x and the tracker is nearly free.
 
 > **2026-08-31, second finding: A FIRING RATE IS NOT A DETECTION RATE. The "HOG fires on
 > 30.0% of centre-frame crops" figure below is not evidence that HOG detects the person - it
