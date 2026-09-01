@@ -65,7 +65,8 @@ class StreamPipeline:
     def __init__(self, person_height: float, bg_frames: int = 30, var_threshold: float = 16.0,
                  readout: str = 'center', min_solidity: float = 0.1, max_age: int = 6,
                  min_track_length: int = 3, max_detections: int = 40,
-                 suppress_warmup: bool = True, warmup_mult: float = 2.0):
+                 suppress_warmup: bool = True, warmup_mult: float = 2.0,
+                 min_score: float = 0.0):
         assert readout in ('center', 'newest'), readout
         self.kw, kalman = scale_relative_params(person_height)
         # ponytail: _Track's covariances are class attributes, so this is process-global.
@@ -76,6 +77,14 @@ class StreamPipeline:
         self.readout, self.min_solidity = readout, min_solidity
         self.max_age, self.min_track_length = max_age, min_track_length
         self.max_detections = max_detections
+        # PRESENCE GATE. score_and_fit has no null output - it returns its best candidate
+        # unconditionally - so with nobody in frame the tracker still reports something. Measured
+        # on three clips with hand-labelled presence intervals, the score alone separates
+        # person-present from person-absent frames at AUC 0.946, and of 11 dimensionless features
+        # a fitted logistic regression could not beat it (tracking/eval/presence_learning.py).
+        # So the gate is a threshold on that score rather than anything learned. 0.0 disables it,
+        # which is exactly the previous behaviour since scores are non-negative.
+        self.min_score = min_score
         # MOG2's learning rate is ~1/history, so before `history` real frames have elapsed the
         # background model is under-adapted and the mask is full of spurious foreground. That is
         # the dominant source of early false positives, and track_sequence's own docstring
@@ -116,6 +125,8 @@ class StreamPipeline:
         r = _result_from_detections(window, self.min_track_length, self.kw['expected_height'],
                                     0.5, self.kw['max_dist'], self.max_age,
                                     self.kw['merge_radius'], center_t=center_t, return_box=True)
+        if r is not None and self.min_score > 0.0 and (r['score'] or 0.0) < self.min_score:
+            r = None                      # below the gate is reported as "nothing here"
         return Result(frame_index=self.seen - 1 - (BUFFER - 1 - buf_i),
                       frame=self.frames[buf_i],
                       x=r and r['x'], y=r and r['y'], box=r and r['box'],
@@ -479,7 +490,7 @@ def run(video, person_height: float = None, scale: float = 0.5, readout: str = '
         src_fps: float = 24.0, present=(), out_fps: float = None, smooth: bool = True,
         halflife: float = 0.15, trend_halflife: float = 0.5, jump_max: float = 0.75,
         gt_path: str = None, probe_frames: int = 240, montage_all: bool = False,
-        suppress_warmup: bool = True, init_m: int = 3) -> dict:
+        suppress_warmup: bool = True, init_m: int = 3, min_score: float = 0.0) -> dict:
     source = frames_from_source(video, scale)
     warmup = []
     if person_height is None:
@@ -496,7 +507,7 @@ def run(video, person_height: float = None, scale: float = 0.5, readout: str = '
             print(f"  WARNING: that is implausible for a person; the estimator measures any "
                   f"large moving object, so pass --person-height explicitly")
     pipe = StreamPipeline(person_height=person_height, readout=readout,
-                          suppress_warmup=suppress_warmup)
+                          suppress_warmup=suppress_warmup, min_score=min_score)
     sm = Smoother(person_height, src_fps, halflife_s=halflife,
                   trend_halflife_s=trend_halflife, jump_max=jump_max,
                   init_m=init_m) if smooth else None
@@ -704,6 +715,11 @@ def main():
     p.add_argument('--person-height', type=float, default=None,
                    help='person height in pixels AFTER --scale; bootstrapped from the first '
                         '--probe-frames contiguous frames if omitted')
+    p.add_argument('--min-score', type=float, default=0.0,
+                   help='presence gate: report nothing when the winning track scores below this. '
+                        '0 disables it. See tracking/eval/presence_learning.py for the operating '
+                        'points - the score is a better presence discriminator than any learned '
+                        'combination of 11 features that was tried')
     p.add_argument('--init-m', type=int, default=3,
                    help='M-of-5 track initiation for the smoother; 1 disables it (lock on the '
                         'first measurement)')
@@ -749,7 +765,7 @@ def main():
             display=a.display, present=present, out_fps=a.out_fps, smooth=a.smooth,
             halflife=a.halflife, trend_halflife=a.trend_halflife, jump_max=a.jump_max,
             src_fps=a.src_fps, gt_path=a.gt, montage_all=a.montage_all,
-            suppress_warmup=a.suppress_warmup, init_m=a.init_m)
+            suppress_warmup=a.suppress_warmup, init_m=a.init_m, min_score=a.min_score)
 
 
 if __name__ == '__main__':

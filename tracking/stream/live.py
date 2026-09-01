@@ -137,6 +137,8 @@ def main():
                    help='two consecutive height estimates must agree within this fraction')
     p.add_argument('--halflife', type=float, default=0.15)
     p.add_argument('--jump-max', type=float, default=0.75)
+    p.add_argument('--min-score', type=float, default=0.0,
+                   help='presence gate: report nothing when the winning track scores below this')
     p.add_argument('--record', default=None, help='also write an annotated mp4 here')
     p.add_argument('--no-display', dest='display', action='store_false')
     p.add_argument('--status-every', type=float, default=60.0,
@@ -175,7 +177,7 @@ def main():
     if file_fps:
         fps = file_fps
 
-    pipe = StreamPipeline(person_height=height)
+    pipe = StreamPipeline(person_height=height, min_score=a.min_score)
     sm = Smoother(height, fps, halflife_s=a.halflife, jump_max=a.jump_max)
     writer = None
     shown, t_start = 0, time.perf_counter()

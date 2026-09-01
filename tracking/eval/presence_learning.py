@@ -146,7 +146,13 @@ def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--l2', type=float, default=1.0)
+    p.add_argument('--depth-sweep', action='store_true',
+                   help='instead of the fit, sweep lookbehind depth and report presence AUC')
     a = p.parse_args()
+
+    if a.depth_sweep:
+        depth_sweep()
+        return
 
     data = {c: features_for(c) for c in LABELS}
     for c, (X, y, _) in data.items():
@@ -184,6 +190,74 @@ def main():
     print(f'{"mean":15s}{m[0]:9.3f}{m[1]:11.3f}{m[2]:11.3f}{m[3]:13.3f}'
           f'{m[4]:11.3f}{m[5]:12.3f}{m[6]:13.3f}{m[7]:14.3f}')
 
+
+
+# ---------------------------------------------------------------------------------------------
+# Does a LONGER BLOB TRAJECTORY make the person/plant distinction easier?
+#
+# Two different things get confused under "enlarge the window", and only one is cheap:
+#
+#   LOOKAHEAD - growing SEQ_SIZE grows SPAN, so it costs latency frame for frame, and it
+#   invalidates the ALPHA_* coefficients (calibrated at SEQ_SIZE=7) and the bit-exact parity with
+#   track_windows_in_sequence.
+#
+#   LOOKBEHIND - a longer PAST trajectory for the same emitted frame. Free in latency, because
+#   the person already walked. Needs persistent tracks, which the current per-window engine does
+#   not keep - but it can be measured offline without writing that engine, by linking tracks once
+#   over the whole sequence and TRUNCATING each candidate's history to a trailing window of N.
+#
+# The mechanism that should make it work: fan-driven foliage OSCILLATES, so its net displacement
+# is bounded by its amplitude for any N, while a walking person TRANSLATES, so theirs grows like
+# N. The ratio therefore grows linearly in N, and at N=7 (12 real frames, 0.5s) a leaf has not
+# completed a period so the two are indistinguishable. Falsified if AUC does not rise with N.
+def depth_sweep(depths=(7, 15, 31, 51), nth_frame=2, max_age=6, min_len=3):
+    from tracking.core.blob_tracker import _Track, detect_blobs, track_blobs
+    from tracking.core.preprocess import filter_by_shape, foreground_mask, refine_mask
+    from tracking.core.track_sequence import scale_relative_params
+    from tracking.eval.lookbehind_discrimination import trajectory_features
+
+    feats = ('cur_score', 'net_disp', 'straightness', 'msd_alpha')
+    out = {}
+    for clip, present in LABELS.items():
+        frames = np.stack(list(frames_from_source(f'data/{clip}.mkv', 0.5)))
+        h = bootstrap_person_height(frames[:240])
+        kw, kalman = scale_relative_params(h)
+        _Track.P_VAR, _Track.Q_VAR, _Track.R_VAR = kalman
+        masks = filter_by_shape(refine_mask(foreground_mask(frames, bg_frames=30),
+                                            kw['close_kernel_size'], kw['open_kernel_size']),
+                                min_area=kw['min_area'], min_solidity=0.1)
+        dets = detect_blobs(masks, min_area=kw['min_area'])
+        strided = list(range(0, len(frames), nth_frame))
+        tracks = track_blobs([dets[i] for i in strided], max_dist=kw['max_dist'], max_age=max_age)
+        at = {}
+        for tr in tracks:
+            for s in tr.history:
+                at.setdefault(s, []).append(tr)
+        for N in depths:
+            rows, lab = [], []
+            for s, f_idx in enumerate(strided):
+                cands = []
+                for tr in at.get(s, []):
+                    hist = [(i, tr.history[i][0], tr.history[i][1])
+                            for i in sorted(tr.history) if s - N + 1 <= i <= s]
+                    if len(hist) >= min_len:
+                        cands.append(trajectory_features(hist))
+                if not cands:
+                    continue
+                best = max(cands, key=lambda d: d['cur_score'])          # the tracker's own rule
+                rows.append([best[f] / (h if f == 'net_disp' else 1.0) for f in feats])
+                lab.append(int(any(a <= f_idx <= b for a, b in present)))
+            X, y = np.array(rows, float), np.array(lab, int)
+            out[(clip, N)] = [auc(X[:, j], y) for j in range(len(feats))]
+        del frames, masks
+    print(f"\nAUC(person-present vs absent) of the WINNING track's features, by lookbehind depth")
+    print(f"{'clip':14s}{'N':>4}{'real span':>11}" + ''.join(f'{f:>14}' for f in feats))
+    for clip in LABELS:
+        for N in depths:
+            v = out[(clip, N)]
+            print(f'{clip if N == depths[0] else "":14s}{N:>4}{(N-1)*nth_frame:>11}'
+                  + ''.join(f'{x:>14.3f}' for x in v))
+    return out
 
 if __name__ == '__main__':
     main()
