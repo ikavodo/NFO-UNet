@@ -422,6 +422,30 @@ def frames_from_video(path: str, scale: float = 1.0):
     cap.release()
 
 
+_CAL = None
+
+
+def calibration():
+    """The fitted score->probability map, or None if it has not been fitted in this checkout.
+    Loaded once and tolerant of absence: an uncalibrated tracker must still run and still display,
+    it just shows the raw score instead of a probability."""
+    global _CAL
+    if _CAL is None:
+        try:
+            from tracking.core import calibration as _c
+            _CAL = _c.load()
+        except Exception:
+            _CAL = False
+    return _CAL or None
+
+
+def confidence_of(score) -> float:
+    """Calibrated P(person present) for a score, or nan when uncalibrated."""
+    from tracking.core.calibration import confidence
+    cal = calibration()
+    return float('nan') if cal is None or score is None else confidence(score, cal)
+
+
 def annotate(result: Result, fps: float) -> np.ndarray:
     vis = cv2.cvtColor(result.frame, cv2.COLOR_GRAY2BGR)
     if result.box is not None:
@@ -442,7 +466,9 @@ def annotate(result: Result, fps: float) -> np.ndarray:
     if result.x is None:
         label += "  no track"
     else:
-        label += f"  score {result.score:.0f}"
+        conf = confidence_of(result.score)
+        label += ("  score %.0f" % result.score if conf != conf
+                  else f"  P {conf:.2f}  (score {result.score:.0f})")
         if result.extrapolated:
             label += "  fitted readout"
     if result.smooth and result.smooth[2]:

@@ -256,6 +256,12 @@ def main():
                    help='two consecutive height estimates must agree within this fraction')
     p.add_argument('--halflife', type=float, default=0.15)
     p.add_argument('--jump-max', type=float, default=0.75)
+    p.add_argument('--min-confidence', type=float, default=None, metavar='P',
+                   help='presence gate in CALIBRATED PROBABILITY, which is the same gate as '
+                        '--min-score but in units a human can reason about: 0.90 == score 8.1, '
+                        '0.75 == 4.2, 0.50 == 2.0 under the fit in '
+                        'tracking/core/score_calibration.json. Overrides --min-score if both are '
+                        'given. Fit it with: python -m tracking.eval.calibrate_score')
     p.add_argument('--min-score', type=float, default=0.0,
                    help='presence gate: report nothing when the winning track scores below this')
     p.add_argument('--yolo', nargs='?', const=YOLO_WEIGHTS, default=None, metavar='WEIGHTS',
@@ -301,6 +307,11 @@ def main():
               f"measured {fps:.1f} fps")
     if file_fps:
         fps = file_fps
+
+    if a.min_confidence is not None:
+        from tracking.core.calibration import load, score_for_confidence
+        a.min_score = score_for_confidence(a.min_confidence, load())
+        print(f'gate: P(present) >= {a.min_confidence:.2f}  ==  score >= {a.min_score:.2f}')
 
     pipe = StreamPipeline(person_height=height, min_score=a.min_score)
     sm = Smoother(height, fps, halflife_s=a.halflife, jump_max=a.jump_max)
