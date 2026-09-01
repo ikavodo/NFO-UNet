@@ -1,0 +1,16 @@
+{
+ "a": 1.9945350652128913,
+ "b": -2.2029052256529207,
+ "meta": {
+  "clips": [
+   "ido_walk",
+   "walk_noisy1",
+   "walk_noisy2"
+  ],
+  "n": 1202,
+  "auc": 0.9484,
+  "ece_in_sample": 0.0157,
+  "ece_leave_one_clip_out": 0.0776,
+  "form": "P(present) = sigmoid(a * log1p(score) + b)"
+ }
+}
