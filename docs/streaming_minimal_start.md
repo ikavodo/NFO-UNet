@@ -1,5 +1,38 @@
 # Minimal starting point: streaming tracker on a fake stream, with detection overlay
 
+> **2026-09-01, FOURTH derivation, and the first on large well-lit indoor people: a COCO-trained
+> detector still finds nobody.** The three prior runs were all 195px-or-smaller people in outdoor
+> foliage, so the new indoor clips were untested rather than settled - an 840px well-lit person at
+> full resolution is the one regime where a COCO detector should be comfortable. YOLOv11n
+> (`YOLO-26-CAM/models/yolo11n.pt`, ultralytics 8.4.89, CUDA), person class, conf >= 0.25, scored
+> against hand-labelled presence intervals:
+>
+> | clip | segment | frames | YOLO fires | tracker box |
+> |---|---|---|---|---|
+> | walk_noisy1 | person present | 232 | 44% | **90%** |
+> | walk_noisy1 | person ABSENT | 233 | **85%** | **1%** |
+> | ido_walk | person present | 256 | 5% | 74% |
+> | ido_walk | person ABSENT | 108 | 0% | 3% |
+> | walk_noisy2 | person present | 195 | **0%** | 79% |
+> | walk_noisy2 | person ABSENT | 178 | 0% | 2% |
+>
+> On walk_noisy1 YOLO is ANTI-CORRELATED with truth - it fires more often when nobody is there.
+> The reason is worth knowing, because "44% recall" would otherwise look like partial success:
+> **every detection is the same static false positive.** Detection centre on person-absent frames
+> is x=158, y=357 with standard deviation **0.0**, and the median centre moves **0px** between
+> present and absent while the person traverses ~900px. It is a tall narrow object on a shelf,
+> visible in images/stream/walk_noisy1_yolo_vs_tracker.png. So the real person-detection rate is
+> zero on all three clips, and the 44% is a phantom that happens to fire during the person's
+> passes too.
+>
+> Scale does not rescue it: at full resolution walk_noisy1 drops to 19% present / 42% absent, worse
+> on both. Greyscale is not the cause either - that was ruled out previously, the same models
+> finding 4 people at 0.87-0.999 in a greyscaled stock photo.
+>
+> So the classical tracker beats a modern COCO detector on this footage by 90% vs 0% real recall at
+> 1% vs 85% false positives, and this is now the strongest single piece of evidence for why the
+> project exists. Reproduce with `python -m tracking.eval.yolo_vs_tracker --clip walk_noisy1`.
+
 > **2026-08-31, second finding: A FIRING RATE IS NOT A DETECTION RATE. The "HOG fires on
 > 30.0% of centre-frame crops" figure below is not evidence that HOG detects the person - it
 > was never checked for WHERE it fired.** Re-measured on data/ido_walk.mkv (person 421px at
