@@ -266,6 +266,152 @@ the tested default.
 
 ---
 
+## Memory limits — what `MemoryMax` is, and how to change it
+
+`MemoryMax=1G` in the unit is a **hard cap on this service's memory, enforced by the kernel**, not
+by Python. systemd puts the service in its own cgroup and writes the number into
+`memory.max`; when the cgroup's usage cannot be reclaimed below the cap, the kernel OOM-killer
+kills a process **inside that cgroup only**. Nothing else on the Zotac is affected, and the tracker
+does not get to catch it or clean up — it is `SIGKILL`. `Restart=always` then brings it back, so the
+symptom you would actually see is a service that restarts every few seconds forever.
+
+It is there because this service is meant to run for weeks unattended: if a leak ever develops, a
+capped service dies and restarts instead of pushing the whole box into swap. Measured steady-state
+is ~185 MB (tracker only, 640×360) and RSS was flat over 60 000 frames, so 1G is roughly a 5×
+headroom, not a tight fit.
+
+**Check what is actually in force and what it has used:**
+
+```bash
+systemctl show -p MemoryMax -p MemoryCurrent -p MemoryPeak nfo-tracker
+systemd-cgtop -m                       # live, sorted by memory
+```
+
+`MemoryPeak` is the number to look at before changing the cap — it is the high-water mark since
+start, so it tells you the real headroom rather than the current instant.
+
+**Change it — three ways, in increasing permanence:**
+
+```bash
+# 1. right now, no restart, forgotten on reboot: for testing a value
+sudo systemctl set-property --runtime nfo-tracker MemoryMax=3G
+
+# 2. persistent, no editing, no restart: writes a drop-in for you
+sudo systemctl set-property nfo-tracker MemoryMax=3G
+
+# 3. persistent and visible in one place: a drop-in you can read and version
+sudo systemctl edit nfo-tracker        # opens .../nfo-tracker.service.d/override.conf
+# [Service]
+# MemoryMax=3G
+sudo systemctl daemon-reload && sudo systemctl restart nfo-tracker
+```
+
+**Remove the cap entirely:**
+
+```bash
+sudo systemctl set-property nfo-tracker MemoryMax=infinity
+```
+
+`infinity` is the reset value — not `0`, which would mean "kill on any allocation", and not deleting
+the line from a drop-in, which leaves the *unit file's* 1G in force again. To go back to the unit
+file's own value instead, delete the drop-in and reload:
+
+```bash
+sudo rm -rf /etc/systemd/system/nfo-tracker.service.d/50-MemoryMax.conf
+sudo systemctl daemon-reload && sudo systemctl restart nfo-tracker
+```
+
+Two things that surprise people:
+
+- **`MemoryMax` counts the page cache**, not just RSS. A service writing an mp4 with `--record`
+  accumulates cache in its cgroup, so `MemoryCurrent` climbs well past what `ps` shows. This is
+  usually harmless — cache is reclaimed under pressure before anything is killed — but it makes
+  `MemoryCurrent` a poor proxy for a leak. Compare `MemoryPeak` against RSS from the service's own
+  status line instead.
+- **GPU memory is not counted at all.** Device memory is not cgroup-accounted, so `MemoryMax` will
+  never protect you from exhausting the GPU, and the ~2 GB the YOLO panel adds is host-side CUDA
+  context and pinned buffers. `MemoryMax` sees that part; it does not see VRAM.
+
+Related caps in the unit, same reset syntax: `CPUQuota=150%` (`infinity` to remove) and
+`TasksMax`. Adding `--yolo` needs `MemoryMax=3G` and `CPUQuota` nearer 250%.
+
+---
+
+## Optional: the YOLO comparison panel, and TensorRT
+
+The deployed service does not need this. It exists so the tracker can be shown **next to** a
+COCO-trained detector, and on this footage the tracker wins clearly — 90% recall at 1% false
+positives against YOLO's 17% at 0% on `walk_noisy1`. So treat TensorRT here as a presentation cost,
+not a detection improvement: it makes the side-by-side affordable, it does not make the detector
+better.
+
+```bash
+nfo-tracker --camera /dev/video2 --yolo data/yolo11m.pt        # ~41 ms/frame on CUDA
+```
+
+### The engine must be built ON the Zotac
+
+**A TensorRT engine is not a portable file, and this is the one thing to get right.** TRT compiles
+kernels for one GPU compute capability, one TRT version and one CUDA version, and bakes the input
+resolution in. An engine built on the development laptop (sm_120 Blackwell, TRT 11.2, CUDA 13) will
+not deserialize on the Zotac unless all of that matches, and the error TRT prints on a mismatch
+names none of the four. Only `yolo11m.pt` and the export script travel.
+
+```bash
+# on the Zotac, once:
+pip install tensorrt onnxslim
+python -m tracking.stream.export_trt --weights data/yolo11m.pt
+
+# it prints the GPU, sm_XX, TRT and CUDA versions first - if TRT does not support that
+# architecture, this is where you find out, before anything is built
+```
+
+The export writes `yolo11m.engine` plus a `yolo11m.engine.json` fingerprint, and
+`--check` compares an existing engine against the current machine, naming every field that moved
+rather than failing cryptically:
+
+```bash
+python -m tracking.stream.export_trt --check
+nfo-tracker --camera /dev/video2 --yolo data/yolo11m.engine
+```
+
+Rebuild the engine after **any** driver, CUDA, TRT or checkpoint change. `--check` will tell you,
+but nothing checks automatically at load time — ultralytics just tries to deserialize.
+
+### What it actually buys, measured
+
+On the development laptop (RTX PRO 4000 Blackwell, sm_120, TRT 11.2, CUDA 13), yolo11m at
+`imgsz=640`, median of 60 inferences:
+
+| build | ms/frame | vs `.pt` | engine size | build time |
+|---|---|---|---|---|
+| `.pt`, CUDA | 39.8 | — | 40 MB | — |
+| `.engine`, FP16 (default) | 24.4 | **1.63×** | 42 MB | 80 s |
+| `.engine`, FP32 (`--no-half`) | 56.5 | **0.70×** | 83 MB | 38 s |
+
+End to end in the live app the panel goes from 33.6 to 47.1 fps, and YOLO's skip rate from 70% to
+56% against a fast file source. On a 30 fps camera 24 ms means it keeps up with essentially every
+frame, so the panel stops showing a stale box at all.
+
+**FP16 is the entire point.** An FP32 engine is *slower than PyTorch* here — do not reach for
+`--no-half` to "be safe", it costs 40% of the frame rate and buys nothing (see below).
+
+### The engine is not bit-identical to the `.pt`, and FP16 is not why
+
+Over 60 frames of `ido_walk`, engine against `.pt`: identical box count on 55/60, and of the boxes
+that matched at IoU≥0.5 the median corner shift was 7 px (worst 13 px). Of the five that did not
+match, three were extra near-threshold boxes overlapping an already-matched one (NMS splitting a
+person into head and shoulder), and two were `.pt` detections at confidence 0.36–0.37 **absent from
+the engine entirely**.
+
+The FP32 build produces **exactly the same five disagreements**, to the same confidences and the
+same IoUs. So this is the ONNX/TensorRT graph — its head and NMS implementation — not precision
+loss, and no precision setting recovers it. Consequence: the engine is fine for the demo panel, but
+do not quote recall measured through the engine as the checkpoint's recall. Use the `.pt` for any
+number that goes in a paper or a table.
+
+---
+
 ## Known limits
 
 - **Static camera only.** Everything rests on background subtraction. A moving or vibrating
