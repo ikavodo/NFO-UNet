@@ -5,7 +5,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from tracking.core.blob_tracker import detect_blobs, score_and_fit, track_blobs
-from tracking.eval.eval_nfo import MAX_DIST, MERGE_RADIUS, NTH_FRAME, SPAN, parse_normalized_bbs
+from tracking.eval.eval_nfo import (MAX_DIST, MERGE_RADIUS, NTH_FRAME, SEQS, SPAN,
+                                    load_boxes, load_frames)
 from tracking.core.preprocess import filter_by_shape, foreground_mask, refine_mask
 
 GT_COLOR = (255, 0, 0)      # red - ground truth
@@ -24,11 +25,7 @@ def find_center_valid_throughout(boxes, span, nth_frame):
 
 
 def load_window(seq, center):
-    seq_in = f'data/nfo_final/nfo_final/{seq}'
-    jpgs = sorted(f for f in os.listdir(seq_in) if f.endswith('.jpg'))
-    frame_indices = list(range(center - SPAN, center + SPAN + 1, NTH_FRAME))
-    frames = np.stack([cv2.imread(os.path.join(seq_in, jpgs[i]), 0) for i in frame_indices], axis=0)
-    return frames
+    return load_frames(seq, indices=list(range(center - SPAN, center + SPAN + 1, NTH_FRAME)))
 
 
 def mark(gray_img, gt_xy, est_xy=None):
@@ -77,10 +74,7 @@ def render(seq, center, boxes, title, ax_rows, expected_height=None):
           f"(red=ground truth, green=tracker estimate)")
 
 
-def load_boxes(seq):
-    seq_in = f'data/nfo_final/nfo_final/{seq}'
-    norm_file = next(f for f in os.listdir(seq_in) if f != 'groundtruth.txt' and f.startswith('groundtruth'))
-    return parse_normalized_bbs(os.path.join(seq_in, norm_file))
+# load_boxes moved to tracking.eval.eval_nfo
 
 
 EXPECTED_HEIGHT = 195.0  # matches tracking/eval_nfo.py
@@ -89,15 +83,18 @@ EXPECTED_HEIGHT = 195.0  # matches tracking/eval_nfo.py
 def main():
     fig, axes = plt.subplots(4, 7, figsize=(18, 9))
 
-    boxes1 = load_boxes('seq1')
+    # SEQS[0]/SEQS[1] rather than 'seq1'/'seq2': the directory names differ between layouts
+    # (seq1 vs seq1_gt), so a literal breaks on whichever layout is not the one it was written for
+    s1, s2 = SEQS[0], SEQS[1]
+    boxes1 = load_boxes(s1)
     center1 = find_center_valid_throughout(boxes1, SPAN, NTH_FRAME)
-    render('seq1', center1, boxes1, f'seq1 (good case) center={center1} - orig / mask', axes[0:2, :],
+    render(s1, center1, boxes1, f'{s1} (good case) center={center1} - orig / mask', axes[0:2, :],
           expected_height=EXPECTED_HEIGHT)
 
-    boxes2 = load_boxes('seq2')
+    boxes2 = load_boxes(s2)
     center2 = find_center_valid_throughout(boxes2, SPAN, NTH_FRAME)
-    render('seq2', center2, boxes2,
-          f'seq2 (was bad case) center={center2} - WITH shape-aware scoring - orig / mask',
+    render(s2, center2, boxes2,
+          f'{s2} (was bad case) center={center2} - WITH shape-aware scoring - orig / mask',
           axes[2:4, :], expected_height=EXPECTED_HEIGHT)
 
     plt.tight_layout()

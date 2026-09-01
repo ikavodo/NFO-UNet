@@ -6,20 +6,23 @@ import numpy as np
 
 from tracking.core.blob_tracker import detect_blobs, score_and_fit, track_blobs
 from tracking.core.preprocess import filter_by_shape, foreground_mask, refine_mask
-from tracking.eval.eval_nfo import BG_FRAMES, EXPECTED_HEIGHT, MAX_DIST, MERGE_RADIUS, NTH_FRAME, SPAN
+from tracking.eval.eval_nfo import (BG_FRAMES, EXPECTED_HEIGHT, MAX_DIST, MERGE_RADIUS,
+                                    NTH_FRAME, SEQS, SPAN, load_frames, seq_dir)
 from tracking.core.integrate_image import crop_at, anchor_for_frame, restrict_to_nearby
 
-CROP = 220  # roughly the measured NFO person height (~195px) plus margin
+# CROP as a FRACTION of frame height, not 220px. 220/600 reproduces the original value exactly
+# on nfo_final and gives 82px on nfo_processed's 224x224 frames - where a literal 220 would be
+# the whole frame, so the script would still "run" while silently showing an uncropped image
+# labelled as a person crop. Scale-free is the only way this survives a change of dataset.
+CROP_FRAC = 220 / 600
 
 
-def load_sequence_prefix(seq, up_to):
-    seq_in = f'data/nfo_final/nfo_final/{seq}'
-    jpgs = sorted(f for f in os.listdir(seq_in) if f.endswith('.jpg'))
-    return np.stack([cv2.imread(os.path.join(seq_in, jpgs[i]), 0) for i in range(up_to)], axis=0)
+# loader moved to tracking.eval.eval_nfo.load_frames so the dataset path lives in one place
 
 
-def main(seq='seq1', center=17):
-    frames_all = load_sequence_prefix(seq, center + SPAN + 1)
+def main(seq=SEQS[0], center=17):
+    frames_all = load_frames(seq, up_to=center + SPAN + 1)
+    CROP = int(round(CROP_FRAC * frames_all.shape[1]))
     masks_all = filter_by_shape(refine_mask(foreground_mask(frames_all, bg_frames=BG_FRAMES)))
     window_indices = list(range(center - SPAN, center + SPAN + 1, NTH_FRAME))
     frames = frames_all[window_indices]

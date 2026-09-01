@@ -4,15 +4,13 @@ import cv2
 import numpy as np
 
 from tracking.core.blob_tracker import detect_blobs, score_and_fit, track_blobs
-from tracking.eval.eval_nfo import BG_FRAMES, EXPECTED_HEIGHT, MAX_DIST, MERGE_RADIUS, NTH_FRAME, SPAN
+from tracking.eval.eval_nfo import (BG_FRAMES, EXPECTED_HEIGHT, MAX_DIST, MERGE_RADIUS,
+                                    NTH_FRAME, SEQS, SPAN, load_frames, seq_dir)
 from tracking.core.integrate_image import align_frames, crop_at, integrate
 from tracking.core.preprocess import filter_by_shape, foreground_mask, refine_mask
 
 
-def load_sequence_prefix(seq, up_to):
-    seq_in = f'data/nfo_final/nfo_final/{seq}'
-    jpgs = sorted(f for f in os.listdir(seq_in) if f.endswith('.jpg'))
-    return np.stack([cv2.imread(os.path.join(seq_in, jpgs[i]), 0) for i in range(up_to)], axis=0)
+# loader moved to tracking.eval.eval_nfo.load_frames so the dataset path lives in one place
 
 
 def check_alignment_follows_the_person():
@@ -62,11 +60,11 @@ def check_crop_at_always_returns_the_requested_size():
 def main():
     check_crop_at_always_returns_the_requested_size()
     check_alignment_follows_the_person()
-    seq, center = 'seq1', 17
-    if not os.path.isdir(f'data/nfo_final/nfo_final/{seq}'):
-        print(f"skip fusion checks: data/nfo_final/nfo_final/{seq} not present")
+    seq, center = SEQS[0], 17
+    if not os.path.isdir(seq_dir(seq)):
+        print(f"skip fusion checks: {seq_dir(seq)} not present")
         return
-    frames_all = load_sequence_prefix(seq, center + SPAN + 1)
+    frames_all = load_frames(seq, up_to=center + SPAN + 1)
     masks_all = filter_by_shape(refine_mask(foreground_mask(frames_all, bg_frames=BG_FRAMES)))
     window_indices = list(range(center - SPAN, center + SPAN + 1, NTH_FRAME))
     frames = frames_all[window_indices]
