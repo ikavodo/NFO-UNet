@@ -65,7 +65,7 @@ class StreamPipeline:
     def __init__(self, person_height: float, bg_frames: int = 30, var_threshold: float = 16.0,
                  readout: str = 'center', min_solidity: float = 0.1, max_age: int = 6,
                  min_track_length: int = 3, max_detections: int = 40,
-                 suppress_warmup: bool = True):
+                 suppress_warmup: bool = True, warmup_mult: float = 2.0):
         assert readout in ('center', 'newest'), readout
         self.kw, kalman = scale_relative_params(person_height)
         # ponytail: _Track's covariances are class attributes, so this is process-global.
@@ -82,7 +82,12 @@ class StreamPipeline:
         # already says any window before bg_frames have elapsed is under-adapted. Suppressing
         # output until then costs the first bg_frames-1-SPAN emissions and introduces no new
         # constant.
-        self.warmup = bg_frames if suppress_warmup else 0
+        # warmup_mult * bg_frames, not 1x. MOG2's learning rate is ~1/history, so after
+        # `history` frames the model is one time constant in - about 63% converged - and the mask
+        # is still full of spurious foreground. Measured on the first person-absent window of
+        # three clips, 1x left 57%/62%/75% of emissions carrying a box against 0%/13%/22% in the
+        # same clips' MID-clip absent windows. The multiplier is what closes that gap.
+        self.warmup = int(round(warmup_mult * bg_frames)) if suppress_warmup else 0
         # one persistent subtractor: preprocess.foreground_mask builds a fresh MOG2 per
         # call, which is exactly what a stream must not do
         self.mog = cv2.createBackgroundSubtractorMOG2(history=bg_frames,
