@@ -168,3 +168,6 @@ images/stream/live_c920*
 tracking/visualize/aligned_masks.png
 tracking/visualize/debug_integrate.png
 tracking/visualize/integrated_image_comparison.png
+
+# downloaded detector weights: regeneratable, keep out of the repo
+data/*.pt
