@@ -107,6 +107,12 @@ def main():
                         'gait articulation far more room to smear the median than a short window '
                         'does - if the aligned panel looks smeared rather than sharp, this is the '
                         'first thing to change before concluding anything about the METHOD.')
+    p.add_argument('--layout', choices=('rows', 'grid'), default='rows',
+                   help="'rows' (default): one row per segment, unaligned then aligned side by "
+                        "side. 'grid': one COLUMN per segment instead - all unaligned panels "
+                        "across the top row, all aligned panels across the bottom row - so N "
+                        "segments render as a 2xN grid rather than an Nx2 stack. No per-run "
+                        "header in this mode (there is no single column it could span).")
     p.add_argument('--out', default=None)
     a = p.parse_args()
 
@@ -116,7 +122,7 @@ def main():
     runs = gt_runs(gt)
     print(f'{a.seq}: {T} frames {W}x{H}, {len(runs)} GT runs (traversals)')
 
-    rows = []
+    rows, tops, bottoms = [], [], []
     for run in (runs[:a.limit] if a.limit else runs):
         if a.window and (run[1] - run[0] + 1) > a.window:
             mid = (run[0] + run[1]) // 2
@@ -134,24 +140,32 @@ def main():
         static = fuse(align_frames(seg, unaligned_winner, crop_size=crop), method=a.method)
 
         n = run[1] - run[0] + 1
-        if a.caption == 'simple':
-            left = panel(static, 'unaligned (vx=0)')
-            right = panel(gt_fused, f'aligned (vx={winner["vx"]:+.2f})')
-            rows.append(np.hstack([left, right]))
+        left_cap = 'unaligned (vx=0)' if a.caption == 'simple' else \
+            'world-fixed (vx=0, the do-nothing control)'
+        right_cap = (f'aligned (vx={winner["vx"]:+.2f})' if a.caption == 'simple' else
+                    f'GT-aligned  vx={winner["vx"]:+.2f}px/frame')
+        if a.layout == 'grid':
+            tops.append(panel(static, left_cap))
+            bottoms.append(panel(gt_fused, right_cap))
         else:
-            left = panel(static, 'world-fixed (vx=0, the do-nothing control)')
-            right = panel(gt_fused, f'GT-aligned  vx={winner["vx"]:+.2f}px/frame')
+            left, right = panel(static, left_cap), panel(gt_fused, right_cap)
             pair = np.hstack([left, right])
-            rows.append(np.vstack([header(pair.shape[1], f'f{run[0]}-{run[1]}  n={n}  '
-                                                          f'mean height {mean_h:.0f}px  '
-                                                          f'crop {crop}px'), pair]))
+            if a.caption == 'simple':
+                rows.append(pair)
+            else:
+                rows.append(np.vstack([header(pair.shape[1], f'f{run[0]}-{run[1]}  n={n}  '
+                                                              f'mean height {mean_h:.0f}px  '
+                                                              f'crop {crop}px'), pair]))
         print(f'  run {run}: n={n} mean_height={mean_h:.1f}px fitted_vx={winner["vx"]:+.3f}px/frame '
               f'crop_size={crop}')
 
-    w = max(r.shape[1] for r in rows)
-    rows = [r if r.shape[1] == w else cv2.copyMakeBorder(r, 0, 0, 0, w - r.shape[1],
-                                                          cv2.BORDER_CONSTANT) for r in rows]
-    montage = np.vstack(rows)
+    if a.layout == 'grid':
+        montage = np.vstack([np.hstack(tops), np.hstack(bottoms)])
+    else:
+        w = max(r.shape[1] for r in rows)
+        rows = [r if r.shape[1] == w else cv2.copyMakeBorder(r, 0, 0, 0, w - r.shape[1],
+                                                              cv2.BORDER_CONSTANT) for r in rows]
+        montage = np.vstack(rows)
     out = a.out or f'images/stream/{a.seq}_gt_integrated.png'
     cv2.imwrite(out, montage)
     print(f'wrote {out}')
