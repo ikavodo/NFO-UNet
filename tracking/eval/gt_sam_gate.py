@@ -33,7 +33,10 @@ import cv2
 import numpy as np
 import torch
 
+from tracking.core.blob_tracker import _Track, detect_blobs, score_and_fit, track_blobs
 from tracking.core.integrate_image import align_frames, anchor_for_frame, fuse
+from tracking.core.preprocess import estimate_person_height, filter_by_shape, foreground_mask, refine_mask
+from tracking.core.track_sequence import scale_relative_params
 from tracking.eval.gt_integrated_image import build_gt_winner
 from tracking.eval.lookbehind_discrimination import gt_runs, load_sequence
 
@@ -91,6 +94,78 @@ def project_to_frame(mask, cx_t, cy, crop_size, frame_shape):
                           flags=cv2.INTER_NEAREST, borderValue=0) > 0
 
 
+def build_tracker_winner(seg_frames, bg_frames=30, var_threshold=16.0, max_age=6, min_track_length=3):
+    """The TRACKER's own equivalent of build_gt_winner: no ground truth anywhere in this
+    function. person_height is measured from the footage itself (estimate_person_height), which
+    scale_relative_params turns into every other scale-dependent parameter (association gate,
+    merge radius, expected-height scoring term, morphology kernels, Kalman covariances) - the
+    same scale-free pipeline track_window()/track_windows_in_sequence use elsewhere in this
+    project, reproduced here at the statement level (not called through those wrappers) because
+    both of them REDUCE their result to a single readout position; align_frames needs the full
+    score_and_fit dict ('frames'/'history'/'vx'), which is exactly what this returns instead.
+
+    Returns (winner_or_None, measured_person_height). winner is None if no track reached
+    min_track_length within this segment - a real possible outcome, not an error, and the caller
+    must handle it rather than assume a track always exists the way GT guarantees one.
+    """
+    person_height = estimate_person_height(seg_frames, bg_frames=bg_frames, var_threshold=var_threshold)
+    kw, (p_var, q_var, r_var) = scale_relative_params(person_height)
+    masks = foreground_mask(seg_frames, bg_frames=bg_frames, var_threshold=var_threshold)
+    masks = refine_mask(masks, kw['close_kernel_size'], kw['open_kernel_size'])
+    masks = filter_by_shape(masks, min_area=kw['min_area'], min_solidity=0.1)
+    dets = detect_blobs(masks, min_area=kw['min_area'])
+    saved = (_Track.P_VAR, _Track.Q_VAR, _Track.R_VAR)
+    _Track.P_VAR, _Track.Q_VAR, _Track.R_VAR = p_var, q_var, r_var    # restored in finally: this
+    try:                                                              # is shared class state
+        tracks = track_blobs(dets, max_dist=kw['max_dist'], max_age=max_age)
+        winner = score_and_fit(tracks, min_track_length=min_track_length,
+                               expected_height=kw['expected_height'], height_tolerance=0.5)
+    finally:
+        _Track.P_VAR, _Track.Q_VAR, _Track.R_VAR = saved
+    return winner, person_height
+
+
+def render_row(winner, seg, abs_idx, frames, H, W, crop_mult, samples, label):
+    """One row of the comparison: integrated reference + SAM2 mask, then that mask projected
+    onto `samples` raw frames. Shared by the GT and tracker paths so the two rows are built by
+    IDENTICAL code - the only difference between rows is which winner produced the alignment."""
+    T = len(abs_idx)
+    center_t = T // 2
+    mean_h = float(np.mean([winner['history'][t][2] for t in winner['history']
+                            if winner['history'][t][2] is not None]) or 0.0)
+    ay = float(np.mean([winner['history'][t][1] for t in winner['frames']]))
+    crop = int(np.clip(round(crop_mult * max(mean_h, 1.0)), 60, min(H, W)))
+
+    aligned = align_frames(seg, winner, crop_size=crop)
+    reference = fuse(aligned, method='median')
+    ax, _ = anchor_for_frame(winner, center_t)
+    point_xy = (crop / 2, crop / 2)
+    S, score = segment_reference(reference, point_xy)
+    V = visibility_within_mask(aligned, reference, S)
+    frac_visible = V[:, S].mean() if S.sum() else float('nan')
+    print(f'    [{label}] mean_height={mean_h:.1f}px crop={crop} SAM2 mask area={S.sum()}px '
+          f'score={score:.3f} visible-within-mask={frac_visible:.3f}')
+
+    contours, _ = cv2.findContours(S.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    ref_vis = cv2.cvtColor(reference, cv2.COLOR_GRAY2BGR)
+    for c in contours:
+        cv2.drawContours(ref_vis, [c], -1, (0, 255, 0), 2)
+    cv2.circle(ref_vis, (int(point_xy[0]), int(point_xy[1])), 4, (0, 0, 255), -1)
+    tiles = [cv2.resize(ref_vis, (260, 260))]
+    sample_t = np.linspace(0, T - 1, min(samples, T)).astype(int)
+    for t in sample_t:
+        cx_t = ax + winner['vx'] * (t - center_t)
+        proj = project_to_frame(V[t], cx_t, ay, crop, (H, W))
+        raw = frames[abs_idx[t]]
+        ov = cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
+        ov[proj] = (0.4 * ov[proj] + np.array([0, 255, 0]) * 0.6).astype(np.uint8)
+        cv2.putText(ov, f'f{abs_idx[t]}', (4, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+        tiles.append(cv2.resize(ov, (260, 260)))
+    row = np.hstack(tiles)
+    cv2.putText(row, label, (4, row.shape[0] - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+    return row
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -100,6 +175,11 @@ def main():
     p.add_argument('--limit', type=int, default=2)
     p.add_argument('--crop-mult', type=float, default=4.5)
     p.add_argument('--samples', type=int, default=4, help='frames to show per segment')
+    p.add_argument('--compare', action='store_true',
+                   help="also build the SAME segment's alignment from the TRACKER's own estimate "
+                        "(no ground truth: person_height measured from the footage, scale_relative_params "
+                        "for everything else) and stack it as a second row beneath the GT-driven "
+                        "row, same sampled frames, for a direct visual comparison")
     p.add_argument('--out-dir', default='images/stream')
     a = p.parse_args()
 
@@ -114,50 +194,29 @@ def main():
             mid = (run[0] + run[1]) // 2
             half = a.window // 2
             run = (max(run[0], mid - half), min(run[1], mid - half + a.window - 1))
-        winner, abs_idx = build_gt_winner(gt, run, W, H)
+        gt_winner, abs_idx = build_gt_winner(gt, run, W, H)
         seg = frames[abs_idx]
-        T = len(abs_idx)
-        center_t = T // 2
-        mean_h = float(np.mean([winner['history'][t][2] for t in winner['history']]))
-        ay = float(np.mean([winner['history'][t][1] for t in winner['frames']]))
-        crop = int(np.clip(round(a.crop_mult * mean_h), 60, min(H, W)))
+        print(f'  segment {si} f{run[0]}-{run[1]} (n={len(abs_idx)}):')
+        rows = [render_row(gt_winner, seg, abs_idx, frames, H, W, a.crop_mult, a.samples,
+                           f'GT alignment  vx={gt_winner["vx"]:+.2f}')]
 
-        aligned = align_frames(seg, winner, crop_size=crop)
-        reference = fuse(aligned, method='median')
+        if a.compare:
+            tr_winner, tr_height = build_tracker_winner(seg)
+            if tr_winner is None:
+                print(f'    [tracker] no track reached min_track_length in this segment - '
+                      f'no comparison row (this is a real outcome, not an error)')
+            else:
+                rows.append(render_row(tr_winner, seg, abs_idx, frames, H, W, a.crop_mult, a.samples,
+                                       f'tracker alignment  vx={tr_winner["vx"]:+.2f}  '
+                                       f'(measured height {tr_height:.0f}px)'))
 
-        ax, _ = anchor_for_frame(winner, center_t)                # true GT position, center frame
-        point_xy = (crop / 2, crop / 2)                           # fixed aligned position, by construction
-        S, score = segment_reference(reference, point_xy)
-        print(f'  segment {si} f{run[0]}-{run[1]} (n={T}): SAM2 mask area={S.sum()}px '
-              f'({100 * S.sum() / (crop * crop):.1f}% of crop), score={score:.3f}')
-
-        V = visibility_within_mask(aligned, reference, S)
-        frac_visible = V[:, S].mean() if S.sum() else float('nan')
-        print(f'    mean visible-within-mask fraction across the segment: {frac_visible:.3f}')
-
-        contours, _ = cv2.findContours(S.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        ref_vis = cv2.cvtColor(reference, cv2.COLOR_GRAY2BGR)
-        for c in contours:
-            cv2.drawContours(ref_vis, [c], -1, (0, 255, 0), 2)
-        cv2.circle(ref_vis, (int(point_xy[0]), int(point_xy[1])), 4, (0, 0, 255), -1)
-
-        sample_t = np.linspace(0, T - 1, min(a.samples, T)).astype(int)
-        tiles = [cv2.resize(ref_vis, (260, 260))]
-        for t in sample_t:
-            cx_t = ax + winner['vx'] * (t - center_t)
-            proj = project_to_frame(V[t], cx_t, ay, crop, (H, W))
-            raw = frames[abs_idx[t]]
-            ov = cv2.cvtColor(raw, cv2.COLOR_GRAY2BGR)
-            ov[proj] = (0.4 * ov[proj] + np.array([0, 255, 0]) * 0.6).astype(np.uint8)
-            cv2.putText(ov, f'f{abs_idx[t]}', (4, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
-                       (0, 255, 255), 1)
-            tiles.append(cv2.resize(ov, (260, 260)))
-
-        montage = np.hstack(tiles)
+        w = max(r.shape[1] for r in rows)
+        rows = [r if r.shape[1] == w else cv2.copyMakeBorder(r, 0, 0, 0, w - r.shape[1],
+                                                              cv2.BORDER_CONSTANT) for r in rows]
+        montage = np.vstack(rows)
         out = f'{a.out_dir}/{a.seq}_sam_gate_seg{si}.png'
         cv2.imwrite(out, montage)
-        print(f'    wrote {out} (leftmost: integrated reference + SAM2 mask + prompt point; '
-              f'rest: mask projected onto {len(sample_t)} raw frames)')
+        print(f'    wrote {out}')
 
 
 if __name__ == '__main__':
