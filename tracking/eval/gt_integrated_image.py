@@ -91,6 +91,14 @@ def main():
     p.add_argument('--method', default='median', choices=('median', 'mean'))
     p.add_argument('--crop-mult', type=float, default=4.5,
                    help='crop_size = crop_mult * segment mean GT height, clipped to the frame')
+    p.add_argument('--limit', type=int, default=None,
+                   help='only render this many runs (the first N in the sequence), for a short '
+                        'demo montage instead of every traversal')
+    p.add_argument('--caption', choices=('full', 'simple'), default='full',
+                   help="'simple' drops the run header and technical detail (frame range, n, "
+                        "height, crop size) and labels each panel just 'unaligned (vx=0)' / "
+                        "'aligned (vx=...)' - for a non-technical audience where the mechanism, "
+                        "not the measurement, is the point")
     p.add_argument('--window', type=int, default=None,
                    help='restrict each run to a centered sub-window of this many frames before '
                         'fitting velocity/aligning, instead of the whole traversal - e.g. 31 to '
@@ -109,7 +117,7 @@ def main():
     print(f'{a.seq}: {T} frames {W}x{H}, {len(runs)} GT runs (traversals)')
 
     rows = []
-    for run in runs:
+    for run in (runs[:a.limit] if a.limit else runs):
         if a.window and (run[1] - run[0] + 1) > a.window:
             mid = (run[0] + run[1]) // 2
             half = a.window // 2
@@ -126,12 +134,17 @@ def main():
         static = fuse(align_frames(seg, unaligned_winner, crop_size=crop), method=a.method)
 
         n = run[1] - run[0] + 1
-        left = panel(static, 'world-fixed (vx=0, the do-nothing control)')
-        right = panel(gt_fused, f'GT-aligned  vx={winner["vx"]:+.2f}px/frame')
-        pair = np.hstack([left, right])
-        rows.append(np.vstack([header(pair.shape[1], f'f{run[0]}-{run[1]}  n={n}  '
-                                                      f'mean height {mean_h:.0f}px  '
-                                                      f'crop {crop}px'), pair]))
+        if a.caption == 'simple':
+            left = panel(static, 'unaligned (vx=0)')
+            right = panel(gt_fused, f'aligned (vx={winner["vx"]:+.2f})')
+            rows.append(np.hstack([left, right]))
+        else:
+            left = panel(static, 'world-fixed (vx=0, the do-nothing control)')
+            right = panel(gt_fused, f'GT-aligned  vx={winner["vx"]:+.2f}px/frame')
+            pair = np.hstack([left, right])
+            rows.append(np.vstack([header(pair.shape[1], f'f{run[0]}-{run[1]}  n={n}  '
+                                                          f'mean height {mean_h:.0f}px  '
+                                                          f'crop {crop}px'), pair]))
         print(f'  run {run}: n={n} mean_height={mean_h:.1f}px fitted_vx={winner["vx"]:+.3f}px/frame '
               f'crop_size={crop}')
 
