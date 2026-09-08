@@ -44,15 +44,19 @@ def select_montage(rows, mode: str, want: int = 4):
     default the moment the point is to demonstrate one specific outcome.
 
     'spread'        every row, evenly spaced - what the clip looks like overall
-    'tracker-wins'  only rows where ground truth says present, the tracker found a box, and YOLO
-                    found nothing - the frames that actually make the tracker's case, since a
-                    frame where BOTH miss, or where the tracker fires while absent, is not a win
+    'tracker-wins'  only rows where ground truth says present, the tracker found a box, YOLO
+                    found nothing, and the box is fully inside the frame - the frames that
+                    actually make the tracker's case. A frame where both miss, where the tracker
+                    fires while absent, or where the box is clipped at the frame edge (a real
+                    detection of a partially-visible person, but reads as broken rendering in a
+                    montage meant to make a clean visual case) is not a clean win.
 
-    Rows: (frame_index, vis, yolo_fired, tracker_has_box, gt_present). Empty in, empty out - no
-    silent fallback to 'spread' when nothing qualifies, because that would show frames the caller
-    explicitly said were not what they asked for.
+    Rows: (frame_index, vis, yolo_fired, tracker_has_box, gt_present, box_in_bounds). box_in_bounds
+    is meaningless when tracker_has_box is False - a miss is excluded for being a miss, not for its
+    unset bounds flag. Empty in, empty out - no silent fallback to 'spread' when nothing qualifies,
+    because that would show frames the caller explicitly said were not what they asked for.
     """
-    pool = rows if mode == 'spread' else [r for r in rows if r[4] and r[3] and not r[2]]
+    pool = rows if mode == 'spread' else [r for r in rows if r[4] and r[3] and not r[2] and r[5]]
     if not pool:
         return []
     n = min(want, len(pool))
@@ -165,12 +169,26 @@ def main():
             t[0] += 1
             t[1] += bool(det)
             t[2] += r.box is not None
+        # margin, not a bare >=0/<=width check: a box that reaches exactly to the frame edge is a
+        # genuine detection of a person walking OUT of frame (verified: (729,116,960,351) and
+        # (743,78,960,540) on a 960x540 frame, both landing on x2==960 exactly) - correct, but the
+        # visible portion is a sliver against the boundary with nothing beyond it, which is what
+        # reads as "clipped" in a montage meant to show a clean win. 12px keeps genuinely
+        # boundary-touching boxes out without discarding anything merely near an edge.
+        margin = 12
+        box_in_bounds = (r.box is not None and r.box[0] >= margin and r.box[1] >= margin
+                        and r.box[2] <= r.frame.shape[1] - margin
+                        and r.box[3] <= r.frame.shape[0] - margin)
         rows.append((r.frame_index, vis, bool(det), r.box is not None,
-                    bool(present) and inp(r.frame_index)))
+                    bool(present) and inp(r.frame_index), box_in_bounds))
     if writer is not None:
         writer.release()
 
     picks = select_montage(rows, a.select)
+    # same predicate select_montage applies internally, asked for with want=len(rows) so nothing
+    # is left out - duplicating a boolean expression here would drift out of sync with it silently,
+    # as happened once already when box_in_bounds was added to the filter but not to this line
+    pool_size = len(rows) if a.select == 'spread' else len(select_montage(rows, a.select, want=len(rows)))
     suffix = '_yolo_vs_tracker' if a.select == 'spread' else f'_{a.select}'
     out_png = f'{a.out_dir}/{a.clip}{suffix}.png'
     if not picks:
@@ -179,8 +197,7 @@ def main():
         w = 900
         tiles = [cv2.resize(v, (w, int(w * v.shape[0] / v.shape[1]))) for _, v, *_ in picks]
         cv2.imwrite(out_png, np.vstack(tiles))
-        print(f'{len(picks)}/{sum(r[4] and r[3] and not r[2] for r in rows) if a.select != "spread" else len(rows)} '
-              f'qualifying frames shown in {out_png}')
+        print(f'{len(picks)}/{pool_size} qualifying frames shown in {out_png}')
 
     print(f'{a.clip}: person height {h:.0f}px, {len(rows)} emitted frames, readout '
           f'{a.readout}, YOLO held {hold} frames (buffer depth {hold + 1})')
