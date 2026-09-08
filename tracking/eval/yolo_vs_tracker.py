@@ -39,6 +39,26 @@ PRESENT = {
 }
 
 
+def select_montage(rows, mode: str, want: int = 4):
+    """Which rows go in the montage - and 'evenly spaced across the whole clip' is the wrong
+    default the moment the point is to demonstrate one specific outcome.
+
+    'spread'        every row, evenly spaced - what the clip looks like overall
+    'tracker-wins'  only rows where ground truth says present, the tracker found a box, and YOLO
+                    found nothing - the frames that actually make the tracker's case, since a
+                    frame where BOTH miss, or where the tracker fires while absent, is not a win
+
+    Rows: (frame_index, vis, yolo_fired, tracker_has_box, gt_present). Empty in, empty out - no
+    silent fallback to 'spread' when nothing qualifies, because that would show frames the caller
+    explicitly said were not what they asked for.
+    """
+    pool = rows if mode == 'spread' else [r for r in rows if r[4] and r[3] and not r[2]]
+    if not pool:
+        return []
+    n = min(want, len(pool))
+    return [pool[i] for i in np.linspace(0, len(pool) - 1, n).astype(int)]
+
+
 def yolo_boxes(model, grey, conf, device=None):
     """Person boxes as [((x1,y1,x2,y2), conf), ...]. The greyscale frame is replicated to 3
     channels because that is what a COCO-trained network expects, and a previous investigation
@@ -79,6 +99,11 @@ def main():
                    help="'newest' makes the tracker causal, which removes the SPAN offset entirely "
                         "and with it the need for the YOLO buffer - both then answer about the same "
                         "newest frame. Costs +11%% jitter and 27%% more fitted readouts, measured.")
+    p.add_argument('--select', choices=('spread', 'tracker-wins'), default='spread',
+                   help="'tracker-wins' picks only frames where ground truth says present, the "
+                        "tracker found a box, and YOLO found nothing - i.e. the frames that "
+                        "demonstrate the tracker's advantage, rather than a generic sample of the "
+                        "clip. Written to <clip>_tracker-wins.png instead of the default montage.")
     p.add_argument('--out-dir', default='images/stream')
     a = p.parse_args()
     assert os.path.exists(a.weights), f'no weights at {a.weights}'
@@ -140,15 +165,22 @@ def main():
             t[0] += 1
             t[1] += bool(det)
             t[2] += r.box is not None
-        rows.append((r.frame_index, vis, bool(det), r.box is not None))
+        rows.append((r.frame_index, vis, bool(det), r.box is not None,
+                    bool(present) and inp(r.frame_index)))
     if writer is not None:
         writer.release()
 
-    picks = [rows[i] for i in np.linspace(0, len(rows) - 1, 4).astype(int)]
-    w = 900
-    tiles = [cv2.resize(v, (w, int(w * v.shape[0] / v.shape[1]))) for _, v, _, _ in picks]
-    out_png = f'{a.out_dir}/{a.clip}_yolo_vs_tracker.png'
-    cv2.imwrite(out_png, np.vstack(tiles))
+    picks = select_montage(rows, a.select)
+    suffix = '_yolo_vs_tracker' if a.select == 'spread' else f'_{a.select}'
+    out_png = f'{a.out_dir}/{a.clip}{suffix}.png'
+    if not picks:
+        print(f'no frames satisfy --select {a.select} for {a.clip}; not writing {out_png}')
+    else:
+        w = 900
+        tiles = [cv2.resize(v, (w, int(w * v.shape[0] / v.shape[1]))) for _, v, *_ in picks]
+        cv2.imwrite(out_png, np.vstack(tiles))
+        print(f'{len(picks)}/{sum(r[4] and r[3] and not r[2] for r in rows) if a.select != "spread" else len(rows)} '
+              f'qualifying frames shown in {out_png}')
 
     print(f'{a.clip}: person height {h:.0f}px, {len(rows)} emitted frames, readout '
           f'{a.readout}, YOLO held {hold} frames (buffer depth {hold + 1})')
