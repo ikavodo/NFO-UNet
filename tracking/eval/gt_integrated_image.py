@@ -67,24 +67,63 @@ def build_gt_winner(gt: dict, run: tuple, w: int, h: int):
     return dict(frames=list(int(t) for t in local), history=history, vx=vx), abs_idx
 
 
-def classify(model, categories, img, device, topk=3):
-    """Top-k ImageNet-1000 predictions for one greyscale crop, as [(label, confidence), ...].
+# CLIP zero-shot, not a fixed-taxonomy classifier: ImageNet-1000 (tried first) has no "person"
+# class at all, so no threshold or top-k on it could ever answer the actual question. CLIP
+# (Radford et al. 2021) sidesteps a fixed label set entirely - the "classes" are just text
+# strings, so one of them can simply BE "a person". Template ensembling (multiple phrasings
+# averaged before use) is the standard way to reduce sensitivity to a single prompt's wording
+# (Radford et al. 2021, sec 3.1.4) - single-prompt zero-shot is known to be noisier.
+CLIP_TEMPLATES = ('a photo of {}.', 'a blurry photo of {}.', 'a low resolution photo of {}.',
+                  'a photo of {} outdoors.')
+CLIP_CLASSES = ('a person', 'a person walking', 'bare trees and branches',
+                'an empty outdoor scene with no people', 'grass and bushes')
+PERSON_CLASSES = ('a person', 'a person walking')       # near-synonyms - reported COMBINED, not
+                                                          # as separate buckets (see p_person below)
 
-    ImageNet-1000 HAS NO "person" CLASS. This is not a detection-equivalent test: it cannot
-    confirm "a person is here" the way YOLO's box does. What it CAN show is whether the network's
-    best guess is at all human-adjacent (clothing, sports gear commonly photographed with people)
-    versus something from the scene's own furniture (trees, foliage) - a much weaker signal, kept
-    honest rather than oversold.
+
+def p_person(pred):
+    """Combined probability mass on ANY person-related class, not just the literal 'a person'
+    bucket. 'a person' and 'a person walking' compete for the same underlying concept in a
+    softmax over CLIP_CLASSES, so reading only 'a person' fragments that mass across two
+    near-synonyms and understates it - caught here by checking against the drawn top-3 image
+    before trusting the printed number: top-1 in every aligned panel was 'a person walking' at
+    0.80-0.95, while the 'a person'-only metric reported as low as 0.04 for the same image."""
+    d = dict(pred)
+    return sum(d.get(c, 0.0) for c in PERSON_CLASSES)
+
+
+def build_clip_text_features(model, tokenizer, device):
+    import torch
+    with torch.no_grad():
+        feats = []
+        for cls in CLIP_CLASSES:
+            prompts = tokenizer([t.format(cls) for t in CLIP_TEMPLATES]).to(device)
+            f = model.encode_text(prompts)
+            f = f / f.norm(dim=-1, keepdim=True)
+            feats.append(f.mean(dim=0))                  # ensemble: average, THEN renormalise
+        feats = torch.stack(feats)
+        return feats / feats.norm(dim=-1, keepdim=True)
+
+
+def classify(model, text_features, preprocess, img, device, topk=3):
+    """Top-k CLIP_CLASSES predictions for one greyscale crop, as [(label, probability), ...].
+
+    Probability comes from CLIP's own convention: cosine similarity between image and text
+    embeddings, scaled by the model's learned logit_scale, softmax over the CLASS set (not over
+    the whole vocabulary - there is no vocabulary, only the handful of classes given here). That
+    makes this a closed-set decision among CLIP_CLASSES specifically, not an open-ended one; a
+    photo of something in none of those categories will still be forced to pick its closest match.
     """
     import torch
-    rgb = np.repeat(img[:, :, None], 3, axis=2).astype(np.float32) / 255.0
-    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-    x = torch.from_numpy(((rgb - mean) / std).transpose(2, 0, 1)).unsqueeze(0).float().to(device)
+    from PIL import Image
+    rgb = Image.fromarray(np.repeat(img[:, :, None], 3, axis=2))
+    x = preprocess(rgb).unsqueeze(0).to(device)
     with torch.no_grad():
-        probs = torch.softmax(model(x), dim=1)[0]
-    top = torch.topk(probs, topk)
-    return [(categories[i], float(p)) for p, i in zip(top.values.cpu(), top.indices.cpu())]
+        f = model.encode_image(x)
+        f = f / f.norm(dim=-1, keepdim=True)
+        probs = (model.logit_scale.exp() * f @ text_features.T).softmax(dim=-1)[0]
+    top = torch.topk(probs, min(topk, len(CLIP_CLASSES)))
+    return [(CLIP_CLASSES[i], float(p)) for p, i in zip(top.values.cpu(), top.indices.cpu())]
 
 
 def draw_classification(img, preds):
@@ -167,22 +206,25 @@ def main():
     p.add_argument('--yolo-conf', type=float, default=0.25)
     p.add_argument('--yolo-device', default='cuda')
     p.add_argument('--classify', action='store_true',
-                   help='additionally run torchvision ResNet-50 (ImageNet-1000) on both crops and '
-                        'draw its top-3 predictions. ImageNet has no "person" class, so this is a '
-                        'weaker check than --yolo: it shows whether the top guess is at all '
-                        'human-adjacent, not that a person was confirmed present.')
+                   help='additionally run CLIP zero-shot (ViT-B/32, OpenAI weights) on both crops, '
+                        'scored against an explicit small class set that includes "a person" - '
+                        'unlike a fixed-taxonomy classifier (ImageNet-1000 has no such class), '
+                        'CLIP lets the classes be arbitrary text, so the actual question can be '
+                        'asked directly. Reports P(person) per crop, not just a top-1 label.')
     p.add_argument('--out', default=None)
     a = p.parse_args()
 
     model = None
-    clf, categories, clf_device = None, None, None
+    clf, clf_text, clf_preprocess, clf_device = None, None, None, None
     if a.classify:
+        import open_clip
         import torch
-        from torchvision.models import ResNet50_Weights, resnet50
         clf_device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        weights = ResNet50_Weights.IMAGENET1K_V2
-        categories = weights.meta['categories']
-        clf = resnet50(weights=weights).to(clf_device).eval()
+        clf, _, clf_preprocess = open_clip.create_model_and_transforms(
+            'ViT-B-32-quickgelu', pretrained='openai')
+        clf = clf.to(clf_device).eval()
+        tokenizer = open_clip.get_tokenizer('ViT-B-32-quickgelu')
+        clf_text = build_clip_text_features(clf, tokenizer, clf_device)
 
     if a.yolo:
         import os as _os
@@ -224,15 +266,16 @@ def main():
                   f'   aligned {"fires " + format(best(det_aligned), ".2f") if det_aligned else "nothing"}')
 
         if clf is not None:
-            pred_static = classify(clf, categories, static if static.ndim == 2 else
+            pred_static = classify(clf, clf_text, clf_preprocess, static if static.ndim == 2 else
                                    cv2.cvtColor(static, cv2.COLOR_BGR2GRAY), clf_device)
-            pred_aligned = classify(clf, categories, gt_fused if gt_fused.ndim == 2 else
-                                    cv2.cvtColor(gt_fused, cv2.COLOR_BGR2GRAY), clf_device)
+            pred_aligned = classify(clf, clf_text, clf_preprocess, gt_fused if gt_fused.ndim == 2
+                                    else cv2.cvtColor(gt_fused, cv2.COLOR_BGR2GRAY), clf_device)
             static, gt_fused = draw_classification(static, pred_static), \
                 draw_classification(gt_fused, pred_aligned)
             clf_tally.append((pred_static, pred_aligned))
-            print(f'    ImageNet top-1: unaligned {pred_static[0][0]!r} {pred_static[0][1]:.2f}'
-                  f'   aligned {pred_aligned[0][0]!r} {pred_aligned[0][1]:.2f}')
+            print(f'    CLIP P(person): unaligned {p_person(pred_static):.2f}'
+                  f'   aligned {p_person(pred_aligned):.2f}  '
+                  f'(top-1 unaligned {pred_static[0][0]!r}, aligned {pred_aligned[0][0]!r})')
 
         n = run[1] - run[0] + 1
         left_cap = 'unaligned (vx=0)' if a.caption == 'simple' else \
@@ -270,10 +313,12 @@ def main():
         fa = sum(g for _, g in yolo_tally)
         print(f'\nYOLO fired on {fu}/{n} unaligned segments, {fa}/{n} aligned segments')
     if clf_tally:
-        print(f'\nImageNet top-1 per segment (no "person" class exists - reading these as '
-              f'human-adjacent vs scene-adjacent, not as person confirmation):')
+        print(f'\nCLIP P(person) per segment, unaligned -> aligned:')
         for i, (pu, pa) in enumerate(clf_tally):
-            print(f'  seg {i}: unaligned {pu[0][0]!r}  ->  aligned {pa[0][0]!r}')
+            print(f'  seg {i}: {p_person(pu):.2f} -> {p_person(pa):.2f}')
+        mean_u = float(np.mean([p_person(pu) for pu, _ in clf_tally]))
+        mean_a = float(np.mean([p_person(pa) for _, pa in clf_tally]))
+        print(f'  mean: {mean_u:.2f} -> {mean_a:.2f}')
 
 
 if __name__ == '__main__':
