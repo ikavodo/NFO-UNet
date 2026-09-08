@@ -32,6 +32,7 @@ import numpy as np
 
 from tracking.core.integrate_image import align_frames, fuse
 from tracking.eval.lookbehind_discrimination import gt_runs, load_sequence
+from tracking.eval.yolo_vs_tracker import yolo_boxes
 
 
 def build_gt_winner(gt: dict, run: tuple, w: int, h: int):
@@ -64,6 +65,18 @@ def build_gt_winner(gt: dict, run: tuple, w: int, h: int):
         vx = 0.0
     history = {int(t): (float(cx[t]), float(cy[t]), float(ht[t])) for t in local}
     return dict(frames=list(int(t) for t in local), history=history, vx=vx), abs_idx
+
+
+def draw_yolo(img, boxes):
+    """Boxes + confidence drawn ONTO the integrated image itself (not a separate panel) - the
+    question here is whether YOLO fires on THIS pixel content, so the boxes need to sit directly
+    over the crop that produced them, not beside it."""
+    vis = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR) if img.ndim == 2 else img.copy()
+    for (x1, y1, x2, y2), c in boxes:
+        cv2.rectangle(vis, (x1, y1), (x2, y2), (255, 0, 255), 2)
+        cv2.putText(vis, f'{c:.2f}', (x1, max(12, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.4,
+                   (255, 0, 255), 1)
+    return vis
 
 
 def panel(img, subtitle):
@@ -113,8 +126,24 @@ def main():
                         "across the top row, all aligned panels across the bottom row - so N "
                         "segments render as a 2xN grid rather than an Nx2 stack. No per-run "
                         "header in this mode (there is no single column it could span).")
+    p.add_argument('--yolo', nargs='?', const='data/yolo11m.pt', default=None, metavar='WEIGHTS',
+                   help='run YOLO on both the unaligned and aligned integrated image per segment '
+                        'and draw its boxes/confidence directly on them (bare flag uses '
+                        'data/yolo11m.pt). Prints a recall summary: how many segments get a '
+                        'detection unaligned vs aligned - the actual test of whether integration '
+                        'helps a downstream detector, which is what mask_background=False in '
+                        'integrate_image.py was built for and never checked against a detector.')
+    p.add_argument('--yolo-conf', type=float, default=0.25)
+    p.add_argument('--yolo-device', default='cuda')
     p.add_argument('--out', default=None)
     a = p.parse_args()
+
+    model = None
+    if a.yolo:
+        import os as _os
+        _os.environ.setdefault('YOLO_VERBOSE', 'False')
+        from ultralytics import YOLO
+        model = YOLO(a.yolo)
 
     seq_dir = os.path.join(a.data_dir, a.seq)
     frames, gt = load_sequence(seq_dir)
@@ -122,7 +151,7 @@ def main():
     runs = gt_runs(gt)
     print(f'{a.seq}: {T} frames {W}x{H}, {len(runs)} GT runs (traversals)')
 
-    rows, tops, bottoms = [], [], []
+    rows, tops, bottoms, yolo_tally = [], [], [], []
     for run in (runs[:a.limit] if a.limit else runs):
         if a.window and (run[1] - run[0] + 1) > a.window:
             mid = (run[0] + run[1]) // 2
@@ -138,6 +167,16 @@ def main():
 
         unaligned_winner = dict(winner, vx=0.0)          # the do-nothing control: fixed window
         static = fuse(align_frames(seg, unaligned_winner, crop_size=crop), method=a.method)
+
+        det_static = det_aligned = []
+        if model is not None:
+            det_static = yolo_boxes(model, static, a.yolo_conf, a.yolo_device)
+            det_aligned = yolo_boxes(model, gt_fused, a.yolo_conf, a.yolo_device)
+            static, gt_fused = draw_yolo(static, det_static), draw_yolo(gt_fused, det_aligned)
+            yolo_tally.append((bool(det_static), bool(det_aligned)))
+            best = lambda d: max((c for _, c in d), default=0.0)
+            print(f'    YOLO: unaligned {"fires " + format(best(det_static), ".2f") if det_static else "nothing"}'
+                  f'   aligned {"fires " + format(best(det_aligned), ".2f") if det_aligned else "nothing"}')
 
         n = run[1] - run[0] + 1
         left_cap = 'unaligned (vx=0)' if a.caption == 'simple' else \
@@ -169,6 +208,11 @@ def main():
     out = a.out or f'images/stream/{a.seq}_gt_integrated.png'
     cv2.imwrite(out, montage)
     print(f'wrote {out}')
+    if yolo_tally:
+        n = len(yolo_tally)
+        fu = sum(u for u, _ in yolo_tally)
+        fa = sum(g for _, g in yolo_tally)
+        print(f'\nYOLO fired on {fu}/{n} unaligned segments, {fa}/{n} aligned segments')
 
 
 if __name__ == '__main__':
