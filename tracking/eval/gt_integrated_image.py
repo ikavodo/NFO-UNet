@@ -67,6 +67,37 @@ def build_gt_winner(gt: dict, run: tuple, w: int, h: int):
     return dict(frames=list(int(t) for t in local), history=history, vx=vx), abs_idx
 
 
+def classify(model, categories, img, device, topk=3):
+    """Top-k ImageNet-1000 predictions for one greyscale crop, as [(label, confidence), ...].
+
+    ImageNet-1000 HAS NO "person" CLASS. This is not a detection-equivalent test: it cannot
+    confirm "a person is here" the way YOLO's box does. What it CAN show is whether the network's
+    best guess is at all human-adjacent (clothing, sports gear commonly photographed with people)
+    versus something from the scene's own furniture (trees, foliage) - a much weaker signal, kept
+    honest rather than oversold.
+    """
+    import torch
+    rgb = np.repeat(img[:, :, None], 3, axis=2).astype(np.float32) / 255.0
+    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    x = torch.from_numpy(((rgb - mean) / std).transpose(2, 0, 1)).unsqueeze(0).float().to(device)
+    with torch.no_grad():
+        probs = torch.softmax(model(x), dim=1)[0]
+    top = torch.topk(probs, topk)
+    return [(categories[i], float(p)) for p, i in zip(top.values.cpu(), top.indices.cpu())]
+
+
+def draw_classification(img, preds):
+    """Top-k labels stacked at the TOP of the crop - panel()'s caption already owns the bottom."""
+    vis = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR) if img.ndim == 2 else img.copy()
+    for i, (label, p) in enumerate(preds):
+        text = f'{label[:18]} {p:.2f}'
+        y = 14 + 13 * i
+        cv2.putText(vis, text, (3, y), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 0, 0), 2)
+        cv2.putText(vis, text, (3, y), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 255, 255), 1)
+    return vis
+
+
 def draw_yolo(img, boxes):
     """Boxes + confidence drawn ONTO the integrated image itself (not a separate panel) - the
     question here is whether YOLO fires on THIS pixel content, so the boxes need to sit directly
@@ -135,10 +166,24 @@ def main():
                         'integrate_image.py was built for and never checked against a detector.')
     p.add_argument('--yolo-conf', type=float, default=0.25)
     p.add_argument('--yolo-device', default='cuda')
+    p.add_argument('--classify', action='store_true',
+                   help='additionally run torchvision ResNet-50 (ImageNet-1000) on both crops and '
+                        'draw its top-3 predictions. ImageNet has no "person" class, so this is a '
+                        'weaker check than --yolo: it shows whether the top guess is at all '
+                        'human-adjacent, not that a person was confirmed present.')
     p.add_argument('--out', default=None)
     a = p.parse_args()
 
     model = None
+    clf, categories, clf_device = None, None, None
+    if a.classify:
+        import torch
+        from torchvision.models import ResNet50_Weights, resnet50
+        clf_device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        weights = ResNet50_Weights.IMAGENET1K_V2
+        categories = weights.meta['categories']
+        clf = resnet50(weights=weights).to(clf_device).eval()
+
     if a.yolo:
         import os as _os
         _os.environ.setdefault('YOLO_VERBOSE', 'False')
@@ -151,7 +196,7 @@ def main():
     runs = gt_runs(gt)
     print(f'{a.seq}: {T} frames {W}x{H}, {len(runs)} GT runs (traversals)')
 
-    rows, tops, bottoms, yolo_tally = [], [], [], []
+    rows, tops, bottoms, yolo_tally, clf_tally = [], [], [], [], []
     for run in (runs[:a.limit] if a.limit else runs):
         if a.window and (run[1] - run[0] + 1) > a.window:
             mid = (run[0] + run[1]) // 2
@@ -177,6 +222,17 @@ def main():
             best = lambda d: max((c for _, c in d), default=0.0)
             print(f'    YOLO: unaligned {"fires " + format(best(det_static), ".2f") if det_static else "nothing"}'
                   f'   aligned {"fires " + format(best(det_aligned), ".2f") if det_aligned else "nothing"}')
+
+        if clf is not None:
+            pred_static = classify(clf, categories, static if static.ndim == 2 else
+                                   cv2.cvtColor(static, cv2.COLOR_BGR2GRAY), clf_device)
+            pred_aligned = classify(clf, categories, gt_fused if gt_fused.ndim == 2 else
+                                    cv2.cvtColor(gt_fused, cv2.COLOR_BGR2GRAY), clf_device)
+            static, gt_fused = draw_classification(static, pred_static), \
+                draw_classification(gt_fused, pred_aligned)
+            clf_tally.append((pred_static, pred_aligned))
+            print(f'    ImageNet top-1: unaligned {pred_static[0][0]!r} {pred_static[0][1]:.2f}'
+                  f'   aligned {pred_aligned[0][0]!r} {pred_aligned[0][1]:.2f}')
 
         n = run[1] - run[0] + 1
         left_cap = 'unaligned (vx=0)' if a.caption == 'simple' else \
@@ -213,6 +269,11 @@ def main():
         fu = sum(u for u, _ in yolo_tally)
         fa = sum(g for _, g in yolo_tally)
         print(f'\nYOLO fired on {fu}/{n} unaligned segments, {fa}/{n} aligned segments')
+    if clf_tally:
+        print(f'\nImageNet top-1 per segment (no "person" class exists - reading these as '
+              f'human-adjacent vs scene-adjacent, not as person confirmation):')
+        for i, (pu, pa) in enumerate(clf_tally):
+            print(f'  seg {i}: unaligned {pu[0][0]!r}  ->  aligned {pa[0][0]!r}')
 
 
 if __name__ == '__main__':
