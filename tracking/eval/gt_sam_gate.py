@@ -173,6 +173,16 @@ def main():
     p.add_argument('--data-dir', default='data/nfo_processed')
     p.add_argument('--window', type=int, default=31)
     p.add_argument('--limit', type=int, default=2)
+    p.add_argument('--run-index', type=int, default=None,
+                   help='process only this one run (by index into gt_runs), instead of the '
+                        'first --limit runs. Needed to target a specific, deliberately-chosen '
+                        'run when testing --center-frame.')
+    p.add_argument('--center-frame', type=int, default=None,
+                   help="force the window to center on this ABSOLUTE frame instead of the run's "
+                        "own temporal midpoint - e.g. to deliberately center on a heavily-occluded "
+                        "moment (found via the same background/column-clear method as "
+                        "nfo_visibility.py, inverted) and check whether the method still needs a "
+                        "'good' moment to anchor on the way prompted SAM2 does.")
     p.add_argument('--crop-mult', type=float, default=4.5)
     p.add_argument('--samples', type=int, default=4, help='frames to show per segment')
     p.add_argument('--compare', action='store_true',
@@ -186,12 +196,14 @@ def main():
     seq_dir = os.path.join(a.data_dir, a.seq)
     frames, gt = load_sequence(seq_dir)
     T_all, H, W = frames.shape
-    runs = gt_runs(gt)[:a.limit]
-    print(f'{a.seq}: {len(runs)} segments (of {len(gt_runs(gt))} total)')
+    all_runs = gt_runs(gt)
+    runs = [all_runs[a.run_index]] if a.run_index is not None else all_runs[:a.limit]
+    print(f'{a.seq}: {len(runs)} segments (of {len(all_runs)} total)')
 
     for si, run in enumerate(runs):
         if a.window and (run[1] - run[0] + 1) > a.window:
-            mid = (run[0] + run[1]) // 2
+            mid = a.center_frame if a.center_frame is not None else (run[0] + run[1]) // 2
+            assert run[0] <= mid <= run[1], f'--center-frame {mid} outside run f{run[0]}-{run[1]}'
             half = a.window // 2
             run = (max(run[0], mid - half), min(run[1], mid - half + a.window - 1))
         gt_winner, abs_idx = build_gt_winner(gt, run, W, H)
