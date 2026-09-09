@@ -41,9 +41,19 @@ from tracking.eval.sam2_drift_check import FRAMES_DIR, gt_box_px
 
 SEQ = 'seq1_gt'
 RUN_INDEX = 4
-FRAMES = (1216, 1234, 1252, 1271, 1289, 1308)          # shared across every row in both figures
-WINDOWS = ((1216, 1246), (1247, 1277), (1278, 1308))   # 93 = 31x3: tiles the SAME span SAM2 covers
 TILE = 280
+
+# GOOD-INIT figure: SAM2 is prompted at the confirmed-clear checkpoint f1216, so both rows sample
+# starting there too - f1216 IS the true init frame for this condition already.
+FRAMES_GOOD = (1216, 1234, 1252, 1271, 1289, 1308)
+WINDOWS_GOOD = ((1216, 1246), (1247, 1277), (1278, 1308))          # 93 = 31x3
+
+# BAD-INIT figure: SAM2 is prompted at the run's own first frame f1154 - sampling must start
+# there too, or a viewer never sees where it was actually seeded, only after it has already
+# drifted. Same np.linspace(0, T-1, 6) convention as sam2_drift_check.py's original bad-init
+# montage, over the FULL 155-frame run this time (not just the post-checkpoint remainder).
+FRAMES_BAD = (1154, 1184, 1215, 1246, 1277, 1308)
+WINDOWS_BAD = ((1154, 1184), (1185, 1215), (1216, 1246), (1247, 1277), (1278, 1308))  # 155 = 31x5
 
 
 def run_propagation_point(video_predictor, frames_dir, T, H, W, gt, f0, local_idx):
@@ -73,9 +83,9 @@ def label_bar(width, text):
     return bar
 
 
-def sam2_row(pred, frames, abs_idx, gt, W, H, with_box):
+def sam2_row(pred, frames, abs_idx, gt, W, H, with_box, sample_frames):
     tiles = []
-    for f in FRAMES:
+    for f in sample_frames:
         t = f - abs_idx[0]
         ov = cv2.cvtColor(frames[f], cv2.COLOR_GRAY2BGR)
         m = pred[t]
@@ -87,7 +97,7 @@ def sam2_row(pred, frames, abs_idx, gt, W, H, with_box):
     return np.hstack(tiles)
 
 
-def our_row(frames, gt, H, W, with_box):
+def our_row(frames, gt, H, W, with_box, sample_frames, windows):
     """Reuses gt_sam_gate.py's render_row unchanged; only adds the GT box on top when asked,
     since render_row itself never draws one.
 
@@ -98,16 +108,15 @@ def our_row(frames, gt, H, W, with_box):
     separate rescale needed. Passing native (W, H) here (the first version's bug) drew the box at
     224-pixel scale on a 280-pixel canvas - too small and shifted toward the corner."""
     tiles = []
-    for window in WINDOWS:
+    for window in windows:
         abs_idx = list(range(window[0], window[1] + 1))
         winner, _ = build_gt_winner(gt, window, W, H)
+        frames_in_window = [f for f in sample_frames if window[0] <= f <= window[1]]
         row = render_row(winner, frames[abs_idx], abs_idx, frames, H, W, crop_mult=4.5,
-                         samples=0, label='', abs_frames=[f for f in FRAMES if window[0] <= f <= window[1]])
+                         samples=0, label='', abs_frames=frames_in_window)
         strip = row[:, 260:]                          # drop render_row's own reference-image tile
-        n = sum(window[0] <= f <= window[1] for f in FRAMES)
-        strip = cv2.resize(strip, (TILE * n, TILE))
+        strip = cv2.resize(strip, (TILE * len(frames_in_window), TILE))
         if with_box:
-            frames_in_window = [f for f in FRAMES if window[0] <= f <= window[1]]
             for i, f in enumerate(frames_in_window):
                 tile = strip[:, i * TILE:(i + 1) * TILE]
                 draw_gt_box(tile, gt, f, TILE, TILE)
@@ -172,35 +181,44 @@ def main():
           f'({1000 * t_good / n_good_frames:.0f} ms/frame)')
 
     t0 = time.perf_counter()
-    ours_row_no_box = our_row(frames, gt, H, W, with_box=False)
+    ours_good_no_box = our_row(frames, gt, H, W, with_box=False,
+                               sample_frames=FRAMES_GOOD, windows=WINDOWS_GOOD)
     t_ours = time.perf_counter() - t0
-    n_our_calls = len(WINDOWS)
+    n_our_calls = len(WINDOWS_GOOD)
     print(f'Our method:     {t_ours:.1f}s total for {n_our_calls} SAM2 calls covering '
           f'{n_good_frames} frames  ({1000 * t_ours / n_our_calls:.0f} ms/call)')
     speedup = t_good / t_ours
     print(f'speedup over the SAME span vs SAM2 good-init: {speedup:.1f}x')
 
-    # --- figure 1: GOOD-INIT, mask-only both rows, apples-to-apples ---
-    sam2_good_tiles = sam2_row(pred_good, frames, list(range(run[0], run[1] + 1)), gt, W, H, with_box=False)
+    all_idx = list(range(run[0], run[1] + 1))
+
+    # --- figure 1: GOOD-INIT, mask-only both rows, apples-to-apples. Sampling starts at f1216,
+    # which IS the true prompt frame for this condition - no change needed here. ---
+    sam2_good_tiles = sam2_row(pred_good, frames, all_idx, gt, W, H, with_box=False,
+                               sample_frames=FRAMES_GOOD)
     fig1 = np.vstack([
         label_bar(sam2_good_tiles.shape[1],
                  f'SAM2, confirmed-clear init (point prompt), one propagation - {t_good:.0f}s / {n_good_frames}f'),
         sam2_good_tiles,
-        label_bar(ours_row_no_box.shape[1],
+        label_bar(ours_good_no_box.shape[1],
                  f'Our method, {n_our_calls} independent windows (point prompt) - {t_ours:.1f}s / {n_our_calls} calls'),
-        ours_row_no_box,
+        ours_good_no_box,
     ])
     cv2.imwrite('images/stream/seq1_gt_segmentation_comparison_goodinit.png', fig1)
 
-    # --- figure 2: BAD-INIT, GT box on both rows ---
-    sam2_bad_tiles = sam2_row(pred_bad, frames, list(range(run[0], run[1] + 1)), gt, W, H, with_box=True)
-    ours_row_box = our_row(frames, gt, H, W, with_box=True)
+    # --- figure 2: BAD-INIT, GT box on both rows, sampling starts at f1154 - the run's own first
+    # frame, where SAM2 was actually seeded - so a viewer sees the true starting point instead of
+    # jumping in after the mask has already drifted. ---
+    sam2_bad_tiles = sam2_row(pred_bad, frames, all_idx, gt, W, H, with_box=True,
+                              sample_frames=FRAMES_BAD)
+    ours_bad_box = our_row(frames, gt, H, W, with_box=True,
+                           sample_frames=FRAMES_BAD, windows=WINDOWS_BAD)
     fig2 = np.vstack([
         label_bar(sam2_bad_tiles.shape[1],
                  f'SAM2, arbitrary init at f{run[0]} (point prompt), one propagation - {t_bad:.0f}s / {T}f. Red: ground truth'),
         sam2_bad_tiles,
-        label_bar(ours_row_box.shape[1], 'Our method, same frames, same prompt type. Red: ground truth'),
-        ours_row_box,
+        label_bar(ours_bad_box.shape[1], 'Our method, same frames, same prompt type. Red: ground truth'),
+        ours_bad_box,
     ])
     cv2.imwrite('images/stream/seq1_gt_segmentation_comparison_badinit.png', fig2)
 
