@@ -125,10 +125,17 @@ def build_tracker_winner(seg_frames, bg_frames=30, var_threshold=16.0, max_age=6
     return winner, person_height
 
 
-def render_row(winner, seg, abs_idx, frames, H, W, crop_mult, samples, label):
+def render_row(winner, seg, abs_idx, frames, H, W, crop_mult, samples, label, abs_frames=None):
     """One row of the comparison: integrated reference + SAM2 mask, then that mask projected
-    onto `samples` raw frames. Shared by the GT and tracker paths so the two rows are built by
-    IDENTICAL code - the only difference between rows is which winner produced the alignment."""
+    onto raw frames. Shared by the GT and tracker paths so the two rows are built by IDENTICAL
+    code - the only difference between rows is which winner produced the alignment.
+
+    abs_frames: explicit ABSOLUTE frame numbers to sample instead of `samples` evenly-spaced
+    ones - needed to line this window up against another method's own chosen frames (e.g.
+    sam2_drift_check.py's sample points) so a side-by-side comparison is showing the SAME
+    moments, not just the same span. Frames outside this window are silently skipped, since a
+    31-frame window only ever covers its own slice of a longer clip.
+    """
     T = len(abs_idx)
     center_t = T // 2
     mean_h = float(np.mean([winner['history'][t][2] for t in winner['history']
@@ -152,7 +159,10 @@ def render_row(winner, seg, abs_idx, frames, H, W, crop_mult, samples, label):
         cv2.drawContours(ref_vis, [c], -1, (0, 255, 0), 2)
     cv2.circle(ref_vis, (int(point_xy[0]), int(point_xy[1])), 4, (0, 0, 255), -1)
     tiles = [cv2.resize(ref_vis, (260, 260))]
-    sample_t = np.linspace(0, T - 1, min(samples, T)).astype(int)
+    if abs_frames is not None:
+        sample_t = [f - abs_idx[0] for f in abs_frames if abs_idx[0] <= f <= abs_idx[-1]]
+    else:
+        sample_t = np.linspace(0, T - 1, min(samples, T)).astype(int)
     for t in sample_t:
         cx_t = ax + winner['vx'] * (t - center_t)
         proj = project_to_frame(V[t], cx_t, ay, crop, (H, W))
