@@ -89,7 +89,14 @@ def sam2_row(pred, frames, abs_idx, gt, W, H, with_box):
 
 def our_row(frames, gt, H, W, with_box):
     """Reuses gt_sam_gate.py's render_row unchanged; only adds the GT box on top when asked,
-    since render_row itself never draws one."""
+    since render_row itself never draws one.
+
+    The box is drawn AFTER render_row's tiles have already been resized twice (224x224 native ->
+    260x260 inside render_row -> TILExTILE here), so it must be computed in TILE-sized pixel
+    space, not native W/H - gt boxes are stored normalised (fraction of frame), so passing
+    (TILE, TILE) to gt_box_px gives coordinates already correct for THIS canvas directly, no
+    separate rescale needed. Passing native (W, H) here (the first version's bug) drew the box at
+    224-pixel scale on a 280-pixel canvas - too small and shifted toward the corner."""
     tiles = []
     for window in WINDOWS:
         abs_idx = list(range(window[0], window[1] + 1))
@@ -103,9 +110,34 @@ def our_row(frames, gt, H, W, with_box):
             frames_in_window = [f for f in FRAMES if window[0] <= f <= window[1]]
             for i, f in enumerate(frames_in_window):
                 tile = strip[:, i * TILE:(i + 1) * TILE]
-                draw_gt_box(tile, gt, f, W, H)
+                draw_gt_box(tile, gt, f, TILE, TILE)
         tiles.append(strip)
     return np.hstack(tiles)
+
+
+CACHE_DIR = 'tracking/sam2_pseudo_mask_tmp/segmentation_comparison_cache'
+
+
+def cached_propagation(label, video_predictor, frames_dir, T, H, W, gt, f0, local_idx):
+    """Propagation output never depends on the box-drawing code downstream of it, so once a
+    real wall-clock timing has been measured it is cached (mask array + elapsed seconds) rather
+    than re-paying ~40-65s of GPU compute every time a rendering-only bug gets fixed. The cached
+    number IS still a real measurement, just from the run that produced it, not necessarily the
+    most recent one."""
+    import pickle
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    path = f'{CACHE_DIR}/{label}.pkl'
+    if os.path.exists(path):
+        with open(path, 'rb') as f:
+            pred, elapsed = pickle.load(f)
+        print(f'  [cache hit] {label}: {elapsed:.1f}s (measured previously, not re-timed)')
+        return pred, elapsed
+    t0 = time.perf_counter()
+    pred = run_propagation_point(video_predictor, frames_dir, T, H, W, gt, f0, local_idx)
+    elapsed = time.perf_counter() - t0
+    with open(path, 'wb') as f:
+        pickle.dump((pred, elapsed), f)
+    return pred, elapsed
 
 
 def main():
@@ -124,14 +156,11 @@ def main():
     for t, f in enumerate(range(run[0], run[1] + 1)):
         cv2.imwrite(f'{FRAMES_DIR}/{t:05d}.jpg', frames[f])
 
-    t0 = time.perf_counter()
-    pred_bad = run_propagation_point(video_predictor, FRAMES_DIR, T, H, W, gt, run[0], 0)
-    t_bad = time.perf_counter() - t0
+    pred_bad, t_bad = cached_propagation('bad_init', video_predictor, FRAMES_DIR, T, H, W, gt, run[0], 0)
 
     checkpoint_local = 1216 - run[0]
-    t0 = time.perf_counter()
-    pred_good = run_propagation_point(video_predictor, FRAMES_DIR, T, H, W, gt, 1216, checkpoint_local)
-    t_good = time.perf_counter() - t0
+    pred_good, t_good = cached_propagation('good_init', video_predictor, FRAMES_DIR, T, H, W, gt,
+                                           1216, checkpoint_local)
 
     for fp in glob.glob(f'{FRAMES_DIR}/*.jpg'):
         os.remove(fp)
