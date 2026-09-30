@@ -72,6 +72,47 @@ def gt_to_native(bb, img_w, img_h):
     return (bb.x * s - pad_x, bb.y * s - pad_y, (bb.x + bb.w) * s - pad_x, (bb.y + bb.h) * s - pad_y)
 
 
+EXT_TAG = 'sammask_ext'   # edge-extension masks: NOT ground truth, never evaluate against these
+
+
+def extrapolate_edge_boxes(bbs, start, end, side, lo, hi, k=10, max_frames=40):
+    """{raw_idx: BoundingBox} for frames just outside a GT segment, normalised like the GT.
+
+    NFO's annotation stops while the person is still partly in view (seq1: GT ends at f137 with
+    the box right edge at 0.916 of the frame, person visible until ~f160). This supplies the
+    missing boxes: centre extrapolated at the constant velocity OLS-fitted to the k GT frames
+    nearest that edge; size held at their MEDIAN, because GT boxes widen quickly as the person
+    reaches the frame edge (seq1 w 0.121 -> 0.188 over f130-137) and extrapolating that grows
+    without bound. Stops at the first box entirely outside the frame, at `lo`/`hi` (inclusive
+    limits, set by the caller so extensions never enter a neighbouring segment), or after
+    max_frames.
+    """
+    ref = list(range(max(start, end - k + 1), end + 1)) if side == 'after' else \
+        list(range(start, min(end, start + k - 1) + 1))
+    ref = [i for i in ref if i in bbs and bbs[i] and bbs[i][0].x >= 0]
+    t = np.array(ref, dtype=float)
+    cx = np.array([bbs[i][0].x + bbs[i][0].w / 2 for i in ref])
+    cy = np.array([bbs[i][0].y + bbs[i][0].h / 2 for i in ref])
+    w = float(np.median([bbs[i][0].w for i in ref]))
+    h = float(np.median([bbs[i][0].h for i in ref]))
+    if len(ref) >= 2:
+        fx, fy = np.polyfit(t, cx, 1), np.polyfit(t, cy, 1)
+    else:
+        fx, fy = np.array([0.0, cx[0]]), np.array([0.0, cy[0]])
+
+    step = 1 if side == 'after' else -1
+    idx = end + 1 if side == 'after' else start - 1
+    out = {}
+    while lo <= idx <= hi and len(out) < max_frames:
+        x0 = np.polyval(fx, idx) - w / 2
+        y0 = np.polyval(fy, idx) - h / 2
+        if x0 >= 1.0 or x0 + w <= 0.0 or y0 >= 1.0 or y0 + h <= 0.0:
+            break
+        out[idx] = BoundingBox(float(x0), float(y0), w, h)
+        idx += step
+    return dict(sorted(out.items()))
+
+
 def point_and_box_from_gt(bbs, raw_idx, img_w, img_h):
     """Returns (center_point, box) in pixel coords. Passing the full box (not just its center
     point) to SAM2 lets it use the GT's known vertical extent directly - a point-only prompt has
@@ -309,6 +350,53 @@ def process_segment(predictor, seq_dir, bbs, start, end, seg_idx, out_dir_frames
     return diagnostics
 
 
+def extend_segment_edge(predictor, seq_dir, bbs, start, end, seg_idx, side, ext_boxes,
+                        out_dir_frames, device, box_dilate_frac=0.1, min_width_px=4):
+    """SAM2 masks for the frames in ext_boxes (see extrapolate_edge_boxes), written as
+    *_{EXT_TAG}.png. Seeded with the REAL GT box at the segment's own edge frame and propagated
+    outward only, so the prompt is still ground truth; each propagated mask is then clipped to
+    that frame's extrapolated box (dilated by box_dilate_frac of its size, since an extrapolated
+    box is less certain than a GT one), clamped to the image. Returns [(raw_idx, n_px)]."""
+    if not ext_boxes:
+        return []
+    seq_name = os.path.basename(seq_dir).removesuffix('_gt')
+    native_dir = os.path.join(NATIVE_DIR, seq_name)
+    first, last = (start, max(ext_boxes)) if side == 'after' else (min(ext_boxes), end)
+    edge = end if side == 'after' else start
+    frame_dir = os.path.join(out_dir_frames, f'seg{seg_idx}_{side}_ext_frames')
+    stage_frames(seq_dir, first, last, frame_dir,
+                 src_path_fn=lambda raw_idx: os.path.join(native_dir, f'{raw_idx:05d}.jpg'))
+    img_h, img_w = cv2.imread(os.path.join(native_dir, f'{edge:05d}.jpg'), 0).shape
+    point, box = point_and_box_from_gt(bbs, edge, img_w, img_h)
+    n_ext = len(ext_boxes)
+    results = propagate_one_checkpoint(
+        predictor, frame_dir, edge - first, point, box, device,
+        max_forward=n_ext if side == 'after' else 0, max_backward=0 if side == 'after' else n_ext,
+        static_threshold_px=STATIC_THRESHOLD_PX * (img_w / OUT_SIZE))
+
+    written = []
+    for raw_idx, ebb in ext_boxes.items():
+        mask = results.get(raw_idx - first)
+        if mask is None:
+            continue                     # propagation stopped early (empty/stuck): leave unlabelled
+        x0, y0, x1, y1 = gt_to_native(ebb, img_w, img_h)
+        dx, dy = box_dilate_frac * (x1 - x0), box_dilate_frac * (y1 - y0)
+        x0, y0 = max(0, int(x0 - dx)), max(0, int(y0 - dy))
+        x1, y1 = min(img_w, int(x1 + dx)), min(img_h, int(y1 + dy))
+        clipped = np.zeros_like(mask)
+        clipped[y0:y1, x0:x1] = mask[y0:y1, x0:x1]
+        n_lab, labels, stats, _ = cv2.connectedComponentsWithStats(clipped.astype(np.uint8))
+        keep = np.zeros_like(clipped)
+        for lbl in range(1, n_lab):
+            if stats[lbl, cv2.CC_STAT_WIDTH] >= round(min_width_px * img_w / OUT_SIZE):
+                keep |= labels == lbl
+        mask_224, _ = scale_and_pad_img_to_square((keep * 255).astype(np.uint8),
+                                                  BoundingBox(0, 0, 0, 0), OUT_SIZE)
+        cv2.imwrite(os.path.join(seq_dir, f'{raw_idx:05d}_{EXT_TAG}.png'), mask_224)
+        written.append((raw_idx, int(keep.sum())))
+    return written
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--seq', required=True, help='e.g. seq1')
@@ -324,7 +412,16 @@ def main():
                              'GT-anchored connected components). majority: simpler intersection-'
                              'like agreement, kept for comparison - high precision, sparse '
                              'coverage')
+    parser.add_argument('--extend-edges', action='store_true',
+                        help=f'also segment the frames just outside each GT segment (person still '
+                             f'entering/leaving frame, unannotated) with extrapolated boxes, written '
+                             f'as *_{EXT_TAG}.png. Not ground truth - never evaluate against these.')
+    parser.add_argument('--extend-only', action='store_true',
+                        help='skip the main per-segment pass, only run --extend-edges (for adding '
+                             'extensions to masks that already exist)')
     args = parser.parse_args()
+    if args.extend_only:
+        args.extend_edges = True
 
     seq_dir = os.path.join(IN_DIR, f'{args.seq}_gt')
     bbs = parse_bbs(os.path.join(seq_dir, 'groundtruth.txt'))
@@ -359,6 +456,21 @@ def main():
     with open(csv_path, 'w') as f:
         f.write('segment_idx,local_idx,raw_idx,n_checkpoints_reached,min_pairwise_iou\n')
         for seg_idx, (start, end) in indexed_segments:
+            if args.extend_edges:
+                # extensions never enter a neighbour; a gap is split at its midpoint so the
+                # after-extension of one segment and the before-extension of the next can't
+                # both claim (and overwrite) the same frame
+                prev_end = all_segments[seg_idx - 1][1] if seg_idx > 0 else -1
+                next_start = all_segments[seg_idx + 1][0] if seg_idx + 1 < len(all_segments) else n_frames
+                for side, lo, hi in (('before', (prev_end + start) // 2 + 1, n_frames - 1),
+                                     ('after', 0, (end + next_start) // 2)):
+                    ext = extrapolate_edge_boxes(bbs, start, end, side, lo=lo, hi=hi)
+                    written = extend_segment_edge(predictor, seq_dir, bbs, start, end, seg_idx,
+                                                  side, ext, out_dir_frames, device)
+                    print(f'  segment {seg_idx} {side}: {len(written)}/{len(ext)} extension frames '
+                          f'written as *_{EXT_TAG}.png')
+            if args.extend_only:
+                continue
             diagnostics = process_segment(predictor, seq_dir, bbs, start, end, seg_idx,
                                           out_dir_frames, device, clear_regions,
                                           combine_method=args.combine_method)
