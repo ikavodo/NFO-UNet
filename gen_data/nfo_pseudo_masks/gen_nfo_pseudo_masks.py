@@ -56,6 +56,22 @@ MAX_CONSECUTIVE_STATIC = 5  # the person is always in motion in this dataset - t
                             # consecutive near-static frames is treated as a stuck tracker
 
 
+def gt_to_native(bb, img_w, img_h):
+    """(x0, y0, x1, y1) in NATIVE pixels for a GT box normalised to the 224 PADDED square.
+
+    prep_nfo_data.py built the 224 frames with scale_and_pad_img_to_square
+    (gen_data/gen_kth_data/kth_utils.py:28): pad the short side to a square (800x600 -> +100 rows
+    top and bottom, BORDER_REPLICATE, so no visible bars), then scale. So the normalisation
+    reference is the S x S padded square, not the native frame, and the inverse is
+    native = normalised * S - pad. Using normalised * img_h instead (the previous code) squashed
+    every box to img_h/S = 75% of its true height and shifted it - every pseudo-mask lost the
+    feet, because both the SAM2 prompt box and the clip box stopped short of them.
+    """
+    s = max(img_w, img_h)
+    pad_x, pad_y = (s - img_w) / 2, (s - img_h) / 2
+    return (bb.x * s - pad_x, bb.y * s - pad_y, (bb.x + bb.w) * s - pad_x, (bb.y + bb.h) * s - pad_y)
+
+
 def point_and_box_from_gt(bbs, raw_idx, img_w, img_h):
     """Returns (center_point, box) in pixel coords. Passing the full box (not just its center
     point) to SAM2 lets it use the GT's known vertical extent directly - a point-only prompt has
@@ -63,9 +79,8 @@ def point_and_box_from_gt(bbs, raw_idx, img_w, img_h):
     similarity alone, which is exactly where it can fail to reach the feet; a box prompt tells
     it explicitly where the object's extent actually is."""
     bb = bbs[raw_idx][0]
-    point = ((bb.x + bb.w / 2) * img_w, (bb.y + bb.h / 2) * img_h)
-    box = [bb.x * img_w, bb.y * img_h, (bb.x + bb.w) * img_w, (bb.y + bb.h) * img_h]
-    return point, box
+    x0, y0, x1, y1 = gt_to_native(bb, img_w, img_h)
+    return ((x0 + x1) / 2, (y0 + y1) / 2), [x0, y0, x1, y1]
 
 
 def compute_bounds(checkpoints):
@@ -208,10 +223,11 @@ def combine_checkpoint_masks_union_gt_outlier(per_checkpoint_results, n_seg_fram
         gt_list = bbs.get(raw_idx)
         if gt_list and gt_list[0].x >= 0:
             bb = gt_list[0]
-            x0 = max(0, int(bb.x * img_w) - box_dilate_px)
-            y0 = max(0, int(bb.y * img_h) - box_dilate_px)
-            x1 = min(img_w, int((bb.x + bb.w) * img_w) + box_dilate_px)
-            y1 = min(img_h, int((bb.y + bb.h) * img_h) + box_dilate_px)
+            nx0, ny0, nx1, ny1 = gt_to_native(bb, img_w, img_h)
+            x0 = max(0, int(nx0) - box_dilate_px)
+            y0 = max(0, int(ny0) - box_dilate_px)
+            x1 = min(img_w, int(nx1) + box_dilate_px)
+            y1 = min(img_h, int(ny1) + box_dilate_px)
             clipped = np.zeros_like(union)
             clipped[y0:y1, x0:x1] = union[y0:y1, x0:x1]
 
