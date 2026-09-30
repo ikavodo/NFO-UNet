@@ -28,4 +28,4 @@ SEQ=${SEQS[$SLURM_ARRAY_TASK_ID]}
 pwd; hostname; date
 nvidia-smi
 srun "$PYTHON" -m gen_data.nfo_pseudo_masks.gen_nfo_pseudo_masks --seq "$SEQ" \
-    --combine-method union_gt_outlier
+    --combine-method union_gt_outlier "$@"   # extra flags pass through, e.g. sbatch gen_pseudo_masks.sbatch --extend-only
