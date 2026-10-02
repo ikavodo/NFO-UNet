@@ -27,7 +27,8 @@ GT, never S itself.
   pilot it is treated as ground truth, and the label bias is accepted. `*_sammask_ext.png` frames
   are excluded.
 - **Background prior (our method only, since it is the only one that uses it):** **all**
-  person-free frames before t₀ in the current inter-segment gap (minimum 20). A frame is
+  person-free frames before t₀ in the current inter-segment gap (minimum 20), used as the warm-up
+  for the existing background model. Fixed by this rule, not tuned on pilot results. A frame is
   person-free if it lies more than 40 frames from every GT segment. Pilot ranges: f946–f1113
   (168 frames, before segment 4) and f1349–f1435 (87 frames, before segment 5).
 
@@ -61,7 +62,17 @@ generated the pseudo-GT, which slightly reduces the shared-model advantage.
 | B0 | vanilla SAM2.1 video predictor | `../master_thesis/.venv` (sam2 1.1.0) | box + p* |
 | T1 | SAMURAI | `../samurai/.venv` (repo commit `76ba195`) | box |
 | T4 | ours, one-shot causal | same as B0 (confirm NFO-UNet imports there) | box |
-| T4-1 | ours, **integration off** (control) | same as B0 | box |
+| T4-1 | control: SAM2 image, no integration | same as B0 | box |
+| T4-2 | control: warped blob vote, no SAM2 | same as B0 | box |
+| T4-3 | control: frame-t blob, no SAM2, no integration | same as B0 | box |
+
+The controls form a 2×2 with T4. All four share one tracker run (same track, same tracker
+point), so they differ only in the two factors:
+
+| | integration on | integration off |
+|---|---|---|
+| SAM2 image model | T4 | T4-1 |
+| no SAM2 (blobs) | T4-2 | T4-3 |
 
 **T4, online definition:**
 - Buffer: up to the last 7 **consecutive** frames (`NTH_FRAME = 1`), empty at t₀. While it holds
@@ -85,7 +96,19 @@ generated the pseudo-GT, which slightly reduces the shared-model advantage.
 alone. The tracker still uses its 7-frame buffer. The residual |frame − reference| is then 0
 everywhere, so the visibility step passes S through unchanged. T4-1 therefore reduces to the SAM2
 image model on the raw current frame, prompted at the tracker point, per frame, with no memory and
-no integration. This is the
+no integration. Expected to do badly. Its job is the "SAM2 without integration" baseline.
+
+**T4-2 (warped blob vote):** for each buffered frame t−k, shift the tracked person's foreground
+blob by the tracker displacement (cx_t − cx_{t−k}, cy_t − cy_{t−k}) into frame t. A pixel joins
+S_blob if at least m of the N buffered warped blobs cover it. S_blob then goes through **the same
+visibility step as T4**, because the vote fills in occluded pixels (near-amodal), and raw S_blob
+would be penalised against the modal GT. Membership is left open: evaluate every
+m ∈ {1 (union), …, N (intersection)}, N = 7, and report **T4-2\* = the best m by mean J@50 over
+the whole pilot** (one m for all trials, not per trial). The best-of-grid tuning favours the
+control, so T4 > T4-2\* is a conservative result.
+
+**T4-3 (frame-t blob):** the tracked person's foreground blob at frame t (`foreground_mask` /
+`refine_mask` output), scored directly. No SAM2, no integration, no extra compute. This is the
 one-variable control for the question in §1. Without it, a win for T4 over B0 could come from the
 tracker, the image-vs-video SAM2 mode, or the visibility step, not from integration.
 
@@ -96,8 +119,10 @@ tracker, the image-vs-video SAM2 mode, or the visibility step, not from integrat
 - Metrics: J@Δt for Δt ∈ {10, 25, 50}, plus mean J&F over [t₀, t₀+50].
 - Analysis: per method, a scatter of J@50 against v(t₀) with an OLS slope. With 2 segments the
   numbers are descriptive only; no confidence intervals in the pilot.
-- Comparisons that answer §1: **T4 vs T4-1** (does integration help, everything else fixed) and
-  **T4 vs B0/T1** (does it beat memory-based propagation).
+- Comparisons that answer §1:
+  - Integration effect, tested twice: **T4 − T4-1** (with SAM2) and **T4-2\* − T4-3** (without).
+  - Does SAM2 add anything on top of integration: **T4 − T4-2\***.
+  - Does integration beat memory-based propagation: **T4 vs B0, T1**.
 - Record per method: wall-clock per frame and peak GPU memory. Hardware: RTX PRO 4000 Blackwell
   Laptop, 16 GB.
 - Run record: NFO-UNet commit, method repo commit, environment and config in `run.json`.
@@ -105,7 +130,7 @@ tracker, the image-vs-video SAM2 mode, or the visibility step, not from integrat
 ## 6. Pilot decision rules (set before the run)
 
 1. B0 J@50 ≳ 0.85 from every start: no failure to study, so stop.
-2. T4 ≈ T4-1: integration is not what helps. Revisit the premise before building the feature-fusion
+2. T4 ≈ T4-1 and T4-2\* ≈ T4-3: integration is not what helps. Revisit the premise before building the feature-fusion
    SAM2 variant.
 3. T4 > T4-1 and T4 > B0, T1, especially at low v(t₀): supports §1. Run the full benchmark.
 4. T1 ≫ B0: the motion-aware memory already fixes a large part of the failure. SAMURAI becomes the
