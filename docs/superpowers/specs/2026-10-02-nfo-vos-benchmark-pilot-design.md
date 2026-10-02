@@ -26,9 +26,10 @@ GT, never S itself.
 - **GT:** `{idx:05d}_sammask.png` (224×224), the pseudo-GT from `gen_nfo_pseudo_masks.py`. For the
   pilot it is treated as ground truth, and the label bias is accepted. `*_sammask_ext.png` frames
   are excluded.
-- **Background prior (our method only, since it is the only one that uses it):** the 40 most
-  recent person-free frames before t₀. A frame is person-free if it lies more than 40 frames from
-  every GT segment. Pilot ranges: f946–f1113 (before segment 4) and f1349–f1435 (before segment 5).
+- **Background prior (our method only, since it is the only one that uses it):** **all**
+  person-free frames before t₀ in the current inter-segment gap (minimum 20). A frame is
+  person-free if it lies more than 40 frames from every GT segment. Pilot ranges: f946–f1113
+  (168 frames, before segment 4) and f1349–f1435 (87 frames, before segment 5).
 
 ## 3. Trials
 
@@ -37,8 +38,12 @@ GT, never S itself.
   21 in total.
 - **Admissibility:** a start t₀ is kept iff D_{t₀}(p*) ≥ 2 px (224 space). Here
   p* = argmax_{x∈M_{t₀}} D_{t₀}(x) and D is `cv2.distanceTransform(M, DIST_L2, 5)`.
-- **Prompt:** the GT box at t₀ (native px via `gt_to_native`, `gen_nfo_pseudo_masks.py:59`).
-  Methods that accept a point also get p* (scaled to native). Nothing is given after t₀.
+- **Prompt:** every method gets the **same** box + p* at t₀ (native px via `gt_to_native`,
+  `gen_nfo_pseudo_masks.py:59`), sent through the same `add_new_points_or_box(points, labels, box)`
+  call. SAMURAI's predictor keeps this signature
+  (`../samurai/sam2/sam2/sam2_video_predictor.py:173`), although its released scripts pass the box
+  alone (`scripts/main_inference.py:82`): **a flagged deviation from SAMURAI's protocol.** Ours uses
+  the box for track selection; its SAM prompts come from the tracker. Nothing is given after t₀.
 - **Propagation:** forward from t₀, strictly causal, no look-ahead.
 - **Scoring:** every frame in [t₀, t₀+50] for every method.
 - **Per-trial covariates:** v(t₀) = |M_{t₀}| / Ā, where Ā is the median |M| over the segment's
@@ -69,12 +74,18 @@ generated the pseudo-GT, which slightly reduces the shared-model advantage.
   replaces `build_gt_winner` (`tracking/eval/gt_integrated_image.py:38`), which used GT boxes and
   a whole-run OLS.
 - If the track dies, re-acquire the blob nearest to the last predicted position.
-- Segmentation: SAM2 image model (`segment_reference`, `tracking/eval/gt_sam_gate.py:60`) on the
+- Reuse `build_tracker_winner` (`tracking/eval/gt_sam_gate.py`, no GT), restricted to the
+  causal buffer instead of the whole segment.
+- Segmentation: SAM2 image model, **switched from `sam2.1-hiera-small` (`gt_sam_gate.py:50-53`) to
+  base_plus**, (`segment_reference`, `tracking/eval/gt_sam_gate.py:60`) on the
   integrated reference, prompted with the point at the tracker position, then the per-frame
   visibility step. The output is the modal mask for frame t.
 
 **T4-1 (integration off):** identical to T4, except the reference image is the current frame
-alone (buffer length 1 for the reference; the tracker still uses its 7-frame buffer). This is the
+alone. The tracker still uses its 7-frame buffer. The residual |frame − reference| is then 0
+everywhere, so the visibility step passes S through unchanged. T4-1 therefore reduces to the SAM2
+image model on the raw current frame, prompted at the tracker point, per frame, with no memory and
+no integration. This is the
 one-variable control for the question in §1. Without it, a win for T4 over B0 could come from the
 tracker, the image-vs-video SAM2 mode, or the visibility step, not from integration.
 
