@@ -1,141 +1,123 @@
 # NFO fragmented-occlusion VOS benchmark: pilot protocol
 
-Status: design, awaiting review (2026-10-02). Scope: the **pilot** only (one back-and-forth of one
-sequence). A section at the end covers the full 32-segment run, which is set after the pilot.
+Status: design, revision 2, awaiting review (2026-10-02). Scope: the **pilot** only (one
+back-and-forth of one sequence). Deferred items are listed at the end.
 
 ## 1. Question
 
-Under fragmented occlusion, do SAM2 variants designed for occlusion (SAMURAI, DAM4SAM, SAM2Long)
-beat vanilla SAM2 when all get the same single causal prompt? Where does each one fail, as a
-function of how visible the person is at the prompt frame? Secondary questions:
+**Does integrating several views of the person (aligning past frames to the person's motion)
+improve *modal* segmentation under fragmented occlusion, compared with single-view-per-frame
+memory-based propagation (SAM2, SAMURAI)?**
 
-- Which ingredient of the pseudo-GT reference closes the gap between reference and causal?
-- Does a causal, one-shot version of our integrated-image method do better?
-- Hypothesis H-mem: failures start where the memory-gating scores of SAM2-family methods drop
-  during an occluder crossing.
+This motivates a later contribution: a SAM2 variant that fuses encoded features across warped
+frames. The pilot checks whether integration at the image level already shows the effect.
+
+Our method uses an amodal intermediate but outputs modal masks. The integrated reference collects
+person pixels from several frames into one support S that is closer to amodal. S is then projected
+back to frame t by a per-frame visibility step (`visibility_within_mask`,
+`tracking/eval/gt_sam_gate.py:68`). We score that per-frame **modal** output against the modal
+GT, never S itself.
 
 ## 2. Data
 
-- **Pilot:** seq1, segment 4 = frames 1154–1308 (155 f) and segment 5 = frames 1476–1621 (146 f).
-  The two are consecutive, so they cover one crossing in each direction. Both indices come from
-  `find_segments` on `data/nfo_processed/seq1_gt/groundtruth.txt`.
-- **Reference ("GT"):** `{idx:05d}_sammask.png` (224×224) from `gen_nfo_pseudo_masks.py`
-  (sam2.1-hiera-large, `union_gt_outlier`). Each frame is labelled by modal segmentation, i.e.
-  visible pixels only. `*_sammask_ext.png` frames are **excluded** (deferred).
-- **Background prior (allowed for every method, declared):** the 40 most recent person-free frames
-  before t₀. A frame is person-free if it lies more than 40 frames from every GT segment, because
-  annotation stops while the person is still partly visible. Pilot ranges: f946–f1113 (before
-  segment 4) and f1349–f1435 (before segment 5).
+- **Pilot:** seq1, segment 4 = frames 1154–1308 and segment 5 = frames 1476–1621 (`find_segments`
+  on `data/nfo_processed/seq1_gt/groundtruth.txt`). The two are consecutive, so they cover one
+  crossing in each direction.
+- **GT:** `{idx:05d}_sammask.png` (224×224), the pseudo-GT from `gen_nfo_pseudo_masks.py`. For the
+  pilot it is treated as ground truth, and the label bias is accepted. `*_sammask_ext.png` frames
+  are excluded.
+- **Background prior (our method only, since it is the only one that uses it):** the 40 most
+  recent person-free frames before t₀. A frame is person-free if it lies more than 40 frames from
+  every GT segment. Pilot ranges: f946–f1113 (before segment 4) and f1349–f1435 (before segment 5).
 
 ## 3. Trials
 
-- **Starts:** t₀ ∈ {start, start+10, …} ∩ [start, end−50]. That gives about 10 per segment, ~20 in
-  total.
+- **Starts:** t₀ = start, start+10, start+20, …, continuing while t₀ + 50 ≤ the segment's last
+  `_sammask.png` frame. Segment 4 gives 11 starts (1154…1254) and segment 5 gives 10 (1476…1566),
+  21 in total.
 - **Admissibility:** a start t₀ is kept iff D_{t₀}(p*) ≥ 2 px (224 space). Here
-  p* = argmax_{x∈M_{t₀}} D_{t₀}(x) and D is `cv2.distanceTransform(M, DIST_L2, 5)`. No other
-  filter.
+  p* = argmax_{x∈M_{t₀}} D_{t₀}(x) and D is `cv2.distanceTransform(M, DIST_L2, 5)`.
 - **Prompt:** the GT box at t₀ (native px via `gt_to_native`, `gen_nfo_pseudo_masks.py:59`).
-  Methods that accept a point also get p*, scaled to native. This is the only information given
-  after t₀ = 0.
-- **Propagation:** forward from t₀ to the segment end. Strictly causal, latency 0.
-- **Scoring:** every frame from t₀ to t₀+H for every method. No ramp-up exclusion.
+  Methods that accept a point also get p* (scaled to native). Nothing is given after t₀.
+- **Propagation:** forward from t₀, strictly causal, no look-ahead.
+- **Scoring:** every frame in [t₀, t₀+50] for every method.
 - **Per-trial covariates:** v(t₀) = |M_{t₀}| / Ā, where Ā is the median |M| over the segment's
   `confirmed_clear_frames` (`nfo_visibility.py:116`). Also n_frag(t₀) = the number of connected
   components of M_{t₀}.
 
-## 4. Methods and information budgets
+## 4. Methods
 
-| ID | Method | Prompt at t₀ | After t₀ |
+All SAM2-family calls use **`sam2.1_hiera_base_plus.pt`**, the only SAM2.1 checkpoint present
+locally besides `small`. One backbone for all methods. It is also not the `large` model that
+generated the pseudo-GT, which slightly reduces the shared-model advantage.
+
+| ID | Method | Environment | Prompt at t₀ |
 |---|---|---|---|
-| B0 | vanilla SAM2.1-hiera-large video predictor | box (+p*) | nothing |
-| T1 | SAMURAI | box | nothing |
-| T2 | DAM4SAM | box | nothing |
-| T3 | SAM2Long | box (+p*) | nothing |
-| T4 | ours, one-shot causal | box | nothing (+ background prior) |
+| B0 | vanilla SAM2.1 video predictor | `../master_thesis/.venv` (sam2 1.1.0) | box + p* |
+| T1 | SAMURAI | `../samurai/.venv` (repo commit `76ba195`) | box |
+| T4 | ours, one-shot causal | same as B0 (confirm NFO-UNet imports there) | box |
+| T4-1 | ours, **integration off** (control) | same as B0 | box |
 
-Use the SAM2.1-hiera-large weights in every SAM2-family method that supports them; record any
-method that can't. Before vendoring a method, check its official repository and commit. Port each
-method's preprocessing exactly and flag every deviation.
+**T4, online definition:**
+- Buffer: up to the last 7 **consecutive** frames (`NTH_FRAME = 1`), empty at t₀. While it holds
+  fewer than 7 frames, the method still outputs every frame from what is there.
+- Track at t₀: among the blob detections at t₀, pick the one whose centre lies inside the GT box
+  (the largest overlap if several). The box also sets the initial position and the expected height.
+- Velocity: only from the selected track's own past detections inside the buffer. Use the
+  existing Kalman/Hungarian `track_blobs` plus the OLS over the in-buffer history
+  (`position_from_track`, `tracking/core/track_window.py:7`) with readout at the newest frame. This
+  replaces `build_gt_winner` (`tracking/eval/gt_integrated_image.py:38`), which used GT boxes and
+  a whole-run OLS.
+- If the track dies, re-acquire the blob nearest to the last predicted position.
+- Segmentation: SAM2 image model (`segment_reference`, `tracking/eval/gt_sam_gate.py:60`) on the
+  integrated reference, prompted with the point at the tracker position, then the per-frame
+  visibility step. The output is the modal mask for frame t.
 
-**T4, ours, online definition:**
-- The buffer is empty at t₀ and holds up to the last 7 sampled frames at stride 2, so it spans 13
-  frames. These are the existing `SEQ_SIZE=7, NTH_FRAME=2`; they are kept so the method under test
-  is unchanged.
-- Output at every frame t ≥ t₀, from whatever the buffer holds; it is shorter during the first
-  frames.
-- The Kalman filter and Hungarian association (`track_blobs`) run causally. Velocity comes only
-  from the filter state up to t. **No whole-run OLS** (replaces `build_gt_winner`,
-  `tracking/eval/gt_integrated_image.py:38`).
-- At t₀: pick the track whose blob centre lies inside the GT box (largest overlap if several).
-  After that, follow its track id. If the track dies, re-acquire the blob nearest to the Kalman
-  prediction.
-- Segmentation: SAM2 *image* model on the integrated reference, with the point at the tracker
-  position (`segment_reference`, `tracking/eval/gt_sam_gate.py:60`), then the existing per-frame
-  visibility step.
-- Readout is the newest frame. The `center` readout with 6-frame look-ahead
-  (`tracking/stream/stream.py:14`) is not used.
+**T4-1 (integration off):** identical to T4, except the reference image is the current frame
+alone (buffer length 1 for the reference; the tracker still uses its 7-frame buffer). This is the
+one-variable control for the question in §1. Without it, a win for T4 over B0 could come from the
+tracker, the image-vs-video SAM2 mode, or the visibility step, not from integration.
 
-## 5. Ablation ladder: decomposing the reference
+## 5. Metrics and analysis
 
-Each rung adds one ingredient of the reference to B0:
+- J (region IoU) and F (boundary) from the official DAVIS-2017 evaluation code, keeping its
+  handling of empty GT and empty predictions. Report how many frames have empty GT.
+- Metrics: J@Δt for Δt ∈ {10, 25, 50}, plus mean J&F over [t₀, t₀+50].
+- Analysis: per method, a scatter of J@50 against v(t₀) with an OLS slope. With 2 segments the
+  numbers are descriptive only; no confidence intervals in the pilot.
+- Comparisons that answer §1: **T4 vs T4-1** (does integration help, everything else fixed) and
+  **T4 vs B0/T1** (does it beat memory-based propagation).
+- Record per method: wall-clock per frame and peak GPU memory. Hardware: RTX PRO 4000 Blackwell
+  Laptop, 16 GB.
+- Run record: NFO-UNet commit, method repo commit, environment and config in `run.json`.
 
-| Rung | Adds | Causal? |
-|---|---|---|
-| A0 | = B0 | yes |
-| A1 | + a GT box re-prompt at every geometric clear-corridor checkpoint t_c > t₀, applied when the stream reaches t_c (`geometric_checkpoints`, `nfo_visibility.py:130`) | yes (uses oracle boxes) |
-| A2 | + clip each predicted mask to the GT box dilated by 3·(native/224) px, then a component width filter (same as `combine_checkpoint_masks_union_gt_outlier`) | yes (uses oracle boxes) |
-| A3 | + backward propagation from each checkpoint, union-combined | no (≈ reference) |
-
-## 6. Metrics and analysis
-
-- J (region IoU) and F (boundary) from the official DAVIS-2017 evaluation code, with its handling
-  of empty GT and empty predictions. Report how many frames have empty GT.
-- Metrics: J@Δt for Δt ∈ {10, 25, 50} after t₀, plus mean J&F over [t₀, t₀+50].
-- **Pilot analysis:** scatter J@50 against v(t₀) per method, with an OLS slope (robustness to the
-  starting frame). Two segments are too few for a segment-level bootstrap, so pilot numbers are
-  descriptive.
-- Record wall-clock per frame, peak GPU memory and parameter count for each method.
-- Run record: commit, method repo commit, GPU and config in a `run.json` next to the results.
-
-## 7. Audit (manual, from scratch)
-
-- 15–20 pilot frames: about a third each with low, mid and high v(t), across both segments.
-- Annotate modal masks at native 800×600 in labelme or CVAT with AI assist **off**, without
-  pseudo-mask pre-fill. Downsample with `scale_and_pad_img_to_square`.
-- Report J/F between hand masks and pseudo-masks per v-bin. That is the noise floor.
-
-## 8. Mechanism instrumentation (H-mem)
-
-For T1 (and B0 where exposed), log the per-frame predicted IoU, the object score, and whether the
-frame entered memory. Plot these against v(t) and against the first frame where J < 0.5.
-H-mem is unsupported if collapses start without a change in the gate signal.
-
-## 9. Pilot decision rules (set before the run)
+## 6. Pilot decision rules (set before the run)
 
 1. B0 J@50 ≳ 0.85 from every start: no failure to study, so stop.
-2. The J@50–v(t₀) slope is about 0: drop stratification.
-3. A clear positive slope: keep v-tertiles for the full run.
-4. T1–T3 ≈ B0: consistent with the claim; analyse H-mem.
-5. Any of T1–T3 ≫ B0: narrow the claim before the full run.
+2. T4 ≈ T4-1: integration is not what helps. Revisit the premise before building the feature-fusion
+   SAM2 variant.
+3. T4 > T4-1 and T4 > B0, T1, especially at low v(t₀): supports §1. Run the full benchmark.
+4. T1 ≫ B0: the motion-aware memory already fixes a large part of the failure. SAMURAI becomes the
+   baseline the future variant must beat.
 
-## 10. Engineering
+## 7. Engineering
 
-- Cache every propagation to disk, as `.npz` masks per (method, trial). Analysis reruns must not
+- Cache each propagation to disk as `.npz` masks per (method, trial). Analysis reruns must not
   re-infer.
-- Visual traces: per trial, a montage of 6 frames from t₀ to t₀+50 (prediction vs GT) at about
-  dpi 80, saved under `images/benchmark/pilot/`.
-- Results go under `results/benchmark/pilot/`.
+- Visual traces: per trial, a 6-frame montage over [t₀, t₀+50] (prediction vs GT), about dpi 80,
+  under `images/benchmark/pilot/`.
+- Results under `results/benchmark/pilot/`.
+- B0 and T1 run in separate environments: each writes masks to the cache, and one scorer reads all
+  of them.
 
-## 11. Full run (after the pilot; parameters may change based on its results)
+## 8. Deferred (keep in mind, not in the pilot)
 
-- All 32 segments (4 sequences × 8), with the same starting rule: about 300 trials.
-- Every admissible start is used. v(t₀) is not used to pick starts, only to bin trials. The
-  tertile edges are computed once over all pooled trials, so a bin means the same in every
-  sequence.
-- Segment-level bootstrap CIs (32 units).
-- The audit extends to about 10 frames per sequence, stratified by v-tertile.
-
-## Out of scope (for now)
-
-Zero-shot/unprompted track (our method without a box; salient-motion baselines). `_ext` frames.
-Look-ahead/fixed-lag variants.
+- Ablation ladder decomposing the pseudo-GT reference (re-prompting at clear frames → GT-box clip
+  → backward pass), to explain why modal memory-based variants fail.
+- DAM4SAM (checkpoint already at `../DAM4SAM/checkpoints/`) and SAM2Long.
+- Manual audit (labelme or CVAT, from scratch, modal, AI assist off).
+- H-mem instrumentation (SAMURAI gating scores against v(t)).
+- Full run: 32 segments, every admissible start, v-tertile edges computed on the pooled trials,
+  segment-level bootstrap.
+- Larger buffer for T4. Zero-shot/unprompted track. Amodal comparison (e.g. amodal VOS methods)
+  only if S itself is ever reported. `_ext` frames.
