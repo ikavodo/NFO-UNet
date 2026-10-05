@@ -40,3 +40,18 @@ def test_causal_output_at_t_ignores_later_frames():
     short = R.run_trial(t, max_frames=9)
     for k in full:
         assert (full[k]['masks'][:9] == short[k]['masks']).all(), k
+
+
+def test_prompt_at_t0_is_the_shared_gt_prompt_in_crop_coords():
+    t = TRIALS[3]
+    pt, box = R.prompt_in_crop(None, 10, 20, gt=t)
+    assert np.allclose(pt, (t['point_224'][0] - 10, t['point_224'][1] - 20))
+    assert np.allclose(box, np.array(t['box_224']) - [10, 20, 10, 20])
+
+
+def test_prompt_after_t0_is_the_deepest_point_of_the_own_blob():
+    blob = np.zeros((60, 60), bool); blob[10:50, 20:30] = True; blob[5:8, 0:3] = True   # body + speck
+    pt, box = R.prompt_in_crop(blob, 5, 5)
+    assert blob[int(pt[1]) + 5, int(pt[0]) + 5] and 20 <= pt[0] + 5 < 30 and 10 <= pt[1] + 5 < 50
+    assert tuple(box) == (0 - 5, 5 - 5, 30 - 5, 50 - 5)                    # merged blob box
+    assert R.prompt_in_crop(np.zeros((60, 60), bool), 0, 0) == (None, None)

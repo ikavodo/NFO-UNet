@@ -22,7 +22,7 @@ def test_fixed_effects_recovers_known_coefficients_despite_frame_difficulty():
     assert np.allclose([est['b'], est['c'], est['d'], est['e']], [0.2, -0.004, 0.003, 0.01], atol=2e-3)
 
 
-def test_t4_2_star_is_the_m_with_best_mean_J50_over_the_whole_pilot():
-    df = pd.DataFrame([dict(method=f't4-2_m{m}', trial=f'x{i}', **{'J@50': 0.5 + 0.1 * (m == 3) + 0.01 * i})
+def test_t4_2_star_is_the_m_with_best_mean_JF_over_the_whole_pilot():
+    df = pd.DataFrame([dict(method=f't4-2_m{m}', trial=f'x{i}', JF=0.5 + 0.1 * (m == 3) + 0.01 * i)
                        for m in range(1, 8) for i in range(4)])
     assert analyze.pick_vote_m(df) == 3

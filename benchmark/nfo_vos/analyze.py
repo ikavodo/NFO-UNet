@@ -22,7 +22,7 @@ from benchmark.nfo_vos import score, trials as TR
 
 RES, IMG = score.RES, score.IMG
 MAIN = ['b0', 't1', 't4', 't4-1', 't4-2*', 't4-3']
-COLS = ['J@10', 'J@25', 'J@50', 'JF', 'J_decay', 'DRE', 'NRE', 'P_norm']
+COLS = ['JF', 'J_mean', 'F_mean', 'J_decay', 'DRE', 'NRE', 'P_norm', 'J@10', 'J@25', 'J@50']
 COMPARISONS = [('t4', 't4-1', 'integration effect, with SAM2'),
                ('t4-2*', 't4-3', 'integration effect, without SAM2'),
                ('t4', 't4-2*', 'does SAM2 add to integration'),
@@ -37,9 +37,9 @@ def md_table(df):
 
 
 def pick_vote_m(per_trial):
-    """T4-2*: one m for the whole pilot, best mean J@50 (spec §4). Favours the control."""
+    """T4-2*: one m for the whole pilot, best mean headline J&F (spec §4). Favours the control."""
     v = per_trial[per_trial.method.str.startswith('t4-2_m')]
-    return int(v.groupby('method')['J@50'].mean().idxmax().split('_m')[1])
+    return int(v.groupby('method')['JF'].mean().idxmax().split('_m')[1])
 
 
 def fe_fit(df):
@@ -85,12 +85,12 @@ def run_record():
 def main():
     pt = pd.read_csv(f'{RES}/per_trial.csv')
     pf = pd.read_csv(f'{RES}/per_frame.csv')
+    pf = pf[(pf.dt > 0) & (pf.dt < TR.WINDOW)]            # same DAVIS frame range as the headline
     m = pick_vote_m(pt) if pt.method.str.startswith('t4-2_m').any() else None
-    vote = pt[pt.method.str.startswith('t4-2_m')].groupby('method')['J@50'].mean()
+    vote = pt[pt.method.str.startswith('t4-2_m')].groupby('method')['JF'].mean()
     if m is not None:
         pt, pf = rename_star(pt, m), rename_star(pf, m)
     present = [x for x in MAIN if x in set(pt.method)]
-    lowv = pt.v < pt.drop_duplicates('trial').v.median()
 
     sec = {}
     for meth in present:
@@ -101,22 +101,24 @@ def main():
          'seq1 segments 4-5, 21 starts, 51-frame windows, pseudo-GT at 224. **Descriptive only** '
          '(two segments; spec §5).', '']
     if m is not None:
-        L += [f'T4-2* = vote m = {m} (best mean J@50 of m=1..7: ' +
+        L += [f'T4-2* = vote m = {m} (best mean J&F of m=1..7: ' +
               ', '.join(f'm{k.split("_m")[1]} {v:.3f}' for k, v in vote.items()) + ').', '']
     tab = pt[pt.method.isin(present)].groupby('method')[COLS].mean().reindex(present)
-    tab['J@50 low-v'] = pt[lowv & pt.method.isin(present)].groupby('method')['J@50'].mean()
+    tab.insert(1, 'init fails', pt[pt.method.isin(present)].groupby('method').init_fail.sum())
     tab['s/frame*'] = pd.Series(sec)
     L += ['## Method means over trials', '', md_table(tab), '',
-          '*low-v = trials with v(t0) below the median start. s/frame measured with methods sharing '
-          'the GPU, not comparable (re-profile on the cluster).', '']
+          'JF/J_mean/F_mean/decay/DRE/NRE/P_norm: DAVIS-style, frames t0+1..t0+49 (first and last '
+          'dropped). init fails: starts whose mask at the prompted frame t0 has J < 0.5 (of 21). '
+          'J@10/25/50: single-frame trajectory readouts, secondary. *s/frame measured with methods '
+          'sharing the GPU, not comparable (re-profile on the cluster).', '']
 
     L += ['## Comparisons answering §1 (paired over trials)', '',
-          '| comparison | question | ΔJ@50 mean | ΔJF mean | trials A > B (J@50) |', '|---|---|---|---|---|']
+          '| comparison | question | ΔJ&F mean | trials A > B (J&F) | ΔJ@50 mean |', '|---|---|---|---|---|']
     for a, b, q in COMPARISONS:
         if a in present and b in present:
             A = pt[pt.method == a].set_index('trial'); B = pt[pt.method == b].set_index('trial')
             dJ, dF = (A['J@50'] - B['J@50']), (A.JF - B.JF)
-            L.append(f'| {a} − {b} | {q} | {dJ.mean():+.3f} | {dF.mean():+.3f} | {(dJ > 0).sum()}/{len(dJ)} |')
+            L.append(f'| {a} − {b} | {q} | {dF.mean():+.3f} | {(dF > 0).sum()}/{len(dF)} | {dJ.mean():+.3f} |')
     L += ['']
 
     L += ['## Init robustness: frame fixed effects (spec §5)', '',

@@ -9,7 +9,7 @@ tests/test_run_t4.py). 224 space throughout; masks are cached at 224.
 Reused unchanged: foreground_mask/refine_mask/filter_by_shape (tracking/core/preprocess.py),
 detect_blobs/track_blobs/merged_center (tracking/core/blob_tracker.py), scale_relative_params
 (tracking/core/track_sequence.py), crop_at/fuse/restrict_to_nearby (tracking/core/integrate_image.py),
-segment_reference/visibility_within_mask/project_to_frame (tracking/eval/gt_sam_gate.py).
+visibility_within_mask/project_to_frame and the image predictor of gt_sam_gate.py.
 """
 import argparse
 import json
@@ -26,7 +26,7 @@ from tracking.core.integrate_image import crop_at, fuse, restrict_to_nearby
 from tracking.core.preprocess import filter_by_shape, foreground_mask, refine_mask
 from tracking.core.track_sequence import scale_relative_params
 from tracking.eval import gt_sam_gate
-from tracking.eval.gt_sam_gate import project_to_frame, segment_reference, visibility_within_mask
+from tracking.eval.gt_sam_gate import project_to_frame, visibility_within_mask
 
 BUFFER = 7            # last 7 consecutive frames (NTH_FRAME = 1), spec §4
 MAX_AGE = 6           # track_blobs' default; a track unseen for longer is dead -> re-acquire
@@ -42,7 +42,7 @@ def methods():
 
 def use_base_plus():
     """Spec §4: gt_sam_gate's image predictor is hardcoded to sam2.1-hiera-small; switch the same
-    module-level predictor to base_plus so segment_reference itself is reused unchanged."""
+    module-level predictor to base_plus."""
     if gt_sam_gate._predictor is None:
         from sam2.build_sam import build_sam2
         from sam2.sam2_image_predictor import SAM2ImagePredictor
@@ -53,6 +53,33 @@ def use_base_plus():
 def blob_vote(aligned_blobs, m):
     """A pixel joins S_blob if at least min(m, N) of the N buffered aligned blobs cover it."""
     return aligned_blobs.sum(0) >= min(m, len(aligned_blobs))
+
+
+def prompt_in_crop(blob, x0, y0, gt=None):
+    """(point, box) for the SAM2 image call, in crop coordinates (frame coords minus the crop
+    origin x0, y0 that crop_at uses). At t0 (gt = the trial) it is the shared prompt every method
+    gets: p* and the GT box (spec §3). After t0 the same rule is applied to the method's own
+    evidence, no GT: the deepest point (distance-transform maximum) of the tracker's person blobs
+    at frame t, and their merged bounding box. Returns (None, None) when there is no blob."""
+    off = np.array([x0, y0, x0, y0], float)
+    if gt is not None:
+        return (gt['point_224'][0] - x0, gt['point_224'][1] - y0), np.array(gt['box_224']) - off
+    if not blob.any():
+        return None, None
+    D = cv2.distanceTransform(blob.astype(np.uint8), cv2.DIST_L2, 5)
+    py, px = np.unravel_index(np.argmax(D), D.shape)
+    ys, xs = np.nonzero(blob)
+    return (px - x0, py - y0), np.array([xs.min(), ys.min(), xs.max() + 1, ys.max() + 1], float) - off
+
+
+def segment_prompted(img, point, box, fallback):
+    """gt_sam_gate.segment_reference with an optional box (same predictor, same multimask argmax)."""
+    pred = gt_sam_gate._predictor
+    pred.set_image(np.stack([img] * 3, axis=-1))
+    pt = np.array([point if point is not None else fallback])
+    masks, scores, _ = pred.predict(point_coords=pt, point_labels=np.array([1]),
+                                    box=box, multimask_output=True)
+    return masks[np.argmax(scores)] > 0.5
 
 
 def load(idx_range):
@@ -144,22 +171,24 @@ def _run_trial(trial, max_frames=None):
         back = lambda m: project_to_frame(m, cx, cy, crop, (H, W))
 
         s = time.perf_counter()
-        ref = fuse(aligned, method='median')
-        S, _ = segment_reference(ref, centre)
-        out['t4'][t] = back(visibility_within_mask(aligned, ref, S)[-1])
-        timing['t4'] += time.perf_counter() - s
-
-        s = time.perf_counter()               # T4-1: reference = current frame; visibility = identity
-        S1, _ = segment_reference(aligned[-1], centre)
-        out['t4-1'][t] = back(S1)
-        timing['t4-1'] += time.perf_counter() - s
-
-        s = time.perf_counter()
         blobs = [restrict_to_nearby((masks[k] > 0).astype(np.uint8), masks[k], dets[k], x, cy,
                                     kw['merge_radius']) > 0 for k, x in zip(B, xs)]
         t_blob = time.perf_counter() - s
         out['t4-3'][t] = blobs[-1]
         timing['t4-3'] += t_blob
+        x0, y0 = int(cx - crop / 2), int(cy - crop / 2)               # crop_at's own origin
+        point, box = prompt_in_crop(blobs[-1], x0, y0, gt=trial if t == 0 else None)
+
+        s = time.perf_counter()
+        ref = fuse(aligned, method='median')
+        S = segment_prompted(ref, point, box, centre)
+        out['t4'][t] = back(visibility_within_mask(aligned, ref, S)[-1])
+        timing['t4'] += time.perf_counter() - s + t_blob
+
+        s = time.perf_counter()               # T4-1: reference = current frame; visibility = identity
+        out['t4-1'][t] = back(segment_prompted(aligned[-1], point, box, centre))
+        timing['t4-1'] += time.perf_counter() - s + t_blob
+
         s = time.perf_counter()
         ab = np.stack([crop_at(b.astype(np.uint8), x, cy, crop) > 0 for b, x in zip(blobs, xs)])
         for m in VOTE_M:

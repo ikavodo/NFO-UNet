@@ -19,7 +19,8 @@ from benchmark.nfo_vos import metrics, trials as TR
 RES = 'results/benchmark/pilot'
 IMG = 'images/benchmark/pilot'
 MONTAGE_DT = (0, 10, 20, 30, 40, 50)
-HORIZONS = (10, 25, 50)
+HORIZONS = (10, 25, 50)          # secondary, descriptive trajectory readouts
+INIT_FAIL_J = 0.5                 # standard IoU success threshold (OTB success rate, PASCAL)
 
 
 def to_224(masks):
@@ -42,14 +43,21 @@ def score_trial(method, trial, P):
                          cerr=metrics.centre_error_norm(P[dt], box), **m))
         Gs.append(G); Ps.append(P[dt]); boxes.append(box)
     J = {r['dt']: r['J'] for r in rows}
-    Js = np.array([r['J'] for r in rows]); Fs = np.array([r['F'] for r in rows])
-    dre, nre = metrics.dre_nre(np.stack(Ps), np.stack(Gs))
+    # headline aggregates follow DAVIS semi-supervised: drop the first (prompted) and last frame
+    # (davis2017-evaluation/davis2017/evaluation.py:85, all_gt_masks[:, 1:-1])
+    last = len(trial['frames']) - 1
+    keep = [i for i, r in enumerate(rows) if 0 < r['dt'] < last]
+    Js = np.array([rows[i]['J'] for i in keep]); Fs = np.array([rows[i]['F'] for i in keep])
+    dre, nre = metrics.dre_nre(np.stack([Ps[i] for i in keep]), np.stack([Gs[i] for i in keep]))
+    J0 = J.get(0, np.nan)
     summary = dict(method=method, trial=trial['id'], seg=trial['seg_idx'], t0=trial['t0'],
-                   v=trial['v'], n_frag=trial['n_frag'], **{f'J@{h}': J.get(h, np.nan) for h in HORIZONS},
-                   JF=float(np.mean((Js + Fs) / 2)), J_mean=float(Js.mean()),
+                   v=trial['v'], n_frag=trial['n_frag'],
+                   JF=float(np.mean((Js + Fs) / 2)), J_mean=float(Js.mean()), F_mean=float(Fs.mean()),
                    J_decay=metrics.decay(Js), F_decay=metrics.decay(Fs), DRE=dre, NRE=nre,
-                   P_norm=metrics.pnorm(np.stack(Ps), boxes),
-                   n_empty_gt=int(sum(r['area_g'] == 0 for r in rows)))
+                   P_norm=metrics.pnorm(np.stack([Ps[i] for i in keep]), [boxes[i] for i in keep]),
+                   J0=J0, init_fail=bool(J0 < INIT_FAIL_J),
+                   **{f'J@{h}': J.get(h, np.nan) for h in HORIZONS},
+                   n_empty_gt=int(sum(rows[i]['area_g'] == 0 for i in keep)))
     return rows, summary
 
 
