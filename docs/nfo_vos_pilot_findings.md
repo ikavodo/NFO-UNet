@@ -24,6 +24,20 @@ numbers descriptive.
 - Why (derived): integration recovers person pixels visible at t−k but occluded at t (A∖V_t).
   That is exactly amodal extent, and exactly what modal GT penalises.
 
+## Native SAM2 input is the dominant fix for the per-frame path
+- With the identical GT prompt at t₀, SAM2's image predictor on the native full frame matches B0
+  (J 0.700 vs 0.703, 5/21 init failures each). On the 224 frame it reaches J 0.497 with 11/21
+  failures (`diag_init_resolution.csv`).
+- T4-1n (the tracker's prompt → SAM2 image on the native frame, no memory): J&F **0.700**, against
+  T4-1 (224 crop) 0.580 → **+0.120, better on 21/21 starts**. Masks are right-sized (area ratio
+  0.95, precision 0.90).
+- T4-1n vs B0: −0.079 on average (better on 3/21), but it wins exactly the starts where B0's
+  memory locks onto the wrong object: t1154 +0.13, t1164 +0.25, t1184 **+0.70**. Re-prompting every
+  frame cannot lock in. Memory is more accurate after a good start.
+- Complementarity headroom: choosing the better of B0 / T4-1n per frame (oracle) gives 0.842
+  (+0.063 over B0). A GT-free switch based on the tracker box does not capture it (0.755):
+  the switch signal is the bottleneck.
+
 ## Next (cheapest first)
 1. Decide the benchmark's question: modal VOS (B0 strong, integration does not help) vs amodal
    person extent/localisation (integration helps; scored on human boxes, so no pseudo-GT bias;
