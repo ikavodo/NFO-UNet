@@ -32,13 +32,18 @@ def build_predictor(method):
     return build_sam2_video_predictor(CONFIGS[method], CKPT, device='cuda')
 
 
-def run_trial(predictor, trial, max_frames=None):
+def run_trial(predictor, trial, max_frames=None, prepend=None):
+    """prepend: path of a composite frame (composite.py) staged as frame 0 and prompted there
+    instead of raw t0, so it becomes the conditioning memory; its own output is dropped."""
     frames = trial['frames'][:max_frames] if max_frames else trial['frames']
+    off = 1 if prepend else 0
     stage = tempfile.mkdtemp(prefix='nfo_vos_')
     try:
+        if prepend:
+            os.symlink(os.path.abspath(prepend), os.path.join(stage, '0.jpg'))
         for local, raw in enumerate(frames):        # SAM2's loader sorts by int(filename)
             os.symlink(os.path.abspath(f"{NATIVE_DIR}/{trial['seq']}/{raw:05d}.jpg"),
-                       os.path.join(stage, f'{local}.jpg'))
+                       os.path.join(stage, f'{local + off}.jpg'))
         torch.cuda.reset_peak_memory_stats()
         with torch.inference_mode(), torch.autocast('cuda', dtype=torch.float16):
             state = predictor.init_state(stage, offload_video_to_cpu=True, offload_state_to_cpu=True)
@@ -50,7 +55,8 @@ def run_trial(predictor, trial, max_frames=None):
             torch.cuda.synchronize()
             t_start = time.perf_counter()
             for fi, _, logits in predictor.propagate_in_video(state):
-                masks[fi] = (logits[0, 0] > 0).cpu().numpy()
+                if fi >= off:
+                    masks[fi - off] = (logits[0, 0] > 0).cpu().numpy()
             torch.cuda.synchronize()
             dt = (time.perf_counter() - t_start) / len(frames)
         return dict(masks=masks, frames=np.array(frames), sec_per_frame=dt,
@@ -64,18 +70,23 @@ def main():
     p.add_argument('--method', choices=sorted(CONFIGS), required=True)
     p.add_argument('--limit', type=int, default=None)
     p.add_argument('--force', action='store_true')
+    p.add_argument('--prepend-dir', default=None, help='composites dir -> method <name>-cp')
     a = p.parse_args()
     trials = [t for t in json.load(open(TRIALS)) if t['admissible']][:a.limit]
-    out_dir = os.path.join(CACHE, a.method)
+    name = a.method + ('-cp' if a.prepend_dir else '')
+    out_dir = os.path.join(CACHE, name)
     os.makedirs(out_dir, exist_ok=True)
     predictor = build_predictor(a.method)
     for t in trials:
         path = os.path.join(out_dir, f"{t['id']}.npz")
         if os.path.exists(path) and not a.force:
             continue
-        r = run_trial(predictor, t)
+        comp = os.path.join(a.prepend_dir, f"{t['id']}.jpg") if a.prepend_dir else None
+        if comp and not os.path.exists(comp):
+            print(f"{name} {t['id']}: no composite, skipped"); continue
+        r = run_trial(predictor, t, prepend=comp)
         np.savez_compressed(path, **r)
-        print(f"{a.method} {t['id']}: {r['sec_per_frame'] * 1000:.0f} ms/frame, "
+        print(f"{name} {t['id']}: {r['sec_per_frame'] * 1000:.0f} ms/frame, "
               f"peak {r['peak_mem_gb']:.2f} GB, frame-50 area {r['masks'][-1].sum()}")
 
 
