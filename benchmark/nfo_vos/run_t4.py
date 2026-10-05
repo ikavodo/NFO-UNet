@@ -42,6 +42,8 @@ def methods(variant='point'):
     for 'box'; the blob controls do not use a prompt."""
     if variant == 'box':
         return ['t4b', 't4b-1']
+    if variant == 'ibox':
+        return ['t4c-1']
     return ['t4', 't4-1', *[f't4-2_m{m}' for m in VOTE_M], 't4-3']
 
 
@@ -75,6 +77,17 @@ def prompt_in_crop(blob, x0, y0, gt=None):
     py, px = np.unravel_index(np.argmax(D), D.shape)
     ys, xs = np.nonzero(blob)
     return (px - x0, py - y0), np.array([xs.min(), ys.min(), xs.max() + 1, ys.max() + 1], float) - off
+
+
+def integrated_box(aligned_blobs):
+    """(x0, y0, x1, y1) of the union of the aligned buffer blobs, in crop coordinates: the
+    integrated amodal extent (pilot: amodal box IoU 0.652 vs 0.546 for the frame-t blob box).
+    None if no blob anywhere in the buffer."""
+    u = aligned_blobs.any(0)
+    if not u.any():
+        return None
+    ys, xs = np.nonzero(u)
+    return np.array([xs.min(), ys.min(), xs.max() + 1, ys.max() + 1], float)
 
 
 def segment_prompted(img, point, box, fallback):
@@ -170,6 +183,7 @@ def _run_trial(trial, max_frames=None, variant='point'):
     names = methods(variant)
     box_only = variant == 'box'
     seg_names = ('t4b', 't4b-1') if box_only else ('t4', 't4-1')
+    blob_controls = variant == 'point'
     out = {m: np.zeros((T, H, W), bool) for m in names}
     timing = {m: t_track for m in names}            # every variant pays the shared tracker
     for t in range(T):
@@ -184,13 +198,23 @@ def _run_trial(trial, max_frames=None, variant='point'):
         blobs = [restrict_to_nearby((masks[k] > 0).astype(np.uint8), masks[k], dets[k], x, cy,
                                     kw['merge_radius']) > 0 for k, x in zip(B, xs)]
         t_blob = time.perf_counter() - s
-        if not box_only:
+        if blob_controls:
             out['t4-3'][t] = blobs[-1]
             timing['t4-3'] += t_blob
         x0, y0 = int(cx - crop / 2), int(cy - crop / 2)               # crop_at's own origin
         point, box = prompt_in_crop(blobs[-1], x0, y0, gt=trial if t == 0 else None)
         if box_only and box is not None:
             point = None                      # no blob -> no box -> falls back to the centre point
+        if variant == 'ibox':
+            # T4-1 with ONLY the box source changed: the integrated extent, not the frame-t blob
+            s = time.perf_counter()
+            ab = np.stack([crop_at(b.astype(np.uint8), x, cy, crop) > 0 for b, x in zip(blobs, xs)])
+            if t > 0:                         # t0 keeps the shared GT prompt
+                ibox = integrated_box(ab)
+                box = ibox if ibox is not None else box
+            out['t4c-1'][t] = back(segment_prompted(aligned[-1], point, box, centre))
+            timing['t4c-1'] += time.perf_counter() - s + t_blob
+            continue
 
         s = time.perf_counter()
         ref = fuse(aligned, method='median')
@@ -225,7 +249,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('--limit', type=int, default=None)
     p.add_argument('--force', action='store_true')
-    p.add_argument('--variant', choices=('point', 'box'), default='point')
+    p.add_argument('--variant', choices=('point', 'box', 'ibox'), default='point')
     p.add_argument('--trial-index', type=int, default=None, help='run one admissible trial (array task)')
     a = p.parse_args()
     trials = select_trials(json.load(open(TR.OUT)), a.limit, a.trial_index)

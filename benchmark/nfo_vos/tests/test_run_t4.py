@@ -76,3 +76,10 @@ def test_select_trials_one_index_for_slurm_arrays():
     assert R.select_trials(TRIALS, index=4) == [ok[4]]
     assert R.select_trials(TRIALS, limit=2) == ok[:2]
     assert R.select_trials(TRIALS) == ok
+
+
+def test_integrated_box_is_the_bbox_of_the_aligned_blob_union():
+    ab = np.zeros((3, 40, 40), bool); ab[0, 5:10, 8:12] = True; ab[2, 20:30, 15:18] = True
+    assert tuple(R.integrated_box(ab)) == (8, 5, 18, 30)            # x0, y0, x1, y1 (exclusive)
+    assert R.integrated_box(np.zeros((2, 5, 5), bool)) is None
+    assert R.methods('ibox') == ['t4c-1']
