@@ -3,7 +3,9 @@
     python -m tracking.visualize.nfo_sammask_videos [--seqs seq1_gt ...] [--fps 25] [--scale 2]
 
 Every frame is rendered, not just labelled ones: green = sammask, orange = *_sammask_ext
-(edge extension, NOT ground truth), red = GT box, and frames with
+(edge extension, NOT ground truth), magenta = *_sammask_extfix (an extension frame with occluder
+pixels removed by gen_data/nfo_pseudo_masks/fix_ext_occluder.py; preferred over its _ext),
+red = GT box, and frames with
 no mask are tagged "no mask" so gaps between person passes stay visible instead of being cut.
 Masks come from gen_data/nfo_pseudo_masks/gen_nfo_pseudo_masks.py (multi-checkpoint SAM2).
 """
@@ -38,9 +40,12 @@ def main():
             h, w = img.shape[:2]
             mp = os.path.join(d, f'{i:05d}_sammask.png')
             ext = os.path.join(d, f'{i:05d}_sammask_ext.png')
+            extfix = os.path.join(d, f'{i:05d}_sammask_extfix.png')
             has = os.path.exists(mp)
-            colour = np.array([0, 255, 0])
-            if not has and os.path.exists(ext):
+            colour, tag = np.array([0, 255, 0]), ''
+            if not has and os.path.exists(extfix):
+                mp, has, colour, tag = extfix, True, np.array([255, 0, 255]), '  fixed'
+            elif not has and os.path.exists(ext):
                 mp, has, colour = ext, True, np.array([0, 165, 255])
             if has:
                 m = cv2.imread(mp, 0)
@@ -55,7 +60,7 @@ def main():
                     s = a.scale
                     cv2.rectangle(vis, (int(bb.x * w * s), int(bb.y * h * s)),
                                   (int((bb.x + bb.w) * w * s), int((bb.y + bb.h) * h * s)), (0, 0, 255), 1)
-            cv2.putText(vis, f'{seq} f{i}' + ('' if has else '  no mask'), (6, 18),
+            cv2.putText(vis, f'{seq} f{i}' + (tag if has else '  no mask'), (6, 18),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
             if writer is None:
                 writer = cv2.VideoWriter(out, cv2.VideoWriter_fourcc(*'mp4v'), a.fps,
