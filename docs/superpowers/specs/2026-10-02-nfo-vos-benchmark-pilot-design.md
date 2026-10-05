@@ -1,6 +1,7 @@
 # NFO fragmented-occlusion VOS benchmark: pilot protocol
 
-Status: design, revision 2, awaiting review (2026-10-02). Scope: the **pilot** only (one
+Status: design, revision 3, awaiting review (2026-10-05; rev. 3 adds the TRE/anchor framing, the
+frame-fixed-effects init analysis, drift metrics, and the scoring resolution). Scope: the **pilot** only (one
 back-and-forth of one sequence). Deferred items are listed at the end.
 
 ## 1. Question
@@ -24,8 +25,20 @@ GT, never S itself.
   on `data/nfo_processed/seq1_gt/groundtruth.txt`). The two are consecutive, so they cover one
   crossing in each direction.
 - **GT:** `{idx:05d}_sammask.png` (224×224), the pseudo-GT from `gen_nfo_pseudo_masks.py`. For the
-  pilot it is treated as ground truth, and the label bias is accepted. `*_sammask_ext.png` frames
-  are excluded.
+  pilot it is treated as ground truth, and the label bias is accepted. Edge-extension frames are
+  excluded from the pilot (segments 4–5 use none). **Full run:** wherever an extension mask is
+  loaded, use `{idx:05d}_sammask_extfix.png` when it exists (occluder pixels removed by
+  `gen_data/nfo_pseudo_masks/fix_ext_occluder.py`), else `{idx:05d}_sammask_ext.png`, the same
+  precedence `tracking/visualize/nfo_sammask_videos.py:42-43` uses.
+- **Resolution.** SAM2-large computed the pseudo-GT at native 800×600, but it is stored only at
+  224×224, after `scale_and_pad_img_to_square` (`gen_nfo_pseudo_masks.py:346`). All methods are
+  scored at 224. B0 and T1 run on the **native** frames (`data/nfo_final/nfo_final`, the frames the
+  pseudo-GT came from), never on the 224 frames. SAM2 resizes every input to 1024
+  (`image_size: 1024` in `sam2.1_hiera_b+.yaml`), so a 224 input would be upsampled about 4.6×,
+  which would handicap the baselines. Their native masks are mapped to 224 with the same
+  `scale_and_pad_img_to_square` call as the GT. T4 works in 224 space and is scored there directly.
+  The cost: 1 px at 224 ≈ 3.6 native px, so fragments narrower than that are lost, for all methods
+  equally. Moving to native resolution is planned for after the pilot (§8).
 - **Background prior (our method only, since it is the only one that uses it):** **all**
   person-free frames before t₀ in the current inter-segment gap (minimum 20), used as the warm-up
   for the existing background model. Fixed by this rule, not tuned on pilot results. A frame is
@@ -37,6 +50,24 @@ GT, never S itself.
 - **Starts:** t₀ = start, start+10, start+20, …, continuing while t₀ + 50 ≤ the segment's last
   `_sammask.png` frame. Segment 4 gives 11 starts (1154…1254) and segment 5 gives 10 (1476…1566),
   21 in total.
+- **Protocol lineage (no new protocol).** The design combines OTB's **TRE** (restart the tracker at
+  different frames; Wu, Lim, Yang, CVPR 2013 / TPAMI 2015) with VOT2020's **anchor** protocol
+  (initialise at several anchor frames, run without resets; Kristan et al., VOT2020 results,
+  ECCVW 2020). OTB's **SRE** perturbs the initial box synthetically. Here the natural variation of
+  v(t₀) across starts plays that role, so the perturbation comes from the real occlusion. v(t₀) is
+  a measured covariate, not a design factor.
+- **Why stride 10 (80% window overlap).** The overlap is required. Each frame is then scored by
+  K = 50/10 = 5 trials that see identical content and differ only in their start, and this is what
+  lets §5 separate the start's effect from the frame's difficulty. VOT's ~50-frame anchor spacing
+  would give K = 1 and lose that. Overlapping trials are not independent: the resampling unit is
+  the segment (segment-level bootstrap in the full run), never the trial.
+- **No resets after failure.** VOT dropped the reset protocol in 2020 for the anchor protocol. A
+  reset is also unfair here, for three reasons. (i) It injects GT at the moment of failure. This
+  helps the methods that cannot re-acquire on their own (B0, T1) and gives nothing to T4, which
+  re-acquires without GT. (ii) Failures happen in occluded frames, so the reset prompt itself has
+  low v, which feeds the covariate back into the outcome. (iii) It needs a failure threshold on
+  modal masks, which are tiny under heavy occlusion, so spurious failures would follow. Failure is
+  measured (DRE/NRE, §5), never acted on.
 - **Admissibility:** a start t₀ is kept iff D_{t₀}(p*) ≥ 2 px (224 space). Here
   p* = argmax_{x∈M_{t₀}} D_{t₀}(x) and D is `cv2.distanceTransform(M, DIST_L2, 5)`.
 - **Prompt:** every method gets the **same** box + p* at t₀ (native px via `gt_to_native`,
@@ -60,7 +91,7 @@ generated the pseudo-GT, which slightly reduces the shared-model advantage.
 | ID | Method | Environment | Prompt at t₀ |
 |---|---|---|---|
 | B0 | vanilla SAM2.1 video predictor | `../master_thesis/.venv` (sam2 1.1.0) | box + p* |
-| T1 | SAMURAI | `../samurai/.venv` (repo commit `76ba195`) | box |
+| T1 | SAMURAI | `../samurai/.venv` (repo commit `76ba195`) | box + p* |
 | T4 | ours, one-shot causal | same as B0 (confirm NFO-UNet imports there) | box |
 | T4-1 | control: SAM2 image, no integration | same as B0 | box |
 | T4-2 | control: warped blob vote, no SAM2 | same as B0 | box |
@@ -91,6 +122,10 @@ point), so they differ only in the two factors:
   base_plus**, (`segment_reference`, `tracking/eval/gt_sam_gate.py:60`) on the
   integrated reference, prompted with the point at the tracker position, then the per-frame
   visibility step. The output is the modal mask for frame t.
+- **Init sensitivity by design.** The prompt only selects T4's track. After that, T4 re-detects
+  from blobs every frame. A weak T4 response to v(t₀) is expected from the design and is not a
+  finding. The init-robustness question (§5) is about B0 and T1, and T4 is the reference that
+  depends on the prompt only weakly.
 
 **T4-1 (integration off):** identical to T4, except the reference image is the current frame
 alone. The tracker still uses its 7-frame buffer. The residual |frame − reference| is then 0
@@ -114,11 +149,44 @@ tracker, the image-vs-video SAM2 mode, or the visibility step, not from integrat
 
 ## 5. Metrics and analysis
 
-- J (region IoU) and F (boundary) from the official DAVIS-2017 evaluation code, keeping its
-  handling of empty GT and empty predictions. Report how many frames have empty GT.
-- Metrics: J@Δt for Δt ∈ {10, 25, 50}, plus mean J&F over [t₀, t₀+50].
-- Analysis: per method, a scatter of J@50 against v(t₀) with an OLS slope. With 2 segments the
-  numbers are descriptive only; no confidence intervals in the pilot.
+All metrics are computed from the cached masks (§7), per frame in [t₀, t₀+50]. None of them needs
+a new inference run.
+
+- **Per frame:** J (region IoU) and F (boundary) from the official DAVIS-2017 evaluation code,
+  keeping its handling of empty GT and empty predictions. Report how many frames have empty GT.
+  Also precision p = |P∩G|/|P|, recall r = |P∩G|/|G|, and |P|. Since 1/J = 1/p + 1/r − 1, J alone
+  cannot separate **drift** (p collapses while P is non-empty) from **fragmentation-induced
+  under-segmentation** (r collapses while p stays high). p and r can.
+- **Trajectory:** J(Δt) for Δt = 0…50, one curve per trial. This is the discrete form of VOT's
+  expected-overlap curve Φ(N_s) (Kristan et al., arXiv 1503.01313). The tables read off J@10/25/50
+  from it, and mean J&F over the window is the summary.
+- **Drift and loss (VOTS2023 definitions, `data.votchallenge.net/vots2023/measures.pdf`):**
+  DRE = fraction of GT-present frames where P is non-empty and P∩G = ∅ (drifted, still claiming the
+  target). NRE = fraction of GT-present frames where P is empty (reported absent).
+- **Decay:** DAVIS J_D and F_D (Perazzi et al., CVPR 2016), the citable one-number drift summary.
+  It inherits the frame-difficulty confound below, and the fixed-effects model is what controls it.
+- **Localization against independent GT:** P_norm (LaSOT; Fan et al., arXiv 1809.07845) between
+  the centroid of the predicted modal mask and the centre of the `groundtruth.txt` box. An empty P
+  counts as a miss. These boxes are human-annotated, amodal, and independent of the SAM2-large
+  pseudo-GT, so this metric does not share the label bias of §2. It also links to the original
+  paper's centre-distance localization (`eval/`, `max_dist_error`). The offset between a modal
+  centroid and an amodal centre affects every method, so read P_norm as a comparison between
+  methods. No box IoU or success AUC: AUC equals average overlap (Čehovin et al., arXiv 1502.05803),
+  and a box around a modal mask is biased small against an amodal box.
+- **Init robustness (confound and fix).** Trials with different t₀ score *different* frames, and
+  within a crossing v(t₀) changes with t₀. A raw J@50 ~ v(t₀) regression therefore mixes prompt
+  quality with the difficulty of the frames that follow. The fix: frame t is scored by up to 5
+  trials (§3) that see identical content. Per method, fit
+
+    J(t | t₀) = a_t + b·v(t₀) + c·(t − t₀) + d·v(t₀)·(t − t₀) + e·n_frag(t₀) + ε
+
+  with one fixed effect a_t per frame, which absorbs that frame's difficulty. Here b is the effect
+  of prompt quality on level, c is drift with elapsed time, and d says whether a better prompt slows
+  the drift. The hypothesis "a worse prompt → faster drift" is **d > 0**. b > 0 with d ≈ 0 would mean
+  "worse throughout" instead. n_frag(t₀) separates edge truncation (n_frag = 1) from foliage
+  fragmentation. Caveat: within one frame, v(t₀) and (t − t₀) both vary through t₀, so b, c and d are
+  identified only across frames. With 2 segments, all estimates are descriptive, with no confidence
+  intervals in the pilot.
 - Comparisons that answer §1:
   - Integration effect, tested twice: **T4 − T4-1** (with SAM2) and **T4-2\* − T4-3** (without).
   - Does SAM2 add anything on top of integration: **T4 − T4-2\***.
@@ -135,6 +203,8 @@ tracker, the image-vs-video SAM2 mode, or the visibility step, not from integrat
 3. T4 > T4-1 and T4 > B0, T1, especially at low v(t₀): supports §1. Run the full benchmark.
 4. T1 ≫ B0: the motion-aware memory already fixes a large part of the failure. SAMURAI becomes the
    baseline the future variant must beat.
+5. b, c, d (§5) are reported, not decided on. Two segments cannot settle their signs. The full run
+   sets a rule on d.
 
 ## 7. Engineering
 
@@ -156,4 +226,16 @@ tracker, the image-vs-video SAM2 mode, or the visibility step, not from integrat
 - Full run: 32 segments, every admissible start, v-tertile edges computed on the pooled trials,
   segment-level bootstrap.
 - Larger buffer for T4. Zero-shot/unprompted track. Amodal comparison (e.g. amodal VOS methods)
-  only if S itself is ever reported. `_ext` frames.
+  only if S itself is ever reported. Extension frames (`_extfix` over `_ext`, §2).
+- Synthetic SRE (OTB box shifts and scales at high-v starts). This controls prompt quality on
+  identical frames, and is worth running only if the natural-v analysis turns out too collinear.
+- **Move the whole benchmark to native 800×600 (planned, not optional).** 224 is an artefact of
+  repurposing a bounding-box dataset, not a choice made for this benchmark. Native requires
+  (i) the native pseudo-GT stored, which the generator does not currently do
+  (`gen_nfo_pseudo_masks.py:346` writes only the 224 version), and (ii) T4's 224-calibrated
+  parameters rescaled (most are already person-height-relative via `scale_relative_params`).
+  Compute argument for staying at 224 is weak: SAM2 encodes every input at 1024×1024
+  (`image_size: 1024`), so B0/T1/T4's SAM2 calls cost the same at either size; only T4's
+  MOG2/morphology/blob stages scale with pixel count (~9.6× more pixels). Stay at 224 only if a
+  measured T4 per-frame time at native is prohibitive. VOTS ADQ, if
+  empty-GT frames turn out common.
