@@ -1,6 +1,6 @@
 # NFO fragmented-occlusion VOS benchmark: pilot protocol
 
-Status: design, revision 3, awaiting review (2026-10-05; rev. 3 adds the TRE/anchor framing, the
+Status: design, revision 4 (2026-10-05): DAVIS headline, init failure rate, T4 prompt fix. Rev. 3 (2026-10-05; rev. 3 adds the TRE/anchor framing, the
 frame-fixed-effects init analysis, drift metrics, and the scoring resolution). Scope: the **pilot** only (one
 back-and-forth of one sequence). Deferred items are listed at the end.
 
@@ -123,9 +123,13 @@ point), so they differ only in the two factors:
 - Reuse `build_tracker_winner` (`tracking/eval/gt_sam_gate.py`, no GT), restricted to the
   causal buffer instead of the whole segment.
 - Segmentation: SAM2 image model, **switched from `sam2.1-hiera-small` (`gt_sam_gate.py:50-53`) to
-  base_plus**, (`segment_reference`, `tracking/eval/gt_sam_gate.py:60`) on the
-  integrated reference, prompted with the point at the tracker position, then the per-frame
-  visibility step. The output is the modal mask for frame t.
+  base_plus**, on the integrated reference, then the per-frame visibility step. **Prompt
+  (rev. 4):** at t₀ it is the shared GT box + p\* (§3). After t₀ the same rule is applied to the
+  method's own evidence, with no GT: the distance-transform maximum of the tracker's person blobs
+  at frame t, plus their merged box (`prompt_in_crop`, `benchmark/nfo_vos/run_t4.py`). Run 1
+  prompted at the tracker's merged-box centre instead. That point was inside the GT box on 94% of
+  frames but on the person on only 58%, because a fragmented person's box centre falls in gaps and
+  on occluders, so SAM2 segmented the occluder. The output is the modal mask for frame t.
 - **Init sensitivity by design.** The prompt only selects T4's track. After that, T4 re-detects
   from blobs every frame. A weak T4 response to v(t₀) is expected from the design and is not a
   finding. The init-robustness question (§5) is about B0 and T1, and T4 is the reference that
@@ -142,7 +146,7 @@ blob by the tracker displacement (cx_t − cx_{t−k}, cy_t − cy_{t−k}) into
 S_blob if at least m of the N buffered warped blobs cover it. S_blob then goes through **the same
 visibility step as T4**, because the vote fills in occluded pixels (near-amodal), and raw S_blob
 would be penalised against the modal GT. Membership is left open: evaluate every
-m ∈ {1 (union), …, N (intersection)}, N = 7, and report **T4-2\* = the best m by mean J@50 over
+m ∈ {1 (union), …, N (intersection)}, N = 7, and report **T4-2\* = the best m by mean headline J&F over
 the whole pilot** (one m for all trials, not per trial). The best-of-grid tuning favours the
 control, so T4 > T4-2\* is a conservative result.
 
@@ -161,9 +165,19 @@ a new inference run.
   Also precision p = |P∩G|/|P|, recall r = |P∩G|/|G|, and |P|. Since 1/J = 1/p + 1/r − 1, J alone
   cannot separate **drift** (p collapses while P is non-empty) from **fragmentation-induced
   under-segmentation** (r collapses while p stays high). p and r can.
-- **Trajectory:** J(Δt) for Δt = 0…50, one curve per trial. This is the discrete form of VOT's
-  expected-overlap curve Φ(N_s) (Kristan et al., arXiv 1503.01313). The tables read off J@10/25/50
-  from it, and mean J&F over the window is the summary.
+- **Headline (DAVIS semi-supervised convention):** mean J, F and J&F over frames t₀+1 … t₀+49.
+  The first (prompted) and last frames are dropped, as `davis2017/evaluation.py:85` does
+  (`all_gt_masks[:, 1:-1]`). Every frame has equal weight, hard ones included. DRE, NRE, P_norm,
+  decay and the fixed-effects fit use the same frame range.
+- **Init failure rate:** the number of starts (of 21) whose mask at the prompted frame t₀ has
+  J < 0.5, the standard IoU success threshold (OTB success rate, PASCAL overlap). It separates
+  "cannot get the person from the prompt" from "loses the person later", which the headline mixes.
+  It is reported beside the headline on all starts. There is no v threshold and no subset analysis
+  conditioned on init success: each method fails on different starts, so per-method subsets would
+  compare means over different trial sets.
+- **Trajectory (secondary):** single-frame J@10/25/50, the discrete form of VOT's expected-overlap
+  curve Φ(N_s) (Kristan et al., arXiv 1503.01313). Descriptive only, and not windowed (rev. 4
+  decision: one hard frame is allowed to count).
 - **Drift and loss (VOTS2023 definitions, `data.votchallenge.net/vots2023/measures.pdf`):**
   DRE = fraction of GT-present frames where P is non-empty and P∩G = ∅ (drifted, still claiming the
   target). NRE = fraction of GT-present frames where P is empty (reported absent).
