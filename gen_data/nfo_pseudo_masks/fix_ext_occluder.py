@@ -45,10 +45,12 @@ def fix(mask, frame, bg, k=K, rho=RHO, min_area=MIN_AREA):
 
 
 # Static occluder patches the pixel test cannot remove (they only half-match the median
-# background, e.g. foliage that moves in wind). The camera is static, so the patch is cut by
-# LOCATION: region R = union of the non-person components in the frames where they are separate
-# (seq, frames to cut, frames that define R, column x: components centred left of x are patch).
-REGION_CUTS = [('seq4', range(1022, 1031), [1022, 1023, 1027, 1028, 1029], 215)]   # user, 2026-10-05
+# background). The camera is static, so the patch is cut by LOCATION: region R = union of the
+# components centred left of x_split in `defining` frames, where the patch is a separate component.
+# Cut only on hand-listed frames: on seq4 f1027-1030 the person walks over R and the original is
+# right (user, 2026-10-05) - geometry alone cannot tell the two cases apart.
+# (seq, frames to cut, frames that define R, x_split)
+REGION_CUTS = [('seq4', [*range(1022, 1027), *range(1331, 1336), *range(1394, 1398)], [1022, 1023], 215)]
 
 
 def patch_region(d, defining, x_split):
@@ -68,12 +70,15 @@ def apply_region_cuts(write=True):
     for seq, frames, defining, x_split in REGION_CUTS:
         d = os.path.join(IN_DIR, f'{seq}_gt')
         R = patch_region(d, defining, x_split)
+        bbs = parse_bbs(os.path.join(d, 'groundtruth.txt'))
+        bg = background(d, person_free_frames(bbs, max(bbs) + 1))
         for idx in frames:
             m = cv2.imread(os.path.join(d, f'{idx:05d}_sammask_ext.png'), 0) > 127
-            m2 = m & ~R
+            I = cv2.imread(os.path.join(d, f'{idx:05d}_or.jpg'), 0)
+            base = fix(m, I, bg) if idx in FLAGGED[seq] else m   # keep the earlier pixel fix
+            m2 = base & ~R
             if write:
                 cv2.imwrite(os.path.join(d, f'{idx:05d}_sammask_extfix.png'), (m2 * 255).astype(np.uint8))
-            I = cv2.imread(os.path.join(d, f'{idx:05d}_or.jpg'), 0)
             out.setdefault(seq, []).append((I, m, m2, f'{seq} f{idx}'))
     return out
 
