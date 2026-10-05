@@ -136,11 +136,12 @@ def track(trial, max_frames=None):
     return dict(frames=frames, masks=masks, dets=dets, chain=chain, kw=kw, h0=h0)
 
 
-def readout_line(chain, t):
-    """Position/velocity at t from the chain's own detections inside the causal buffer: OLS on x
-    (the tracker's motion model is horizontal-only), mean y. Coasts on the last known position
-    when the buffer holds fewer than two detections."""
-    pts = sorted((k, chain[k]) for k in range(max(0, t - BUFFER + 1), t + 1) if k in chain)
+def readout_line(chain, t, span=BUFFER):
+    """Position/velocity at t from the chain's own detections in the causal span [t-span+1, t]:
+    OLS on x (the tracker's motion model is horizontal-only), mean y. Coasts on the last known
+    position when the span holds fewer than two detections. span > BUFFER for a strided buffer:
+    every contiguous detection in the span is used, not only the sampled frames."""
+    pts = sorted((k, chain[k]) for k in range(max(0, t - span + 1), t + 1) if k in chain)
     if len(pts) >= 2:
         ks = np.array([k for k, _ in pts], float)
         xs = np.array([p[0] for _, p in pts])
