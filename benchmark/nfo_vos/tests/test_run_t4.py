@@ -69,3 +69,10 @@ def test_segment_prompted_accepts_box_without_point():
     with torch.inference_mode(), torch.autocast('cuda', dtype=torch.float16):
         m = R.segment_prompted(img, None, np.array([35, 25, 65, 75], float), fallback=None)
     assert m.shape == (100, 100) and m[50, 50]
+
+
+def test_select_trials_one_index_for_slurm_arrays():
+    ok = [t for t in TRIALS if t['admissible']]
+    assert R.select_trials(TRIALS, index=4) == [ok[4]]
+    assert R.select_trials(TRIALS, limit=2) == ok[:2]
+    assert R.select_trials(TRIALS) == ok

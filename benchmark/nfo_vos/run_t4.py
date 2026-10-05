@@ -31,7 +31,7 @@ from tracking.eval.gt_sam_gate import project_to_frame, visibility_within_mask
 BUFFER = 7            # last 7 consecutive frames (NTH_FRAME = 1), spec §4
 MAX_AGE = 6           # track_blobs' default; a track unseen for longer is dead -> re-acquire
 CROP_MULT = 4.5       # gt_sam_gate.py's default crop_mult
-CKPT = os.path.abspath('../samurai/sam2/checkpoints/sam2.1_hiera_base_plus.pt')
+CKPT = os.path.abspath(os.environ.get('NFO_SAM2_CKPT', '../samurai/sam2/checkpoints/sam2.1_hiera_base_plus.pt'))
 CACHE = 'results/benchmark/pilot/masks'
 VOTE_M = range(1, BUFFER + 1)
 
@@ -214,13 +214,20 @@ def _run_trial(trial, max_frames=None, variant='point'):
     return {m: dict(masks=out[m], frames=fr, sec_per_frame=timing[m] / T) for m in names}
 
 
+def select_trials(trials, limit=None, index=None):
+    """Admissible trials; index picks exactly one (a SLURM array task), limit the first few."""
+    ok = [t for t in trials if t['admissible']]
+    return ok[index:index + 1] if index is not None else ok[:limit]
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--limit', type=int, default=None)
     p.add_argument('--force', action='store_true')
     p.add_argument('--variant', choices=('point', 'box'), default='point')
+    p.add_argument('--trial-index', type=int, default=None, help='run one admissible trial (array task)')
     a = p.parse_args()
-    trials = [t for t in json.load(open(TR.OUT)) if t['admissible']][:a.limit]
+    trials = select_trials(json.load(open(TR.OUT)), a.limit, a.trial_index)
     for m in methods(a.variant):
         os.makedirs(os.path.join(CACHE, m), exist_ok=True)
     for t in trials:

@@ -1,0 +1,43 @@
+#!/bin/bash
+# T4 family on the pilot trials, one array task per (trial, variant). Trials are independent:
+# each has its own warm-up, its own tracker run and its own causal buffer, and writes its own
+# npz files (results/benchmark/pilot/masks/<method>/<trial>.npz), so tasks share no state.
+#
+#   sbatch benchmark/nfo_vos/run_t4.sbatch                  # all 42 tasks
+#   sbatch --array=0-20 benchmark/nfo_vos/run_t4.sbatch     # box+point variant only
+#   sbatch --array=21-41 benchmark/nfo_vos/run_t4.sbatch    # box-only variant only
+#
+# Task map: id 0-20 -> --variant point, trial id; id 21-41 -> --variant box, trial id-21.
+# Needs on the cluster: this repo with data/nfo_processed/seq1_gt (224 frames + _sammask.png,
+# about 76 MB), results/benchmark/pilot/trials.json, and the base_plus checkpoint at NFO_SAM2_CKPT.
+# T4 never reads the native frames.
+
+#SBATCH --job-name=nfo_t4
+#SBATCH --array=0-41
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=4
+#SBATCH --gres=gpu:1
+#SBATCH --mem=16G
+#SBATCH --time=00:30:00
+#SBATCH --mail-type=END,FAIL
+#SBATCH --output=/storage/slurm/akid/logs/nfo_t4-%A_%a.out
+#SBATCH --error=/storage/slurm/akid/logs/nfo_t4-%A_%a.out
+
+PYTHON=${PYTHON:-/home/wiss/akid/miniconda3/envs/comp_vis/bin/python3}
+export NFO_SAM2_CKPT=${NFO_SAM2_CKPT:-$HOME/checkpoints/sam2.1_hiera_base_plus.pt}
+
+N_TRIALS=21
+if [ "$SLURM_ARRAY_TASK_ID" -lt "$N_TRIALS" ]; then
+  VARIANT=point; IDX=$SLURM_ARRAY_TASK_ID
+else
+  VARIANT=box; IDX=$((SLURM_ARRAY_TASK_ID - N_TRIALS))
+fi
+
+pwd; hostname; date; nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+echo "variant=$VARIANT trial-index=$IDX ckpt=$NFO_SAM2_CKPT"
+export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+export OPENCV_NUM_THREADS=$SLURM_CPUS_PER_TASK
+
+srun "$PYTHON" -m benchmark.nfo_vos.run_t4 --variant "$VARIANT" --trial-index "$IDX" --force
+date
