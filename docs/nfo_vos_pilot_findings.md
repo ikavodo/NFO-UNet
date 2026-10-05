@@ -38,6 +38,17 @@ numbers descriptive.
   (+0.063 over B0). A GT-free switch based on the tracker box does not capture it (0.755):
   the switch signal is the bottleneck.
 
+## Composite-prepend memory init helps both SAMURAI and SAM2 (GT-aligned, causal)
+- Port of master_thesis composite-prepend: the integrated image of 7 past frames (stride 2, ≤ t₀,
+  aligned with **GT** box centres) is cut out by SAM2 and pasted onto the warm-up background.
+  This frame is prepended and prompted, so it becomes the conditioning memory.
+- T1-cp J&F **0.843** vs T1 0.773 (**+0.070, better on 15/21**); B0-cp 0.824 vs B0 0.779
+  (+0.045, 16/21). DRE (drift onto the wrong object) 0.07 → 0.015. The largest gains are on B0/T1's
+  lock-in starts (t1184: 0.02 → 0.72 T1-cp, 0.63 B0-cp), with small gains on good starts and one
+  loss (t1174). Unlike master_thesis tum3, SAM2 does not collapse with the composite here.
+- Caveat: the alignment is GT-oracle (plausibility only). The decisive next test replaces it with
+  the tracker's own causal alignment.
+
 ## Next (cheapest first)
 0. **Do not miss:** SAM-PT and SAM-PD are required baselines for T4-1n in the full run (spec §8).
 1. Decide the benchmark's question: modal VOS (B0 strong, integration does not help) vs amodal
