@@ -39,6 +39,7 @@ numbers descriptive.
   the switch signal is the bottleneck.
 
 ## Next (cheapest first)
+0. **Do not miss:** SAM-PT and SAM-PD are required baselines for T4-1n in the full run (spec §8).
 1. Decide the benchmark's question: modal VOS (B0 strong, integration does not help) vs amodal
    person extent/localisation (integration helps; scored on human boxes, so no pseudo-GT bias;
    matches the original NFO-UNet localisation task).

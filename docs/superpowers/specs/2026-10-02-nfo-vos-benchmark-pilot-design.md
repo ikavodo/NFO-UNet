@@ -236,6 +236,16 @@ a new inference run.
 
 ## 8. Deferred (keep in mind, not in the pilot)
 
+- **Required baselines for the full run (decided 2026-10-05): SAM-PT and SAM-PD.** These are the
+  published per-frame-SAM, no-memory methods, the direct ancestors of T4-1n (tracker prompt → SAM2
+  image per frame). SAM-PT (Rajič et al., arXiv 2307.01197, code `SysCV/sam-pt`): a point tracker
+  (CoTracker) re-prompts SAM every frame; reported 79.4 J&F zero-shot on DAVIS-2017. SAM-PD
+  (arXiv 2403.04194): the previous mask's box is propagated as the next prompt (jittered
+  multi-box + point refinement), with no tracking module. Run both with the same shared t₀ prompt
+  and the native frames, and swap their SAM for SAM2.1 b+ where the code allows (one variable:
+  where the per-frame prompt comes from). This tests our motion tracker's prompts against
+  appearance-based prompt propagation, not integration.
+
 - Ablation ladder decomposing the pseudo-GT reference (re-prompting at clear frames → GT-box clip
   → backward pass), to explain why modal memory-based variants fail.
 - DAM4SAM (checkpoint already at `../DAM4SAM/checkpoints/`) and SAM2Long.
