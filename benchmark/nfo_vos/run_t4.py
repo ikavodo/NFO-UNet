@@ -36,7 +36,12 @@ CACHE = 'results/benchmark/pilot/masks'
 VOTE_M = range(1, BUFFER + 1)
 
 
-def methods():
+def methods(variant='point'):
+    """'point': SAM2 prompted with box + interior point. 'box': the same box, no point (t4b, t4b-1)
+    - SAM2 decides what the dominant object in the tracker's box is. Only the SAM2 variants exist
+    for 'box'; the blob controls do not use a prompt."""
+    if variant == 'box':
+        return ['t4b', 't4b-1']
     return ['t4', 't4-1', *[f't4-2_m{m}' for m in VOTE_M], 't4-3']
 
 
@@ -76,9 +81,10 @@ def segment_prompted(img, point, box, fallback):
     """gt_sam_gate.segment_reference with an optional box (same predictor, same multimask argmax)."""
     pred = gt_sam_gate._predictor
     pred.set_image(np.stack([img] * 3, axis=-1))
-    pt = np.array([point if point is not None else fallback])
-    masks, scores, _ = pred.predict(point_coords=pt, point_labels=np.array([1]),
-                                    box=box, multimask_output=True)
+    if point is None and box is None:
+        point = fallback
+    pt, lab = (np.array([point]), np.array([1])) if point is not None else (None, None)
+    masks, scores, _ = pred.predict(point_coords=pt, point_labels=lab, box=box, multimask_output=True)
     return masks[np.argmax(scores)] > 0.5
 
 
@@ -145,13 +151,13 @@ def readout_line(chain, t):
     return chain[k_last][0], chain[k_last][1], 0.0
 
 
-def run_trial(trial, max_frames=None):
+def run_trial(trial, max_frames=None, variant='point'):
     """fp16 autocast for every SAM2 call, the same precision B0/T1 run at (run_sam2_video.py)."""
     with torch.inference_mode(), torch.autocast('cuda', dtype=torch.float16):
-        return _run_trial(trial, max_frames)
+        return _run_trial(trial, max_frames, variant)
 
 
-def _run_trial(trial, max_frames=None):
+def _run_trial(trial, max_frames=None, variant='point'):
     use_base_plus()
     t_start = time.perf_counter()
     P = track(trial, max_frames)
@@ -160,8 +166,11 @@ def _run_trial(trial, max_frames=None):
     T, H, W = frames.shape
     crop = int(np.clip(round(CROP_MULT * P['h0']), 60, min(H, W)))
     centre = (crop / 2, crop / 2)
-    out = {m: np.zeros((T, H, W), bool) for m in methods()}
-    timing = {m: t_track for m in methods()}            # every variant pays the shared tracker
+    names = methods(variant)
+    box_only = variant == 'box'
+    seg_names = ('t4b', 't4b-1') if box_only else ('t4', 't4-1')
+    out = {m: np.zeros((T, H, W), bool) for m in names}
+    timing = {m: t_track for m in names}            # every variant pays the shared tracker
     for t in range(T):
         ax, ay, vx = readout_line(P['chain'], t)
         cx, cy = merged_center(dets[t], ax, ay, kw['merge_radius'])      # whole-person centre
@@ -174,20 +183,25 @@ def _run_trial(trial, max_frames=None):
         blobs = [restrict_to_nearby((masks[k] > 0).astype(np.uint8), masks[k], dets[k], x, cy,
                                     kw['merge_radius']) > 0 for k, x in zip(B, xs)]
         t_blob = time.perf_counter() - s
-        out['t4-3'][t] = blobs[-1]
-        timing['t4-3'] += t_blob
+        if not box_only:
+            out['t4-3'][t] = blobs[-1]
+            timing['t4-3'] += t_blob
         x0, y0 = int(cx - crop / 2), int(cy - crop / 2)               # crop_at's own origin
         point, box = prompt_in_crop(blobs[-1], x0, y0, gt=trial if t == 0 else None)
+        if box_only and box is not None:
+            point = None                      # no blob -> no box -> falls back to the centre point
 
         s = time.perf_counter()
         ref = fuse(aligned, method='median')
         S = segment_prompted(ref, point, box, centre)
-        out['t4'][t] = back(visibility_within_mask(aligned, ref, S)[-1])
-        timing['t4'] += time.perf_counter() - s + t_blob
+        out[seg_names[0]][t] = back(visibility_within_mask(aligned, ref, S)[-1])
+        timing[seg_names[0]] += time.perf_counter() - s + t_blob
 
         s = time.perf_counter()               # T4-1: reference = current frame; visibility = identity
-        out['t4-1'][t] = back(segment_prompted(aligned[-1], point, box, centre))
-        timing['t4-1'] += time.perf_counter() - s + t_blob
+        out[seg_names[1]][t] = back(segment_prompted(aligned[-1], point, box, centre))
+        timing[seg_names[1]] += time.perf_counter() - s + t_blob
+        if box_only:
+            continue
 
         s = time.perf_counter()
         ab = np.stack([crop_at(b.astype(np.uint8), x, cy, crop) > 0 for b, x in zip(blobs, xs)])
@@ -197,28 +211,29 @@ def _run_trial(trial, max_frames=None):
         for m in VOTE_M:
             timing[f't4-2_m{m}'] += t_blob + t_vote
     fr = np.array(trial['frames'][:T])
-    return {m: dict(masks=out[m], frames=fr, sec_per_frame=timing[m] / T) for m in methods()}
+    return {m: dict(masks=out[m], frames=fr, sec_per_frame=timing[m] / T) for m in names}
 
 
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--limit', type=int, default=None)
     p.add_argument('--force', action='store_true')
+    p.add_argument('--variant', choices=('point', 'box'), default='point')
     a = p.parse_args()
     trials = [t for t in json.load(open(TR.OUT)) if t['admissible']][:a.limit]
-    for m in methods():
+    for m in methods(a.variant):
         os.makedirs(os.path.join(CACHE, m), exist_ok=True)
     for t in trials:
-        paths = {m: os.path.join(CACHE, m, f"{t['id']}.npz") for m in methods()}
+        paths = {m: os.path.join(CACHE, m, f"{t['id']}.npz") for m in methods(a.variant)}
         if all(os.path.exists(q) for q in paths.values()) and not a.force:
             continue
         torch.cuda.reset_peak_memory_stats()
-        res = run_trial(t)
+        res = run_trial(t, variant=a.variant)
         peak = torch.cuda.max_memory_allocated() / 2 ** 30
         for m, r in res.items():
             np.savez_compressed(paths[m], peak_mem_gb=peak, **r)
-        print(f"{t['id']}: t4 {res['t4']['sec_per_frame'] * 1000:.0f} ms/frame, "
-              f"t4-3 {res['t4-3']['sec_per_frame'] * 1000:.0f} ms/frame, peak {peak:.2f} GB")
+        print(f"{t['id']}: " + ', '.join(f"{m} {r['sec_per_frame'] * 1000:.0f} ms/frame"
+                                        for m, r in res.items() if m in ('t4', 't4b')) + f", peak {peak:.2f} GB", flush=True)
 
 
 if __name__ == '__main__':

@@ -55,3 +55,17 @@ def test_prompt_after_t0_is_the_deepest_point_of_the_own_blob():
     assert blob[int(pt[1]) + 5, int(pt[0]) + 5] and 20 <= pt[0] + 5 < 30 and 10 <= pt[1] + 5 < 50
     assert tuple(box) == (0 - 5, 5 - 5, 30 - 5, 50 - 5)                    # merged blob box
     assert R.prompt_in_crop(np.zeros((60, 60), bool), 0, 0) == (None, None)
+
+
+def test_box_only_variant_names():
+    assert R.methods('box') == ['t4b', 't4b-1']
+    assert R.methods() == R.methods('point') and 't4' in R.methods()
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='needs GPU')
+def test_segment_prompted_accepts_box_without_point():
+    R.use_base_plus()
+    img = np.zeros((100, 100), np.uint8); img[30:70, 40:60] = 200
+    with torch.inference_mode(), torch.autocast('cuda', dtype=torch.float16):
+        m = R.segment_prompted(img, None, np.array([35, 25, 65, 75], float), fallback=None)
+    assert m.shape == (100, 100) and m[50, 50]
