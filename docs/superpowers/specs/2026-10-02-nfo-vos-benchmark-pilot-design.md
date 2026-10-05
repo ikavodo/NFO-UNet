@@ -78,9 +78,13 @@ GT, never S itself.
   the box for track selection; its SAM prompts come from the tracker. Nothing is given after t₀.
 - **Propagation:** forward from t₀, strictly causal, no look-ahead.
 - **Scoring:** every frame in [t₀, t₀+50] for every method.
-- **Per-trial covariates:** v(t₀) = |M_{t₀}| / Ā, where Ā is the median |M| over the segment's
-  `confirmed_clear_frames` (`nfo_visibility.py:116`). Also n_frag(t₀) = the number of connected
-  components of M_{t₀}.
+- **Per-trial covariates:** v(t₀) = |M_{t₀}| / (κ·|B_{t₀}|), where B_{t₀} is the amodal GT box
+  (224 px) and κ is the median fill ratio |M|/|B| over the segment's `confirmed_clear_frames`
+  (`nfo_visibility.py:116`). That makes v the visible fraction of the expected full-body area at
+  t₀'s own scale (`visibility`, `benchmark/nfo_vos/trials.py`). Rev. 2 used |M_{t₀}| / median|M|,
+  which mixed apparent size with visibility: in segment 5 the box height falls from 83 to 51 px as
+  the walker recedes, and that v reached 2.6. Also n_frag(t₀) = the number of connected components
+  of M_{t₀}.
 
 ## 4. Methods
 

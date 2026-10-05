@@ -179,3 +179,6 @@ data/*.pt
 *.engine
 *.engine.json
 *.onnx
+
+# pilot mask cache (re-creatable, large)
+results/benchmark/pilot/masks/
