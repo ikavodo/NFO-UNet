@@ -21,13 +21,16 @@ import torch
 from benchmark.nfo_vos import score, trials as TR
 
 RES, IMG = score.RES, score.IMG
-MAIN = ['b0', 't1', 't4', 't4-1', 't4c-1', 't4b', 't4b-1', 't4-2*', 't4-3']
+MAIN = ['b0', 't1', 't4-1n', 't4', 't4-1', 't4c-1', 't4b', 't4b-1', 't4-2*', 't4-3']
 COLS = ['JF', 'J_mean', 'F_mean', 'J_decay', 'DRE', 'NRE', 'P_norm', 'J@10', 'J@25', 'J@50']
 COMPARISONS = [('t4', 't4-1', 'integration effect, with SAM2'),
                ('t4-2*', 't4-3', 'integration effect, without SAM2'),
                ('t4', 't4-2*', 'does SAM2 add to integration'),
                ('t4', 'b0', 'integration vs memory propagation (SAM2)'),
                ('t4', 't1', 'integration vs memory propagation (SAMURAI)'),
+               ('t4-1n', 't4-1', 'SAM2 input: native full frame vs 224 crop (same tracker prompt)'),
+               ('t4-1n', 'b0', 'per-frame SAM2 + tracker prompt vs memory propagation, equal input'),
+               ('t4-1n', 't1', 'same, vs SAMURAI'),
                ('t4c-1', 't4-1', 'integrated box vs frame-t blob box (raw frame)'),
                ('t4c-1', 'b0', 'motion localisation + per-frame SAM2 vs memory propagation'),
                ('t4c-1', 't1', 'same, vs SAMURAI'),

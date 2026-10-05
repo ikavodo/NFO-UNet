@@ -44,6 +44,8 @@ def methods(variant='point'):
         return ['t4b', 't4b-1']
     if variant == 'ibox':
         return ['t4c-1']
+    if variant == 'native':
+        return ['t4-1n']
     return ['t4', 't4-1', *[f't4-2_m{m}' for m in VOTE_M], 't4-3']
 
 
@@ -77,6 +79,26 @@ def prompt_in_crop(blob, x0, y0, gt=None):
     py, px = np.unravel_index(np.argmax(D), D.shape)
     ys, xs = np.nonzero(blob)
     return (px - x0, py - y0), np.array([xs.min(), ys.min(), xs.max() + 1, ys.max() + 1], float) - off
+
+
+def box_to_native(box):
+    """224 box edges -> native 800x600 edges through the padded square, the inverse of the
+    GT's own scale_and_pad (gen_nfo_pseudo_masks.gt_to_native, in pixel units)."""
+    s = max(TR.NATIVE_W, TR.NATIVE_H)
+    px, py = (s - TR.NATIVE_W) / 2, (s - TR.NATIVE_H) / 2
+    return np.array([box[0] / TR.SIZE * s - px, box[1] / TR.SIZE * s - py,
+                     box[2] / TR.SIZE * s - px, box[3] / TR.SIZE * s - py], float)
+
+
+def segment_native(trial, idx, point, box):
+    """SAM2 image predictor on the FULL native frame, single-mask output: the setup that matches
+    B0 at t0 with the identical prompt (diag_init_resolution.csv: J 0.700 vs 0.703)."""
+    pred = gt_sam_gate._predictor
+    img = cv2.imread(f"data/nfo_final/nfo_final/{trial['seq']}/{idx:05d}.jpg")[:, :, ::-1].copy()
+    pred.set_image(img)
+    masks, _, _ = pred.predict(point_coords=np.array([point]), point_labels=np.array([1]),
+                               box=None if box is None else np.asarray(box), multimask_output=False)
+    return masks[0] > 0.5
 
 
 def integrated_box(aligned_blobs):
@@ -184,7 +206,8 @@ def _run_trial(trial, max_frames=None, variant='point'):
     box_only = variant == 'box'
     seg_names = ('t4b', 't4b-1') if box_only else ('t4', 't4-1')
     blob_controls = variant == 'point'
-    out = {m: np.zeros((T, H, W), bool) for m in names}
+    shape = (TR.NATIVE_H, TR.NATIVE_W) if variant == 'native' else (H, W)
+    out = {m: np.zeros((T,) + shape, bool) for m in names}
     timing = {m: t_track for m in names}            # every variant pays the shared tracker
     for t in range(T):
         ax, ay, vx = readout_line(P['chain'], t)
@@ -205,6 +228,19 @@ def _run_trial(trial, max_frames=None, variant='point'):
         point, box = prompt_in_crop(blobs[-1], x0, y0, gt=trial if t == 0 else None)
         if box_only and box is not None:
             point = None                      # no blob -> no box -> falls back to the centre point
+        if variant == 'native':
+            # T4-1 with ONLY the SAM2 input changed: native full frame instead of the 224 crop.
+            # The tracker stays at 224; its prompt maps to native through the padded square.
+            s = time.perf_counter()
+            if t == 0:
+                pn, bn = trial['point_native'], trial['box_native']
+            else:
+                p224, b224 = prompt_in_crop(blobs[-1], 0, 0)
+                pn = TR.to_native(*(p224 if p224 is not None else (cx, cy)))
+                bn = box_to_native(b224) if b224 is not None else None
+            out['t4-1n'][t] = segment_native(trial, trial['frames'][t], pn, bn)
+            timing['t4-1n'] += time.perf_counter() - s + t_blob
+            continue
         if variant == 'ibox':
             # T4-1 with ONLY the box source changed: the integrated extent, not the frame-t blob
             s = time.perf_counter()
@@ -249,7 +285,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('--limit', type=int, default=None)
     p.add_argument('--force', action='store_true')
-    p.add_argument('--variant', choices=('point', 'box', 'ibox'), default='point')
+    p.add_argument('--variant', choices=('point', 'box', 'ibox', 'native'), default='point')
     p.add_argument('--trial-index', type=int, default=None, help='run one admissible trial (array task)')
     a = p.parse_args()
     trials = select_trials(json.load(open(TR.OUT)), a.limit, a.trial_index)

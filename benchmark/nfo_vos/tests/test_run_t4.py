@@ -83,3 +83,9 @@ def test_integrated_box_is_the_bbox_of_the_aligned_blob_union():
     assert tuple(R.integrated_box(ab)) == (8, 5, 18, 30)            # x0, y0, x1, y1 (exclusive)
     assert R.integrated_box(np.zeros((2, 5, 5), bool)) is None
     assert R.methods('ibox') == ['t4c-1']
+
+
+def test_box_224_to_native_maps_edges_through_the_padded_square():
+    # 224 box covering the whole padded square -> native (0, -100, 800, 700)
+    assert np.allclose(R.box_to_native((0, 0, 224, 224)), (0, -100, 800, 700))
+    assert R.methods('native') == ['t4-1n']
