@@ -1,7 +1,7 @@
 """Acceptance test for the NFO pseudo-masks: do they reach the extent of their GT box?
 
     python -m gen_data.nfo_pseudo_masks.check_mask_extent
-    python -m gen_data.nfo_pseudo_masks.check_mask_extent --mask-subdir old_sammask   # the backup
+    python -m gen_data.nfo_pseudo_masks.check_mask_extent --mask-subdir old_sammask   # the backup, in data/nfo_processed/_archive/<seq>/
 
 Written for the gt_to_native fix (6606a1a). Before it, every mask stopped short of the feet:
 0/3496 reached their GT box bottom, median bottom gap 0.098-0.218 of box height per sequence.
@@ -59,7 +59,7 @@ def main():
     p.add_argument('--root', default=ROOT)
     p.add_argument('--seqs', nargs='*', default=None)
     p.add_argument('--mask-subdir', default='',
-                   help="masks in <seq_dir>/<subdir> instead of <seq_dir> (e.g. old_sammask backup)")
+                   help="masks in data/nfo_processed/_archive/<seq>/<subdir> instead of <seq_dir> (e.g. old_sammask backup)")
     p.add_argument('--tol-px', type=float, default=2.0, help='"reaches bottom" tolerance, 224-px units')
     a = p.parse_args()
 
@@ -68,7 +68,8 @@ def main():
           f"{'reach bottom':>15}{'pad leak':>10}")
     for seq in seqs:
         seq_dir = os.path.join(a.root, seq)
-        mask_dir = os.path.join(seq_dir, a.mask_subdir) if a.mask_subdir else seq_dir
+        mask_dir = (os.path.join(os.path.dirname(seq_dir), '_archive', os.path.basename(seq_dir).removesuffix('_gt'),
+                                 a.mask_subdir) if a.mask_subdir else seq_dir)
         b, t, reach, leak, empty, n = check_sequence(seq_dir, mask_dir, a.tol_px)
         if n == 0:
             print(f'{seq:<9} no masks with a GT box found in {mask_dir}')
