@@ -20,6 +20,8 @@ import torch
 
 from benchmark.nfo_vos import run_t4 as R, trials as TR
 from gen_data.nfo_pseudo_masks.gen_nfo_pseudo_masks import gt_to_native
+from scipy.stats import theilslopes
+from tracking.core.blob_tracker import merged_center
 
 N, STRIDE = 7, 2
 FEATHER = 9                      # composite_prepend_tracking.py:69 (px, kept at native res)
@@ -75,6 +77,77 @@ def gt_centre_native(idx):
     return (x0 + x1) / 2, (y0 + y1) / 2
 
 
+def fit_velocity(pts, fit):
+    """Constant velocity (vx, vy) per frame from {k: (x, y)}: 'ols' or 'theilsen' (median of
+    pairwise slopes, robust to fragment jumps)."""
+    ks = np.array(sorted(pts), float)
+    if len(ks) < 2:
+        return np.zeros(2)
+    P = np.array([pts[k] for k in sorted(pts)], float)
+    if fit == 'theilsen':
+        return np.array([theilslopes(P[:, d], ks)[0] for d in range(2)])
+    return np.array([np.polyfit(ks, P[:, d], 1)[0] for d in range(2)])
+
+
+def chain_positions(dets, t0, p0, v0, radius, fit='theilsen', iters=2):
+    """Track-ID-free history: walk back from t0 along the constant-velocity line through p0; in
+    each past frame merge the detections within `radius` of the prediction (merged_center, the
+    whole-person box centre T4 uses); refit the velocity; repeat. Crosses track-ID breaks."""
+    p0, v = np.asarray(p0, float), np.asarray(v0, float)
+    for _ in range(iters):
+        pts = {t0: tuple(p0)}
+        for k in sorted((k for k in dets if k < t0), reverse=True):
+            pred = p0 - v * (t0 - k)
+            near = [d for d in dets[k] if np.hypot(d['x'] - pred[0], d['y'] - pred[1]) <= radius]
+            if near:
+                pts[k] = merged_center(near, pred[0], pred[1], radius)
+        v = fit_velocity(pts, fit)
+    return pts, v
+
+
+def _history(trial, n, stride):
+    t0 = trial['t0']
+    c0 = max(0, t0 - stride * (n - 1))
+    D = R.detect_and_track(list(range(c0, t0 + 1)), trial['warmup'], trial['box_224'][3] - trial['box_224'][1])
+    L = t0 - c0
+    dets = {c0 + i: d for i, d in enumerate(D['dets'])}
+    cands = [tr for tr in D['tracks'] if L in tr.history]
+    x0, y0, x1, y1 = trial['box_224']
+    bx, by = (x0 + x1) / 2, (y0 + y1) / 2
+    if not cands:
+        return dict(dets=dets, hist={}, first=t0, kw=D['kw'], seed=(bx, by))
+    inside = [tr for tr in cands if x0 <= tr.history[L][0] <= x1 and y0 <= tr.history[L][1] <= y1]
+    tr = (max(inside, key=lambda r: r.history[L][2] * r.history[L][3]) if inside else
+          min(cands, key=lambda r: np.hypot(r.history[L][0] - bx, r.history[L][1] - by)))
+    return dict(dets=dets, hist={c0 + k: tr.history[k][:2] for k in tr.history if k <= L},
+                first=c0 + tr.first_frame, kw=D['kw'], seed=tr.history[L][:2])
+
+
+def estimate_shifts(trial, method, n=N, stride=STRIDE):
+    """GT-free shifts {k: (dx, dy)} (224 px) moving frame k's person onto t0's, for the horizon
+    frames with person evidence. method: 'track_ols' (strategy A), 'chain_<ols|theilsen>_<x|xy>', or
+    'hybrid_x' (chosen: x-only; the track's OLS velocity when it has >= 3 points, else the chained
+    Theil-Sen velocity; the chain's horizon. Median error vs GT 7.7 native px vs 9.4 chain-only,
+    selected on the pilot's own trials)."""
+    t0 = trial['t0']
+    H = _history(trial, n, stride)
+    if method == 'track_ols':
+        if not H['hist']:
+            return {t0: (0.0, 0.0)}
+        ks = horizon_frames(t0, n, stride, lambda k: k >= H['first'])
+        return alignment_offsets(H['hist'], ks, t0, 'ols')
+    fit, dims = ('theilsen', 'x') if method == 'hybrid_x' else method.split('_')[1:]
+    v0 = fit_velocity(H['hist'], 'ols') if len(H['hist']) >= 2 else np.zeros(2)
+    p0 = merged_center(H['dets'][t0], H['seed'][0], H['seed'][1], H['kw']['merge_radius'])
+    pts, v = chain_positions(H['dets'], t0, p0, v0, H['kw']['merge_radius'], fit=fit)
+    if method == 'hybrid_x' and len(H['hist']) >= 3:     # the track's own velocity when it has one
+        v = fit_velocity(H['hist'], 'ols')
+    if dims == 'x':
+        v = np.array([v[0], 0.0])
+    ks = horizon_frames(t0, n, stride, lambda k: k in pts)
+    return {k: (v[0] * (t0 - k), v[1] * (t0 - k)) for k in ks}
+
+
 def tracker_history(trial, n, stride):
     """GT-free history up to t0: run the shared tracker on the contiguous frames t0-(n-1)*stride..t0,
     pick the track whose detection AT t0 lies in the prompt box (largest if several, else nearest
@@ -107,9 +180,13 @@ def build(trial, n=N, stride=STRIDE, align='gt'):
             cx, cy = gt_centre_native(k)
             aligned.append(shift(native(k), cx0 - cx, cy0 - cy).astype(np.float32))
     else:
-        hist, first = tracker_history(trial, n, stride)
-        ks = horizon_frames(t0, n, stride, lambda k: k >= first) if hist else [t0]
-        off = alignment_offsets(hist, ks, t0, align) if hist else {t0: (0.0, 0.0)}
+        if align == 'hybrid':
+            off = estimate_shifts(trial, 'hybrid_x', n, stride)
+        else:
+            hist, first = tracker_history(trial, n, stride)
+            ks = horizon_frames(t0, n, stride, lambda k: k >= first) if hist else [t0]
+            off = alignment_offsets(hist, ks, t0, align) if hist else {t0: (0.0, 0.0)}
+        ks = sorted(off)
         sc = max(TR.NATIVE_W, TR.NATIVE_H) / TR.SIZE                 # 224 px -> native px
         for k in ks:
             aligned.append(shift(native(k), off[k][0] * sc, off[k][1] * sc).astype(np.float32))
@@ -136,7 +213,7 @@ def build(trial, n=N, stride=STRIDE, align='gt'):
 def main():
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument('--align', choices=('gt', 'ols', 'pos'), default='gt')
+    ap.add_argument('--align', choices=('gt', 'ols', 'pos', 'hybrid'), default='gt')
     a = ap.parse_args()
     out = OUT if a.align == 'gt' else f'{OUT}_{a.align}'
     trace = TRACE if a.align == 'gt' else f'{TRACE}_{a.align}'

@@ -40,3 +40,27 @@ def test_detect_and_track_is_shared_with_t4():
     t = json.load(open('results/benchmark/pilot/trials.json'))[6]
     out = R.detect_and_track(t['frames'][:5], t['warmup'], t['box_224'][3] - t['box_224'][1])
     assert out['frames'].shape[0] == 5 and len(out['dets']) == 5 and 'tracks' in out
+
+
+def _synthetic_dets(t0=20, n=13, vx=3.0):
+    """Person at x = 100 + vx*k, fragmented (head/legs alternate +-8 px), plus a static distractor."""
+    dets = {}
+    for k in range(t0 - n + 1, t0 + 1):
+        x = 100 + vx * k
+        frag = [{'x': x + (8 if k % 2 else -8), 'y': 50, 'bbox': (x - 4 + (8 if k % 2 else -8), 30, x + 4 + (8 if k % 2 else -8), 70)}]
+        dets[k] = frag + [{'x': 10.0, 'y': 50, 'bbox': (6, 30, 14, 70)}]
+    return dets
+
+
+def test_chain_recovers_velocity_across_fragments_without_track_ids():
+    t0 = 20
+    pts, v = C.chain_positions(_synthetic_dets(t0), t0, p0=(100 + 3.0 * t0, 50), v0=(0.0, 0.0), radius=25, fit='theilsen')
+    assert abs(v[0] - 3.0) < 0.5 and abs(v[1]) < 1e-6
+    assert all(abs(p[0] - 10) > 30 for p in pts.values())          # distractor never picked
+
+
+def test_hybrid_reaches_full_horizon_and_is_horizontal_only():
+    import json
+    for t in json.load(open('results/benchmark/pilot/trials.json'))[:3]:
+        off = C.estimate_shifts(t, 'hybrid_x')
+        assert len(off) >= 5 and all(dy == 0.0 for _, dy in off.values())
