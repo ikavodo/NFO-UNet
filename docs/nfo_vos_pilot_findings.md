@@ -60,7 +60,16 @@ numbers descriptive.
   (0.16 / 0.25, worse than plain T1). These are the segment-start trials, where the tracker's
   7-frame history reaches before the person is in view (frames before the GT segment), so the
   composite is built from the wrong content.
-- B0-cp-hybrid: only 1/21 trials came back from the cluster. Not yet evaluable.
+- B0-cp-hybrid (cluster SAM2 `2b90b9f`; local baseline `sam2 1.1.0`, a caveat): J&F 0.787 vs B0 0.779
+  (+0.008, 14/21). It matches GT-aligned B0-cp on the other 19 starts, but **collapses** on t1154/t1164
+  (0.08 / 0.00, empty masks, NRE 0.115), where SAMURAI only degrades. This is the same
+  appearance-anchor-needs-motion-gating pattern as master_thesis tum3. The user judged the composite
+  content there to be the right person, heavily occluded (not a bug).
+- Failure signature (descriptive, n = 2): the SAM2 cut-out on the integrated image is **oversized**,
+  S/expected-area = 2.85 and 3.45 vs a median of 1.47 (expected = κ·|box at t₀|). Gating the
+  prepend on S/expected ≤ 2.5 would give T1 0.815, B0 0.816. The threshold is fitted on these 2
+  starts, so pre-register it for the full run, and fix κ as a constant (0.39) there, because the
+  pilot's κ is GT-derived.
 
 ## Next (cheapest first)
 0. **Do not miss:** SAM-PT and SAM-PD are required baselines for T4-1n in the full run (spec §8).
