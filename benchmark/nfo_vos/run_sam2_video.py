@@ -73,7 +73,9 @@ def main():
     p.add_argument('--prepend-dir', default=None, help='composites dir -> method <name>-cp')
     a = p.parse_args()
     trials = [t for t in json.load(open(TRIALS)) if t['admissible']][:a.limit]
-    name = a.method + ('-cp' if a.prepend_dir else '')
+    # composites -> <m>-cp (GT-aligned); composites_<align> -> <m>-cp-<align>
+    tag = os.path.basename(os.path.normpath(a.prepend_dir)).replace('composites', '').replace('_', '-') if a.prepend_dir else ''
+    name = a.method + (f'-cp{tag}' if a.prepend_dir else '')
     out_dir = os.path.join(CACHE, name)
     os.makedirs(out_dir, exist_ok=True)
     predictor = build_predictor(a.method)

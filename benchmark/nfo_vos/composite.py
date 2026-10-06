@@ -48,6 +48,24 @@ def shift(img, dx, dy):
                           borderMode=cv2.BORDER_REPLICATE)
 
 
+def alignment_offsets(hist, ks, t, mode):
+    """Shift (dx, dy) that moves frame k's person onto frame t's position, from a track history
+    {k: (x, y)} (any units). 'ols': constant velocity, OLS on x over the history, dy = 0 (the
+    tracker's horizontal-only motion model, as T4). 'pos': the track's own position at k where it
+    has a detection, else the OLS shift."""
+    ks_h = np.array(sorted(hist), float)
+    xs = np.array([hist[k][0] for k in sorted(hist)])
+    vx = np.polyfit(ks_h, xs, 1)[0] if len(ks_h) >= 2 else 0.0
+    out = {}
+    for k in ks:
+        ols = (vx * (t - k), 0.0)
+        if mode == 'pos' and k in hist and t in hist:
+            out[k] = (hist[t][0] - hist[k][0], hist[t][1] - hist[k][1])
+        else:
+            out[k] = ols
+    return out
+
+
 def native(idx):
     return cv2.imread(f'{NATIVE}/{TR.SEQ}/{idx:05d}.jpg', 0)
 
@@ -57,15 +75,44 @@ def gt_centre_native(idx):
     return (x0 + x1) / 2, (y0 + y1) / 2
 
 
-def build(trial, n=N, stride=STRIDE):
+def tracker_history(trial, n, stride):
+    """GT-free history up to t0: run the shared tracker on the contiguous frames t0-(n-1)*stride..t0,
+    pick the track whose detection AT t0 lies in the prompt box (largest if several, else nearest
+    to the box centre). Returns ({global k: (x, y)} in 224 px, first global frame of the track)."""
     t0 = trial['t0']
-    has_gt = lambda k: k in TR.bbs() and TR.bbs()[k] and TR.bbs()[k][0].x >= 0
-    ks = horizon_frames(t0, n, stride, has_gt)
-    cx0, cy0 = gt_centre_native(t0)
+    c0 = max(0, t0 - stride * (n - 1))
+    D = R.detect_and_track(list(range(c0, t0 + 1)), trial['warmup'], trial['box_224'][3] - trial['box_224'][1])
+    L = t0 - c0
+    cands = [tr for tr in D['tracks'] if L in tr.history]
+    if not cands:
+        return {}, t0
+    x0, y0, x1, y1 = trial['box_224']
+    inside = [tr for tr in cands if x0 <= tr.history[L][0] <= x1 and y0 <= tr.history[L][1] <= y1]
+    bx, by = (x0 + x1) / 2, (y0 + y1) / 2
+    tr = (max(inside, key=lambda r: r.history[L][2] * r.history[L][3]) if inside else
+          min(cands, key=lambda r: np.hypot(r.history[L][0] - bx, r.history[L][1] - by)))
+    return {c0 + k: tr.history[k][:2] for k in tr.history if k <= L}, c0 + tr.first_frame
+
+
+def build(trial, n=N, stride=STRIDE, align='gt'):
+    """align: 'gt' (GT box centres, plausibility only), 'ols' / 'pos' (tracker, GT-free; see
+    alignment_offsets)."""
+    t0 = trial['t0']
     aligned = []
-    for k in ks:
-        cx, cy = gt_centre_native(k)
-        aligned.append(shift(native(k), cx0 - cx, cy0 - cy).astype(np.float32))
+    if align == 'gt':
+        has_gt = lambda k: k in TR.bbs() and TR.bbs()[k] and TR.bbs()[k][0].x >= 0
+        ks = horizon_frames(t0, n, stride, has_gt)
+        cx0, cy0 = gt_centre_native(t0)
+        for k in ks:
+            cx, cy = gt_centre_native(k)
+            aligned.append(shift(native(k), cx0 - cx, cy0 - cy).astype(np.float32))
+    else:
+        hist, first = tracker_history(trial, n, stride)
+        ks = horizon_frames(t0, n, stride, lambda k: k >= first) if hist else [t0]
+        off = alignment_offsets(hist, ks, t0, align) if hist else {t0: (0.0, 0.0)}
+        sc = max(TR.NATIVE_W, TR.NATIVE_H) / TR.SIZE                 # 224 px -> native px
+        for k in ks:
+            aligned.append(shift(native(k), off[k][0] * sc, off[k][1] * sc).astype(np.float32))
     integrated = np.median(np.stack(aligned), axis=0)
     w0, w1 = trial['warmup']
     background = np.median(np.stack([native(i).astype(np.float32) for i in range(w0, w1 + 1)]), axis=0)
@@ -87,14 +134,20 @@ def build(trial, n=N, stride=STRIDE):
 
 
 def main():
-    os.makedirs(OUT, exist_ok=True); os.makedirs(TRACE, exist_ok=True)
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--align', choices=('gt', 'ols', 'pos'), default='gt')
+    a = ap.parse_args()
+    out = OUT if a.align == 'gt' else f'{OUT}_{a.align}'
+    trace = TRACE if a.align == 'gt' else f'{TRACE}_{a.align}'
+    os.makedirs(out, exist_ok=True); os.makedirs(trace, exist_ok=True)
     meta = {}
     for t in [t for t in json.load(open(TR.OUT)) if t['admissible']]:
-        comp, info = build(t)
+        comp, info = build(t, align=a.align)
         meta[t['id']] = dict(frames=info['frames'], S_px=info['S'], ok=comp is not None)
         if comp is None:
             print(f"{t['id']}: empty S -> no composite"); continue
-        cv2.imwrite(f"{OUT}/{t['id']}.jpg", comp)
+        cv2.imwrite(f"{out}/{t['id']}.jpg", comp)
         x0, y0, x1, y1 = (int(v) for v in t['box_native'])
         pad = int(0.6 * (y1 - y0))
         sl = (slice(max(0, y0 - pad), y1 + pad), slice(max(0, x0 - pad), x1 + pad))
@@ -104,9 +157,9 @@ def main():
             tile = cv2.cvtColor(cv2.resize(im[sl].clip(0, 255).astype(np.uint8), (180, 240)), cv2.COLOR_GRAY2BGR)
             cv2.putText(tile, name, (3, 12), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 255, 255), 1)
             tiles.append(tile)
-        cv2.imwrite(f"{TRACE}/{t['id']}.png", np.hstack(tiles))
+        cv2.imwrite(f"{trace}/{t['id']}.png", np.hstack(tiles))
         print(f"{t['id']}: {len(info['frames'])} frames in horizon, S = {info['S']} px")
-    json.dump(meta, open(f'{OUT}/meta.json', 'w'), indent=1)
+    json.dump(meta, open(f'{out}/meta.json', 'w'), indent=1)
 
 
 if __name__ == '__main__':

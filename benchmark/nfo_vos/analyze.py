@@ -21,9 +21,13 @@ import torch
 from benchmark.nfo_vos import score, trials as TR
 
 RES, IMG = score.RES, score.IMG
-MAIN = ['b0', 't1', 'b0-cp', 't1-cp', 't4-1n', 't4-2*', 't4-3']   # rev. 4: only methods with native SAM2 input + the no-SAM2 controls
+MAIN = ['b0', 't1', 'b0-cp', 't1-cp', 'b0-cp-ols', 't1-cp-ols', 't1-cp-pos', 't4-1n', 't4-2*', 't4-3']   # rev. 4: only methods with native SAM2 input + the no-SAM2 controls
 COLS = ['JF', 'J_mean', 'F_mean', 'J_decay', 'DRE', 'NRE', 'P_norm', 'J@10', 'J@25', 'J@50']
-COMPARISONS = [('t1-cp', 't1', 'composite-prepend memory init, SAMURAI'),
+COMPARISONS = [('t1-cp-ols', 't1', 'composite (tracker OLS alignment), SAMURAI'),
+               ('b0-cp-ols', 'b0', 'composite (tracker OLS alignment), SAM2'),
+               ('t1-cp-pos', 't1', 'composite (tracker per-frame alignment), SAMURAI'),
+               ('t1-cp-ols', 't1-cp', 'tracker OLS vs GT alignment, SAMURAI'),
+               ('t1-cp', 't1', 'composite-prepend memory init, SAMURAI'),
                ('b0-cp', 'b0', 'composite-prepend memory init, SAM2'),
                ('t1-cp', 'b0-cp', 'SAMURAI vs SAM2 given the composite'),
                ('t4-1n', 'b0', 'per-frame SAM2 + tracker prompt (no memory) vs memory propagation'),

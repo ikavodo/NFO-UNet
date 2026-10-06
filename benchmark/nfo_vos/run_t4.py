@@ -127,14 +127,12 @@ def load(idx_range):
     return np.stack([cv2.imread(f'{TR.SEQ_DIR}/{i:05d}_or.jpg', 0) for i in idx_range])
 
 
-def track(trial, max_frames=None):
-    """Causal tracker. Track at t0: the detection whose centre lies in the GT box (largest if
-    several). Followed by identity; once unseen for > MAX_AGE frames, re-acquired as the detection
-    nearest the last predicted position. Returns per-frame foreground masks, detections and the
-    followed chain {local t: (x, y)}."""
-    frames = load(trial['frames'][:max_frames] if max_frames else trial['frames'])
-    w0, w1 = trial['warmup']
-    h0 = trial['box_224'][3] - trial['box_224'][1]
+def detect_and_track(frame_idx, warmup, h0):
+    """MOG2 (warmed on the person-free warm-up range) -> morphology -> blobs -> Kalman/Hungarian
+    tracks over CONTIGUOUS 224 frames. Shared by T4 (forward from t0) and composite.py (history
+    up to t0). All scale-dependent parameters from the person height h0 (224 px)."""
+    frames = load(frame_idx)
+    w0, w1 = warmup
     kw, (p_var, q_var, r_var) = scale_relative_params(h0)
     masks = foreground_mask(frames, warmup_frames=load(range(w0, w1 + 1)))
     masks = refine_mask(masks, kw['close_kernel_size'], kw['open_kernel_size'])
@@ -146,6 +144,17 @@ def track(trial, max_frames=None):
         tracks = track_blobs(dets, max_dist=kw['max_dist'], max_age=MAX_AGE)
     finally:
         _Track.P_VAR, _Track.Q_VAR, _Track.R_VAR = saved
+    return dict(frames=frames, masks=masks, dets=dets, tracks=tracks, kw=kw)
+
+
+def track(trial, max_frames=None):
+    """Causal tracker. Track at t0: the detection whose centre lies in the GT box (largest if
+    several). Followed by identity; once unseen for > MAX_AGE frames, re-acquired as the detection
+    nearest the last predicted position. Returns per-frame foreground masks, detections and the
+    followed chain {local t: (x, y)}."""
+    h0 = trial['box_224'][3] - trial['box_224'][1]
+    D = detect_and_track(trial['frames'][:max_frames] if max_frames else trial['frames'], trial['warmup'], h0)
+    frames, masks, dets, tracks, kw = D['frames'], D['masks'], D['dets'], D['tracks'], D['kw']
 
     def at(k):
         return [tr for tr in tracks if k in tr.history]
