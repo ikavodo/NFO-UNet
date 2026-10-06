@@ -1,9 +1,9 @@
 # GPJATK test: where should frames be fused for SAM2 under fragmented occlusion?
 
-Status: plan, revision 3 (2026-10-06): simplified to 4 arms + 1 ceiling, adds a representation check before decoding and anticipated results. Previously revision 2 (2026-10-06), self-contained for a separate session and model. Runs in
-`master_thesis` on its existing GPJATK testbeds. No NFO data is needed. Revision 2 adds the
-literature pass, late fusion and memory-side fusion arms, the ceilings and controls, and the
-stride argument.
+Status: ready to execute, revision 3 (2026-10-06). Self-contained for a separate session and
+model. Runs in `master_thesis` on its existing GPJATK testbeds; no NFO data is needed. Four arms
+plus a clean ceiling, a representation check before any decoding, and results anticipated in
+advance. Start at §8.
 
 ## 0. Why (what the NFO pilot established, 2 segments, descriptive)
 
@@ -23,7 +23,8 @@ Source: `NFO-UNet` branch `vos-benchmark-pilot`, `docs/nfo_vos_pilot_findings.md
   190 × 65 native px, so the error is about 12% of the person's width.
 
 **Question:** is the articulation/misalignment cap a property of fusing *pixels*, or would
-fusing SAM2 *features* (or SAM2 outputs, or SAM2 memory) tolerate it?
+fusing SAM2 *encoder features* (arm E) or letting SAM2's *memory* fuse the frames (arm M)
+tolerate it better?
 
 ## 1. Prior work (from a novelty pass on 2026-10-06; re-check each before citing in a paper)
 
@@ -34,7 +35,8 @@ fusing SAM2 *features* (or SAM2 outputs, or SAM2 memory) tolerate it?
   amodal vs modal split.
 - **Temporal Probability Smoothing for SAM2 under Weak Prompts** (arXiv 2604.17115):
   training-free; warps SAM2 *output probabilities* with flow and blends them. This is the
-  late-fusion competitor (arm L).
+  late-fusion idea. It is an optional baseline only (§4): no public code was found, and it
+  depends on optical flow.
 - **SAMWISE** (CVPR 2025, arXiv 2411.17646): a trained adapter that injects text and temporal
   context into SAM2's encoder features. Evidence that temporal modulation of encoder features
   works; not training-free.
@@ -160,3 +162,55 @@ Decision rules:
   definition.
 - Rough cost (assumed): 27 targets × 3 densities × 4 Δv × N = 7 encodes, about 2.3k encodes plus the video-predictor runs for M.
   Minutes to an hour on a cluster GPU. Subsample targets if needed.
+
+## 8. Start here (for the executing session)
+
+1. Read this whole file, then `NFO-UNet/docs/nfo_vos_pilot_findings.md` (context only; nothing
+   from NFO is reused).
+2. `cd /home/akovi/PycharmProjects/master_thesis && git checkout -b gpjatk-fusion-location`.
+   Read its `CLAUDE.md` and `experiments/prototypes/README.md` (the `REPO_ROOT` depth convention).
+3. New code goes in `experiments/prototypes/gpjatk_em/fusion_location.py` (+ tests under
+   `tests/`). Reuse `warp_tensor`/`compute_motion_params` (`src/registration.py`) and the SAM2
+   image/video predictors; do not reimplement them.
+4. Use superpowers:executing-plans with this file, then the tasks below in order. Each task:
+   failing test first, then the code, then the test passes. Commit per task.
+5. Stop and report after Task 3 if the §4.1 decision says "skip decoding".
+
+### Task 1: aligned buffers with injected velocity error
+- `aligned_buffer(density, t, N, dv)` returns the N aligned occluded frames ending at t, the
+  aligned silhouette/visible masks, and the clean frame t. Alignment: GT motion via `warp_tensor`,
+  then frame t−k shifted by an extra k·dv px (horizontal).
+- Tests: dv = 0 reproduces `warp_tensor`'s oracle output exactly; an extra shift of k·dv is
+  applied to frame t−k (synthetic image with a single bright pixel).
+
+### Task 2: SAM2 encode/decode split
+- `encode(frames)` returns the predictor's `_features` per frame (image_embed + high-res);
+  `decode(features, prompt)` sets them on the predictor and returns the mask. Verify the
+  attribute names in the installed `sam2_image_predictor.py` first.
+- Test: `decode(encode([frame])[0], prompt)` equals `predictor.set_image(frame); predict(prompt)`
+  bit-for-bit (same fp16 autocast).
+
+### Task 3: representation check (§4.1)
+- For every density, target t and dv: cosine to the clean frame's embedding for A0 (frame t),
+  P (embedding of the median image), E-median and E-cosine, per 64×64 cell class
+  (person-occluded / person-visible / background in frame t).
+- Tests: on synthetic f_k = c + independent noise, the E-median cosine rises with N (the averaging
+  null in §4.1); the cell classes partition the 64×64 grid.
+- Output: `results/gpjatk_em_viability/fusion_location/representation.csv` + one plot (dpi 80).
+  Apply the §4.1 decision.
+
+### Task 4: decoded arms A0, P, E, C
+- Decode each arm with the oracle prompt (§4); IoU vs silhouette (amodal) and visible (modal).
+- Test: E with N = 1 equals A0 exactly.
+
+### Task 5: arm M (memory)
+- SAM2 video predictor on the aligned buffer: prompt frames t−N+1 … t−1 (their own GT box + point,
+  aligned), propagate, read frame t's mask.
+- Test: smoke on one target, where the mask at frame t is non-empty and has the frame's shape.
+
+### Task 6: grid, report, decision
+- Full grid (§4), metrics (§5), visual traces and run record (§7).
+- Write `results/gpjatk_em_viability/fusion_location/SUMMARY.md`: tables per density/dv, the
+  anticipated-vs-observed comparison for each line of §6, and which decision rule fired. Use
+  calibrated language. Log any dead end as one line in master_thesis's failure log.
+
