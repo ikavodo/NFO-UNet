@@ -1,6 +1,6 @@
 # GPJATK test: where should frames be fused for SAM2 under fragmented occlusion?
 
-Status: plan, revision 2 (2026-10-06), self-contained for a separate session and model. Runs in
+Status: plan, revision 3 (2026-10-06): simplified to 4 arms + 1 ceiling, adds a representation check before decoding and anticipated results. Previously revision 2 (2026-10-06), self-contained for a separate session and model. Runs in
 `master_thesis` on its existing GPJATK testbeds. No NFO data is needed. Revision 2 adds the
 literature pass, late fusion and memory-side fusion arms, the ceilings and controls, and the
 stride argument.
@@ -75,37 +75,49 @@ fusing SAM2 *features* (or SAM2 outputs, or SAM2 memory) tolerate it?
 - Work on a new `master_thesis` branch, e.g. `gpjatk-fusion-location`. Outputs go to
   `results/gpjatk_em_viability/fusion_location/`.
 
-## 4. Design: one variable = where the frames are fused
+## 4. Design: one variable = where the frames are fused (kept simple)
 
-Same aligned buffer, same oracle prompt, same checkpoint for every arm. The buffer is the N
-frames ending at target t (causal).
+Same aligned buffer (the N frames ending at target t, causal), same oracle prompt, same checkpoint.
 
 | arm | fusion location | ancestor |
 |---|---|---|
 | **A0** | none: frame t alone | do-nothing |
-| **P** | pixels: per-pixel **median** (and mean) of aligned frames → SAM2 image | AOS / NFO pilot |
-| **E** | encoder: encode each aligned frame; fuse `image_embed` by **median** and by **FGFA cosine weighting** (per location, weight ∝ max(0, cos(f_k, f_t))); keep frame t's high-res features. Also a variant that fuses all levels (decoder-consistency check). | FGFA |
-| **L** | output: SAM2 image on each aligned frame, then median or cosine-weight the **logits** | 2604.17115 |
-| **M** | memory: SAM2 **video** predictor on the aligned buffer; prompt the N−1 past frames, predict frame t from memory alone (frame t unprompted) | SAM2 / SAMURAI / DAM4SAM |
+| **P** | pixels: per-pixel median of aligned frames → SAM2 image | AOS / NFO pilot |
+| **E** | encoder: encode each aligned frame; fuse `image_embed` per 64×64 location by (i) median and (ii) FGFA cosine weighting, w_k ∝ max(0, cos(f_k, f_med)); keep frame t's high-res features; decode with the prompt | FGFA |
+| **M** | memory: SAM2 **video** predictor on the aligned buffer. The N−1 past frames are prompted (each with its own GT box + point, aligned) and become conditioning memories. **Frame t is not prompted**, so its mask comes only from memory attention over the past frames | SAM2 / SAMURAI |
+| **C** | ceiling: A0 on `clean_video[t]` | upper bound |
 
-**Ceilings and controls:**
-- **Clean ceiling:** A0 on `clean_video[t]`, which bounds every arm.
-- **Articulation-free control R:** N copies of `clean_video[t]`, each occluded by a different
-  frame's occluder. For each k, warp `occlusion_mask[k]` and the occluder pixels of
-  `occluded_video[k]` into t's coordinates and composite them over clean frame t. This gives
-  perfect alignment and no articulation, so it isolates the occlusion-averaging gain. Run P and E
-  on R.
 - **Prompt (oracle, identical across arms):** box = bbox of `silhouette_mask[t]`, point =
-  distance-transform maximum of `visible_mask[t]`, `multimask_output=False`. For M, prompt each
-  past frame with its own GT box + point, in aligned coordinates.
+  distance-transform maximum of `visible_mask[t]`, `multimask_output=False`.
+- **Injected linear velocity error** Δv ∈ {0, 1, 2, 4} px/frame (native): frame t−k is shifted by
+  k·Δv. Report ε_max = (N−1)·Δv·s in 1024 input px against stride 16 (s = 1024/max(H,W)), and
+  mark the NFO-like point (error at age 6 ≈ 12% of the person's width).
+- N = 7 only (the NFO pilot showed pixel fusion degrading past 7; N = 13 is optional).
+- Densities d50, d65, d80; every 5th target t with a full buffer.
+- **Optional, not required:** late fusion of SAM2 outputs, ViperSAM (arXiv 2604.17115). No public
+  code was found, and it relies on optical flow, which is unreliable under fragmented occlusion.
+  Reimplement only if time allows (flow warp + entropy / forward-backward weighted blend).
 
-**Settings:**
-- Injected linear velocity error Δv ∈ {0, 0.5, 1, 2, 4} px/frame (native), so frame t−k is
-  shifted by k·Δv. Convert to 1024 input px and report ε_max = (N−1)·Δv·s against stride 16,
-  where s = 1024/max(H,W). Also mark the NFO-like point, where the error at age 6 is ≈ 12% of the
-  person's width.
-- N ∈ {7, 13}. 25 is optional: the NFO pilot showed pixel fusion degrading past 7.
-- Densities d50, d65, d80. Targets: every 5th t with a full buffer.
+### 4.1 Representation check first (cheap, before any decoding)
+
+The user's earlier sanity check found that the FGFA-style fused embedding has a higher cosine
+similarity to the **clean** frame's embedding than any single aligned frame does. That result is
+**expected from averaging alone** (derived): write each aligned embedding at a location as
+f_k = c + n_k (c clean, n_k the occlusion perturbation). The mean is c + n̄. If the n_k are roughly
+independent and zero-mean with per-dimension variance σ² in D dimensions, |n̄|² ≈ Dσ²/N and
+
+  cos(f̄, c) ≈ |c| / √(|c|² + Dσ²/N),
+
+which rises with N for *any* averaged noisy copies. So a higher cosine is necessary, not
+sufficient. Two refinements make it informative:
+1. **Compare against P's embedding** (the encoder of the median image), not only single frames.
+   The question is whether fusing after the encoder beats fusing before it.
+2. **Split by location:** downsample the masks to 64×64 and report cos(·, c) separately for cells
+   that are person-occluded in frame t, person-visible in frame t, and background. The gain that
+   matters is on the person-occluded cells.
+
+Report this for every Δv. If E ≤ P on the person-occluded cells here, skip decoding: the encoder
+location has no advantage to decode.
 
 ## 5. Metrics
 
@@ -115,28 +127,36 @@ lowering the other. Also report mean over targets per (arm, density, N, Δv), th
 wall-clock per target and peak GPU memory. The pipeline is deterministic (no seeds); say so in the
 run record.
 
-## 6. Pre-registered decision rules
+## 6. Anticipated results (written before running) and decision rules
 
-1. **Encoder fusion is motivated** if, at the NFO-like Δv and N = 7, best E − P ≥ +0.03 amodal IoU
-   at ≥ 2 of 3 densities, **and** E ≥ L and E ≥ M. If L or M is as good, fusing outputs or
-   memory suffices, and there is no encoder story.
-2. **Tolerance, not resolution:** E's IoU drop from Δv = 0 to the largest Δv is smaller than P's,
-   reported against ε/stride. If E's advantage appears only where ε < 16 px (1024 space), call it
-   a resolution effect.
-3. **Articulation is the bottleneck** if P on R ≫ P on real motion. If E closes most of that gap,
-   that supports feature fusion. If neither does, the cap is integration itself.
-4. **Stop** if every fused arm < A0 at Δv = 0: single-frame SAM2 is already the ceiling.
-5. Modal scores are reported and never used to choose an arm. The NFO benchmark's modal question
-   was settled separately.
+Anticipated, with reasons:
+- **Representation (4.1):** E > A0 on person-occluded cells at every Δv (averaging). E ≈ P at
+  Δv = 0, and E > P as Δv grows while ε < 16 px (one embedding cell), then converging. Cosine
+  weighting ≥ median, because per-channel medians can leave the feature manifold.
+- **Decoded amodal IoU:** E > A0 modestly. E ≥ P only at Δv > 0. The decoder was trained on
+  single-frame embeddings, so a fused embedding may be partly out of distribution and lose part
+  of the representation gain.
+- **Decoded modal IoU:** E ≤ A0. Fused representations contain person that is hidden in frame t,
+  so masks grow toward amodal, the same definitional conflict as pixel integration on NFO.
+- **M:** memory attention reads past frames' *modal* masks, so M should be the best modal arm (≥ A0),
+  but limited for amodal (≈ A0). Predicted pattern: **E wins amodal, M wins modal.**
+
+Decision rules:
+1. **Encoder fusion is motivated** if, at the NFO-like Δv, best E − P ≥ +0.03 amodal IoU at ≥ 2 of 3
+   densities and E ≥ M on amodal IoU.
+2. **Memory fusion is the route** if M ≥ E on amodal as well. In that case, invest in SAM2's memory
+   (e.g. composite-prepend, memory selection), not in the encoder.
+3. **Resolution, not tolerance:** if E's advantage over P exists only for ε < 16 px, report it as
+   a stride effect.
+4. **Stop** if every fused arm < A0 at Δv = 0.
 
 ## 7. Engineering
 
-- Cache aligned stacks per (density, N, Δv) and encoder features per aligned frame. Encoding
-  dominates the cost, and arms E, L and P-on-R reuse it.
+- Cache aligned stacks per (density, N, Δv) and encoder features per aligned frame. Encoding dominates the cost; arms E and the 4.1 check reuse it.
 - Visual traces (dpi ≈ 80): per density, 4 targets × arms at Δv ∈ {0, NFO-like}, N = 7, showing
   the mask with silhouette and visible contours. Also one image of the fused embedding's first 3
   PCA components against the frame-t embedding.
 - Run record: master_thesis commit, sam2 version, checkpoint, GPU, and the alignment-error
   definition.
-- Rough cost (assumed): 27 targets × 3 densities × 2 N × 5 Δv, about 20k encodes at N = 13.
+- Rough cost (assumed): 27 targets × 3 densities × 4 Δv × N = 7 encodes, about 2.3k encodes plus the video-predictor runs for M.
   Minutes to an hour on a cluster GPU. Subsample targets if needed.
