@@ -23,3 +23,10 @@ def test_prepended_composite_is_prompted_and_dropped_from_the_output():
     out = R.run_trial(R.build_predictor('b0'), trial, max_frames=3,
                       prepend=f"results/benchmark/pilot/composites/{trial['id']}.jpg")
     assert out['masks'].shape == (3, 600, 800) and out['masks'][0].any()
+
+
+def test_select_trials_one_index_for_slurm_arrays():
+    trials = json.load(open('results/benchmark/pilot/trials.json'))
+    ok = [t for t in trials if t['admissible']]
+    assert R.select_trials(trials, index=7) == [ok[7]]
+    assert R.select_trials(trials, limit=2) == ok[:2] and R.select_trials(trials) == ok

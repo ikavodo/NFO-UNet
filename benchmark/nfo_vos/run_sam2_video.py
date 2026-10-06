@@ -19,7 +19,7 @@ import time
 import numpy as np
 import torch
 
-CKPT = os.path.abspath('../samurai/sam2/checkpoints/sam2.1_hiera_base_plus.pt')
+CKPT = os.path.abspath(os.environ.get('NFO_SAM2_CKPT', '../samurai/sam2/checkpoints/sam2.1_hiera_base_plus.pt'))
 CONFIGS = {'b0': 'configs/sam2.1/sam2.1_hiera_b+.yaml',          # sam2 1.1.0 package
            't1': 'configs/samurai/sam2.1_hiera_b+.yaml'}         # samurai repo's sam2 fork
 NATIVE_DIR = 'data/nfo_final/nfo_final'
@@ -65,14 +65,23 @@ def run_trial(predictor, trial, max_frames=None, prepend=None):
         shutil.rmtree(stage)
 
 
+def select_trials(trials, limit=None, index=None):
+    """Admissible trials; index picks exactly one (a SLURM array task), limit the first few.
+    Same contract as run_t4.select_trials, duplicated so this file stays importable in the
+    SAMURAI venv without NFO-UNet's other dependencies."""
+    ok = [t for t in trials if t['admissible']]
+    return ok[index:index + 1] if index is not None else ok[:limit]
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--method', choices=sorted(CONFIGS), required=True)
     p.add_argument('--limit', type=int, default=None)
     p.add_argument('--force', action='store_true')
+    p.add_argument('--trial-index', type=int, default=None, help='run one admissible trial (array task)')
     p.add_argument('--prepend-dir', default=None, help='composites dir -> method <name>-cp')
     a = p.parse_args()
-    trials = [t for t in json.load(open(TRIALS)) if t['admissible']][:a.limit]
+    trials = select_trials(json.load(open(TRIALS)), a.limit, a.trial_index)
     # composites -> <m>-cp (GT-aligned); composites_<align> -> <m>-cp-<align>
     tag = os.path.basename(os.path.normpath(a.prepend_dir)).replace('composites', '').replace('_', '-') if a.prepend_dir else ''
     name = a.method + (f'-cp{tag}' if a.prepend_dir else '')
