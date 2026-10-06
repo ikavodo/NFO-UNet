@@ -49,6 +49,19 @@ numbers descriptive.
 - Caveat: the alignment is GT-oracle (plausibility only). The decisive next test replaces it with
   the tracker's own causal alignment.
 
+## GT-free (tracker) alignment keeps about half of the composite gain for SAMURAI
+- Hybrid velocity (track OLS if ≥ 3 points, else chained Theil–Sen, x-only; 7.7 native px median
+  error vs GT shifts), full 7-frame causal horizon. Run on the cluster (official SAM2 `2b90b9f` /
+  SAMURAI `76ba195`, Quadro RTX 6000, no flash attention). The local baselines differ in
+  environment, which is a known caveat.
+- T1-cp-hybrid J&F **0.806** vs T1 0.773 (**+0.033, better on 15/21**), vs GT-aligned T1-cp 0.843
+  (−0.037). On 19/21 starts it matches the GT-aligned composite within ±0.04, and it keeps the
+  lock-in rescue (t1184: 0.02 → 0.68). Almost the whole gap to GT comes from **t1154 and t1164**
+  (0.16 / 0.25, worse than plain T1). These are the segment-start trials, where the tracker's
+  7-frame history reaches before the person is in view (frames before the GT segment), so the
+  composite is built from the wrong content.
+- B0-cp-hybrid: only 1/21 trials came back from the cluster. Not yet evaluable.
+
 ## Next (cheapest first)
 0. **Do not miss:** SAM-PT and SAM-PD are required baselines for T4-1n in the full run (spec §8).
 1. Decide the benchmark's question: modal VOS (B0 strong, integration does not help) vs amodal
