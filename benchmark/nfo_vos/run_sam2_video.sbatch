@@ -3,10 +3,11 @@
 # Trials are independent and each writes its own npz
 # (results/benchmark/$NFO_RUN/masks/<method>[-cp-<tag>]/<trial>.npz), so tasks share no state.
 #
-#   N = number of admissible trials in results/benchmark/$NFO_RUN/trials.json (rr seq1 pilot: 15)
-#   sbatch --export=ALL --array=0-$((N-1))      ...   # B0  (no PYTHONPATH: official sam2)
-#   sbatch --export=ALL --array=$N-$((2*N-1))   ...   # T1  (PYTHONPATH=<samurai>/sam2, PYTHON_T1)
-#   add PREPEND_DIR=results/benchmark/$NFO_RUN/composites_hybrid for the composite variant
+#   sbatch benchmark/nfo_vos/run_sam2_video.sbatch                       # B0 + T1, plain
+#   PREPEND_DIR=results/benchmark/rr/composites_hybrid sbatch --export=ALL benchmark/nfo_vos/run_sam2_video.sbatch
+#   N = number of admissible trials in results/benchmark/$NFO_RUN/trials.json; the default
+#   --array=0-29 fits the rr seq1 pilot (N = 15). Paths for the checkpoint, SAMURAI and Python are
+#   baked in below (cluster defaults).
 #
 # Task map: id 0..N-1 -> B0, trial id; id N..2N-1 -> T1, trial id-N.
 # Needs on the cluster: this repo (branch vos-benchmark-pilot), results/benchmark/$NFO_RUN/trials.json
@@ -25,17 +26,21 @@
 #SBATCH --output=/storage/slurm/akid/logs/nfo_sam2v-%A_%a.out
 #SBATCH --error=/storage/slurm/akid/logs/nfo_sam2v-%A_%a.out
 
+# cluster defaults (atcremers); every one can still be overridden from the environment
 PYTHON_B0=${PYTHON_B0:-/home/wiss/akid/miniconda3/envs/comp_vis/bin/python3}
-PYTHON_T1=${PYTHON_T1:-$HOME/samurai/.venv/bin/python}
-export NFO_SAM2_CKPT=${NFO_SAM2_CKPT:-$HOME/checkpoints/sam2.1_hiera_base_plus.pt}
+PYTHON_T1=${PYTHON_T1:-$PYTHON_B0}                         # same env, SAMURAI fork put first on the path
+SAMURAI_SAM2=${SAMURAI_SAM2:-/storage/user/akid/git_projects/samurai/sam2}
+export NFO_SAM2_CKPT=${NFO_SAM2_CKPT:-/storage/user/akid/checkpoints/sam2.1_hiera_base_plus.pt}
 
 export NFO_RUN=${NFO_RUN:-rr}
 # number of admissible trials of this run (array ids: first N -> first method/variant, next N -> second)
 N_TRIALS=$($PYTHON_B0 -c "import json; print(sum(t['admissible'] for t in json.load(open('results/benchmark/$NFO_RUN/trials.json'))))")
 if [ "$SLURM_ARRAY_TASK_ID" -lt "$N_TRIALS" ]; then
   METHOD=b0; PY=$PYTHON_B0; IDX=$SLURM_ARRAY_TASK_ID
+  unset PYTHONPATH                                         # B0 = official sam2, never the fork
 else
   METHOD=t1; PY=$PYTHON_T1; IDX=$((SLURM_ARRAY_TASK_ID - N_TRIALS))
+  export PYTHONPATH=$SAMURAI_SAM2                          # T1 = SAMURAI's sam2 fork (configs/samurai)
 fi
 PREPEND=${PREPEND_DIR:+--prepend-dir $PREPEND_DIR}
 

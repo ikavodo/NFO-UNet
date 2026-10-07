@@ -23,7 +23,7 @@
 #SBATCH --error=/storage/slurm/akid/logs/nfo_t4-%A_%a.out
 
 PYTHON=${PYTHON:-/home/wiss/akid/miniconda3/envs/comp_vis/bin/python3}
-export NFO_SAM2_CKPT=${NFO_SAM2_CKPT:-$HOME/checkpoints/sam2.1_hiera_base_plus.pt}
+export NFO_SAM2_CKPT=${NFO_SAM2_CKPT:-/storage/user/akid/checkpoints/sam2.1_hiera_base_plus.pt}
 
 export NFO_RUN=${NFO_RUN:-rr}
 # number of admissible trials of this run (array ids: first N -> first method/variant, next N -> second)
