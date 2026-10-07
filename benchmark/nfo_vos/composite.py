@@ -26,8 +26,8 @@ from tracking.core.blob_tracker import merged_center
 N, STRIDE = 7, 2
 FEATHER = 9                      # composite_prepend_tracking.py:69 (px, kept at native res)
 NATIVE = 'data/nfo_final/nfo_final'
-OUT = 'results/benchmark/pilot/composites'
-TRACE = 'images/benchmark/pilot_checks/composites'
+OUT = f'{TR.RES}/composites'
+TRACE = f'{TR.IMG}_checks/composites'
 
 
 def match_moments(src, ref, mask=None):
@@ -68,12 +68,12 @@ def alignment_offsets(hist, ks, t, mode):
     return out
 
 
-def native(idx):
-    return cv2.imread(f'{NATIVE}/{TR.SEQ}/{idx:05d}.jpg', 0)
+def native(idx, seq=TR.SEQ):
+    return cv2.imread(f'{NATIVE}/{seq}/{idx:05d}.jpg', 0)
 
 
-def gt_centre_native(idx):
-    x0, y0, x1, y1 = gt_to_native(TR.bbs()[idx][0], TR.NATIVE_W, TR.NATIVE_H)
+def gt_centre_native(idx, seq=TR.SEQ):
+    x0, y0, x1, y1 = gt_to_native(TR.bbs(seq)[idx][0], TR.NATIVE_W, TR.NATIVE_H)
     return (x0 + x1) / 2, (y0 + y1) / 2
 
 
@@ -108,7 +108,7 @@ def chain_positions(dets, t0, p0, v0, radius, fit='theilsen', iters=2):
 def _history(trial, n, stride):
     t0 = trial['t0']
     c0 = max(0, t0 - stride * (n - 1))
-    D = R.detect_and_track(list(range(c0, t0 + 1)), trial['warmup'], trial['box_224'][3] - trial['box_224'][1])
+    D = R.detect_and_track(list(range(c0, t0 + 1)), trial['warmup'], trial['box_224'][3] - trial['box_224'][1], trial['seq'])
     L = t0 - c0
     dets = {c0 + i: d for i, d in enumerate(D['dets'])}
     cands = [tr for tr in D['tracks'] if L in tr.history]
@@ -154,7 +154,7 @@ def tracker_history(trial, n, stride):
     to the box centre). Returns ({global k: (x, y)} in 224 px, first global frame of the track)."""
     t0 = trial['t0']
     c0 = max(0, t0 - stride * (n - 1))
-    D = R.detect_and_track(list(range(c0, t0 + 1)), trial['warmup'], trial['box_224'][3] - trial['box_224'][1])
+    D = R.detect_and_track(list(range(c0, t0 + 1)), trial['warmup'], trial['box_224'][3] - trial['box_224'][1], trial['seq'])
     L = t0 - c0
     cands = [tr for tr in D['tracks'] if L in tr.history]
     if not cands:
@@ -170,15 +170,15 @@ def tracker_history(trial, n, stride):
 def build(trial, n=N, stride=STRIDE, align='gt'):
     """align: 'gt' (GT box centres, plausibility only), 'ols' / 'pos' (tracker, GT-free; see
     alignment_offsets)."""
-    t0 = trial['t0']
+    t0, seq = trial['t0'], trial['seq']
     aligned = []
     if align == 'gt':
-        has_gt = lambda k: k in TR.bbs() and TR.bbs()[k] and TR.bbs()[k][0].x >= 0
+        has_gt = lambda k: k in TR.bbs(seq) and TR.bbs(seq)[k] and TR.bbs(seq)[k][0].x >= 0
         ks = horizon_frames(t0, n, stride, has_gt)
-        cx0, cy0 = gt_centre_native(t0)
+        cx0, cy0 = gt_centre_native(t0, seq)
         for k in ks:
-            cx, cy = gt_centre_native(k)
-            aligned.append(shift(native(k), cx0 - cx, cy0 - cy).astype(np.float32))
+            cx, cy = gt_centre_native(k, seq)
+            aligned.append(shift(native(k, seq), cx0 - cx, cy0 - cy).astype(np.float32))
     else:
         if align == 'hybrid':
             off = estimate_shifts(trial, 'hybrid_x', n, stride)
@@ -189,11 +189,11 @@ def build(trial, n=N, stride=STRIDE, align='gt'):
         ks = sorted(off)
         sc = max(TR.NATIVE_W, TR.NATIVE_H) / TR.SIZE                 # 224 px -> native px
         for k in ks:
-            aligned.append(shift(native(k), off[k][0] * sc, off[k][1] * sc).astype(np.float32))
+            aligned.append(shift(native(k, seq), off[k][0] * sc, off[k][1] * sc).astype(np.float32))
     integrated = np.median(np.stack(aligned), axis=0)
     w0, w1 = trial['warmup']
-    background = np.median(np.stack([native(i).astype(np.float32) for i in range(w0, w1 + 1)]), axis=0)
-    raw0 = native(t0).astype(np.float32)
+    background = np.median(np.stack([native(i, seq).astype(np.float32) for i in range(w0, w1 + 1)]), axis=0)
+    raw0 = native(t0, seq).astype(np.float32)
 
     R.use_base_plus()
     pred = R.gt_sam_gate._predictor

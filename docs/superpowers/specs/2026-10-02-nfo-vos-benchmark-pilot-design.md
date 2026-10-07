@@ -1,6 +1,6 @@
 # NFO fragmented-occlusion VOS benchmark: pilot protocol
 
-Status: design, revision 4 (2026-10-05): DAVIS headline, init failure rate, T4 prompt fix. Rev. 3 (2026-10-05; rev. 3 adds the TRE/anchor framing, the
+Status: design, revision 5 (2026-10-07): round-robin schedule (§3a). Revision 4 (2026-10-05): DAVIS headline, init failure rate, T4 prompt fix. Rev. 3 (2026-10-05; rev. 3 adds the TRE/anchor framing, the
 frame-fixed-effects init analysis, drift metrics, and the scoring resolution). Scope: the **pilot** only (one
 back-and-forth of one sequence). Deferred items are listed at the end.
 
@@ -44,6 +44,38 @@ GT, never S itself.
   for the existing background model. Fixed by this rule, not tuned on pilot results. A frame is
   person-free if it lies more than 40 frames from every GT segment. Pilot ranges: f946–f1113
   (168 frames, before segment 4) and f1349–f1435 (87 frames, before segment 5).
+
+## 3a. Round-robin schedule (rev. 5, 2026-10-07; supersedes the overlapping starts below for all new runs)
+
+**Premise (measured):** within a sequence, the 8 segments share one occluder field. Visibility v at
+the same position x correlates r = +0.68 (same direction, same gait), +0.73 (walk vs run), +0.65
+(opposite directions) vs −0.01 for shuffled x. The 4 sequences are different scenes (background
+r = 0.06–0.49). Frame difficulty is therefore a property of (sequence, x), not of the frame, so
+overlapping windows on one segment are unnecessary.
+
+- **Structure (measured):** every sequence has 2 segments per (direction, gait). Gait comes from
+  2-means on speed in body heights per frame (centres 0.027 walk / 0.043 run). Runs last 74–96
+  frames, walks 115–155; 32 segments, 3507 annotated frames.
+- **Schedule:** the earlier segment of each (direction, gait) pair is in the **cover** half, the
+  later one in the **backup** half. Each pair gets the phase φ ∈ {0, W/4, W/2, 3W/4} (RW, LW, RR, LR),
+  the same for both twins, so backup starts replicate cover starts (median distance 3 px).
+  Windows are back to back from φ: frames φ + mW … φ + (m+1)W − 1. **Every frame is used at most
+  once.** R = 4 phases replace the old overlap: the union of one half starts every W/4 frames.
+- **W = 40:** the largest W with 3W/4 + W ≤ L_min = 74 (W ≤ (4/7)·74 ≈ 42), so every segment keeps
+  ≥ 1 window. W = 50 left 5 segments empty; W = 30 would score B0's late recoveries (dt ≈ 40–45 in
+  the old pilot) as failures.
+- **Counts:** 61 starts over 4 sequences, 70% of frames used. **Pilot = seq1, all 8 segments:
+  15 starts** (0.56× the old pilot's compute). The full run (2.3× the old pilot) reuses the
+  pilot's trials (same IDs, run root `results/benchmark/rr`).
+- **Warm-up (tracker-based methods only):** the person-free gap right before the segment if it
+  has ≥ 20 frames, else the sequence's longest person-free gap ("scene calibration", 25 of 61
+  starts; recorded per trial as `warmup_source`).
+- **Analysis change (§5):** the fixed effect is per (sequence, 8-px x-bin), not per frame, plus a
+  **cover-vs-backup twin reliability** table (Pearson r and mean |Δ| of J&F).
+- Per-sequence reporting is required: seq1 starts are mostly heavily occluded (median v 0.31),
+  while seq3 has none below v = 0.55.
+- Code: `benchmark/nfo_vos/trials.py`; checks in `tests/test_trials.py`; start-position plot
+  `images/benchmark/rr_schedule_starts.png`.
 
 ## 3. Trials
 

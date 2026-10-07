@@ -48,11 +48,20 @@ def pick_vote_m(per_trial):
     return int(v.groupby('method')['JF'].mean().idxmax().split('_m')[1])
 
 
-def fe_fit(df):
-    """J(t|t0) = a_t + b v + c dt + d v dt + e n_frag, one fixed effect a_t per frame, fitted on
-    frames scored by >= 2 trials (the only frames that identify b..e)."""
-    df = df[df.groupby(['seg', 't']).trial.transform('nunique') >= 2]
-    key = df.seg.astype(str) + '_' + df.t.astype(str)
+XBIN = 8          # px (224 space), ~ a third of a body width
+
+
+def fe_fit(df, effect='frame'):
+    """J = a + b v + c dt + d v dt + e n_frag. effect='frame': one fixed effect per frame (old
+    overlapping-window pilot). effect='pos': one per (sequence, x-bin), the shared occluder field.
+    Visibility at the same x correlates r ~ 0.7 across segments (rev. 5), so non-overlapping
+    windows from different segments identify b..e. Fitted on cells hit by >= 2 trials."""
+    if effect == 'pos':
+        df = df.assign(_k=df.seq.astype(str) + '_' + (df.x // XBIN).astype(int).astype(str))
+    else:
+        df = df.assign(_k=df.seg.astype(str) + '_' + df.t.astype(str))
+    df = df[df.groupby('_k').trial.transform('nunique') >= 2]
+    key = df._k
     D = pd.get_dummies(key).values.astype(float)
     X = np.column_stack([D, df.v, df.dt, df.v * df.dt, df.n_frag])
     coef, *_ = np.linalg.lstsq(X, df.J.values, rcond=None)
@@ -60,15 +69,20 @@ def fe_fit(df):
     return dict(b=b, c=c, d=d, e=e, n_obs=len(df), n_frames=key.nunique(), n_trials=df.trial.nunique())
 
 
-def fe_with_loo(df):
-    est = fe_fit(df)
-    loo = pd.DataFrame([fe_fit(df[df.trial != tr]) for tr in df.trial.unique()])
+def twin_reliability(pt, metric='JF'):
+    """Cover vs backup twins (same seq, dir, gait, phase, window m): test-retest of a metric."""
+    if 'half' not in pt or pt.half.isna().all():
+        return None
+    w = pt.pivot_table(index=['seq', 'dir', 'gait', 'm'], columns='half', values=metric).dropna()
+    if len(w) < 3:
+        return None
+    return dict(n=len(w), r=float(np.corrcoef(w.cover, w.backup)[0, 1]), mad=float((w.cover - w.backup).abs().mean()))
+
+
+def fe_with_loo(df, effect='frame'):
+    est = fe_fit(df, effect)
+    loo = pd.DataFrame([fe_fit(df[df.trial != tr], effect) for tr in df.trial.unique()])
     return est, {k: (loo[k].min(), loo[k].max()) for k in 'bcde'}
-
-
-def stride20(df):
-    seg_start = df.groupby('seg').t0.transform('min')
-    return df[(df.t0 - seg_start) % 20 == 0]
 
 
 def rename_star(df, m):
@@ -84,14 +98,14 @@ def run_record():
                 checkpoint='sam2.1_hiera_base_plus.pt', precision='fp16 autocast (all SAM2 calls)',
                 envs=dict(b0_t4='../master_thesis/.venv (sam2 1.1.0)', t1='../samurai/.venv'),
                 gpu=torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
-                host=platform.node(), trials=TR.OUT, stride=TR.STRIDE, window=TR.WINDOW, min_D=TR.MIN_D,
+                host=platform.node(), trials=TR.OUT, run=TR.RUN, window=TR.W, min_D=TR.MIN_D,
                 note='timings were measured with several methods sharing the GPU: not comparable')
 
 
 def main():
     pt = pd.read_csv(f'{RES}/per_trial.csv')
     pf = pd.read_csv(f'{RES}/per_frame.csv')
-    pf = pf[(pf.dt > 0) & (pf.dt < TR.WINDOW)]            # same DAVIS frame range as the headline
+    pf = pf[(pf.dt > 0) & (pf.dt < pf.groupby('trial').dt.transform('max'))]   # DAVIS range: first/last dropped
     m = pick_vote_m(pt) if pt.method.str.startswith('t4-2_m').any() else None
     vote = pt[pt.method.str.startswith('t4-2_m')].groupby('method')['JF'].mean()
     if m is not None:
@@ -127,17 +141,22 @@ def main():
             L.append(f'| {a} − {b} | {q} | {dF.mean():+.3f} | {(dF > 0).sum()}/{len(dF)} | {dJ.mean():+.3f} |')
     L += ['']
 
-    L += ['## Init robustness: frame fixed effects (spec §5)', '',
-          'J = a_t + b·v + c·Δt + d·v·Δt + e·n_frag; [leave-one-trial-out min, max]. '
+    effect = 'pos' if 'x' in pf and pf.x.notna().all() else 'frame'
+    L += [f"## Init robustness: {'position (sequence, x-bin)' if effect == 'pos' else 'frame'} fixed effects (spec §5)", '',
+          'J = a + b·v + c·Δt + d·v·Δt + e·n_frag; [leave-one-trial-out min, max]. '
           'd > 0: a better prompt slows the drift.', '',
-          '| method | stride | b | c | d | e | trials |', '|---|---|---|---|---|---|---|']
+          '| method | b | c | d | e | trials |', '|---|---|---|---|---|---|']
     for meth in present:
-        for name, sub in (('10', pf[pf.method == meth]), ('20', stride20(pf[pf.method == meth]))):
-            est, rng = fe_with_loo(sub)
-            cell = lambda k, f: f'{est[k]:{f}} [{rng[k][0]:{f}}, {rng[k][1]:{f}}]'
-            L.append(f'| {meth} | {name} | {cell("b", "+.3f")} | {cell("c", "+.4f")} | '
-                     f'{cell("d", "+.4f")} | {cell("e", "+.3f")} | {est["n_trials"]} |')
+        est, rng = fe_with_loo(pf[pf.method == meth], effect)
+        cell = lambda k, f: f'{est[k]:{f}} [{rng[k][0]:{f}}, {rng[k][1]:{f}}]'
+        L.append(f'| {meth} | {cell("b", "+.3f")} | {cell("c", "+.4f")} | '
+                 f'{cell("d", "+.4f")} | {cell("e", "+.3f")} | {est["n_trials"]} |')
     L += ['']
+    tw = [(meth, twin_reliability(pt[pt.method == meth])) for meth in present]
+    if any(r for _, r in tw):
+        L += ['## Cover vs backup twins (test-retest, J&F)', '', '| method | pairs | Pearson r | mean |Δ| |', '|---|---|---|---|']
+        L += [f"| {m} | {r['n']} | {r['r']:+.2f} | {r['mad']:.3f} |" for m, r in tw if r]
+        L += ['']
 
     os.makedirs(IMG, exist_ok=True)
     fig, axs = plt.subplots(1, len(present), figsize=(10, 2.4), sharey=True)

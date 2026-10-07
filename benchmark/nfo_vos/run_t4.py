@@ -32,7 +32,7 @@ BUFFER = 7            # last 7 consecutive frames (NTH_FRAME = 1), spec §4
 MAX_AGE = 6           # track_blobs' default; a track unseen for longer is dead -> re-acquire
 CROP_MULT = 4.5       # gt_sam_gate.py's default crop_mult
 CKPT = os.path.abspath(os.environ.get('NFO_SAM2_CKPT', '../samurai/sam2/checkpoints/sam2.1_hiera_base_plus.pt'))
-CACHE = 'results/benchmark/pilot/masks'
+CACHE = f'{TR.RES}/masks'
 VOTE_M = range(1, BUFFER + 1)
 
 
@@ -123,18 +123,18 @@ def segment_prompted(img, point, box, fallback):
     return masks[np.argmax(scores)] > 0.5
 
 
-def load(idx_range):
-    return np.stack([cv2.imread(f'{TR.SEQ_DIR}/{i:05d}_or.jpg', 0) for i in idx_range])
+def load(idx_range, seq=TR.SEQ):
+    return np.stack([cv2.imread(f'{TR.seq_dir(seq)}/{i:05d}_or.jpg', 0) for i in idx_range])
 
 
-def detect_and_track(frame_idx, warmup, h0):
+def detect_and_track(frame_idx, warmup, h0, seq=TR.SEQ):
     """MOG2 (warmed on the person-free warm-up range) -> morphology -> blobs -> Kalman/Hungarian
     tracks over CONTIGUOUS 224 frames. Shared by T4 (forward from t0) and composite.py (history
     up to t0). All scale-dependent parameters from the person height h0 (224 px)."""
-    frames = load(frame_idx)
+    frames = load(frame_idx, seq)
     w0, w1 = warmup
     kw, (p_var, q_var, r_var) = scale_relative_params(h0)
-    masks = foreground_mask(frames, warmup_frames=load(range(w0, w1 + 1)))
+    masks = foreground_mask(frames, warmup_frames=load(range(w0, w1 + 1), seq))
     masks = refine_mask(masks, kw['close_kernel_size'], kw['open_kernel_size'])
     masks = filter_by_shape(masks, min_area=kw['min_area'], min_solidity=0.1)
     dets = detect_blobs(masks, min_area=kw['min_area'])
@@ -153,7 +153,8 @@ def track(trial, max_frames=None):
     nearest the last predicted position. Returns per-frame foreground masks, detections and the
     followed chain {local t: (x, y)}."""
     h0 = trial['box_224'][3] - trial['box_224'][1]
-    D = detect_and_track(trial['frames'][:max_frames] if max_frames else trial['frames'], trial['warmup'], h0)
+    D = detect_and_track(trial['frames'][:max_frames] if max_frames else trial['frames'], trial['warmup'], h0,
+                         trial.get('seq', TR.SEQ))
     frames, masks, dets, tracks, kw = D['frames'], D['masks'], D['dets'], D['tracks'], D['kw']
 
     def at(k):

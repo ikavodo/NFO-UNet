@@ -16,8 +16,8 @@ import numpy as np
 
 from benchmark.nfo_vos import metrics, trials as TR
 
-RES = 'results/benchmark/pilot'
-IMG = 'images/benchmark/pilot'
+RES = TR.RES
+IMG = TR.IMG
 MONTAGE_DT = (0, 10, 20, 30, 40, 50)
 HORIZONS = (10, 25, 50)          # secondary, descriptive trajectory readouts
 INIT_FAIL_J = 0.5                 # standard IoU success threshold (OTB success rate, PASCAL)
@@ -32,15 +32,15 @@ def to_224(masks):
 def score_trial(method, trial, P):
     rows, Gs, Ps, boxes = [], [], [], []
     for dt, idx in enumerate(trial['frames']):
-        G = TR.gt_mask(idx)
+        G = TR.gt_mask(idx, trial['seq'])
         if G is None:
             continue
-        bb = TR.bbs()[idx][0]
+        bb = TR.bbs(trial['seq'])[idx][0]
         box = (bb.x * TR.SIZE, bb.y * TR.SIZE, (bb.x + bb.w) * TR.SIZE, (bb.y + bb.h) * TR.SIZE)
         m = metrics.frame_metrics(P[dt], G)
-        rows.append(dict(method=method, trial=trial['id'], seg=trial['seg_idx'], t0=trial['t0'],
+        rows.append(dict(method=method, trial=trial['id'], seq=trial['seq'], seg=trial['seg_idx'], t0=trial['t0'],
                          t=idx, dt=dt, v=trial['v'], n_frag=trial['n_frag'],
-                         cerr=metrics.centre_error_norm(P[dt], box), **m))
+                         x=(box[0] + box[2]) / 2, cerr=metrics.centre_error_norm(P[dt], box), **m))
         Gs.append(G); Ps.append(P[dt]); boxes.append(box)
     J = {r['dt']: r['J'] for r in rows}
     # headline aggregates follow DAVIS semi-supervised: drop the first (prompted) and last frame
@@ -50,7 +50,8 @@ def score_trial(method, trial, P):
     Js = np.array([rows[i]['J'] for i in keep]); Fs = np.array([rows[i]['F'] for i in keep])
     dre, nre = metrics.dre_nre(np.stack([Ps[i] for i in keep]), np.stack([Gs[i] for i in keep]))
     J0 = J.get(0, np.nan)
-    summary = dict(method=method, trial=trial['id'], seg=trial['seg_idx'], t0=trial['t0'],
+    summary = dict(method=method, trial=trial['id'], seq=trial['seq'], seg=trial['seg_idx'], t0=trial['t0'],
+                   **{k: trial.get(k) for k in ('dir', 'gait', 'half', 'phase', 'm', 'x0')},
                    v=trial['v'], n_frag=trial['n_frag'],
                    JF=float(np.mean((Js + Fs) / 2)), J_mean=float(Js.mean()), F_mean=float(Fs.mean()),
                    J_decay=metrics.decay(Js), F_decay=metrics.decay(Fs), DRE=dre, NRE=nre,
@@ -68,9 +69,9 @@ def montage(trial, stacks, path):
         tiles = []
         for dt in MONTAGE_DT:
             idx = trial['frames'][dt]
-            img = cv2.cvtColor(cv2.imread(f'{TR.SEQ_DIR}/{idx:05d}_or.jpg', 0), cv2.COLOR_GRAY2BGR)
+            img = cv2.cvtColor(cv2.imread(f"{TR.seq_dir(trial['seq'])}/{idx:05d}_or.jpg", 0), cv2.COLOR_GRAY2BGR)
             img[P[dt]] = (0.45 * img[P[dt]] + 0.55 * np.array([0, 0, 255])).astype(np.uint8)
-            G = TR.gt_mask(idx)
+            G = TR.gt_mask(idx, trial['seq'])
             if G is not None:
                 cs, _ = cv2.findContours(G.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
                 cv2.drawContours(img, cs, -1, (0, 255, 0), 1)

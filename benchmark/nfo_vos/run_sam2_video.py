@@ -23,8 +23,9 @@ CKPT = os.path.abspath(os.environ.get('NFO_SAM2_CKPT', '../samurai/sam2/checkpoi
 CONFIGS = {'b0': 'configs/sam2.1/sam2.1_hiera_b+.yaml',          # sam2 1.1.0 package
            't1': 'configs/samurai/sam2.1_hiera_b+.yaml'}         # samurai repo's sam2 fork
 NATIVE_DIR = 'data/nfo_final/nfo_final'
-TRIALS = 'results/benchmark/pilot/trials.json'
-CACHE = 'results/benchmark/pilot/masks'
+RUN = os.environ.get('NFO_RUN', 'rr')            # same convention as trials.RUN (kept import-free)
+TRIALS = f'results/benchmark/{RUN}/trials.json'
+CACHE = f'results/benchmark/{RUN}/masks'
 
 
 def build_predictor(method):
