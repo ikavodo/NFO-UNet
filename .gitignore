@@ -184,3 +184,4 @@ data/*.pt
 results/benchmark/pilot/masks/
 results/benchmark/pilot/_superseded/
 results/benchmark/pilot/masks_t4b*_local_partial/
+results/benchmark/*/masks/
