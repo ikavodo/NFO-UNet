@@ -34,7 +34,7 @@ def test_gated_schedule_uses_only_past_confidence_and_caps_density():
 def test_empty_schedule_reproduces_the_plain_run_bit_for_bit():
     import json
     from benchmark.nfo_vos import run_sam2_video as R
-    trial = json.load(open('results/benchmark/pilot/trials.json'))[5]
+    trial = json.load(open('results/benchmark/rr/trials.json'))[5]
     pred = R.build_predictor('b0')
     plain = R.run_trial(pred, trial, max_frames=4)
     sched = R.run_trial(pred, trial, max_frames=4, schedule=[], comp_dir=None)

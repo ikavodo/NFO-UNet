@@ -21,31 +21,18 @@ import torch
 from benchmark.nfo_vos import score, trials as TR
 
 RES, IMG = score.RES, score.IMG
-MAIN = ['b0', 't1', 'b0-cp-hybrid', 't1-cp-hybrid', 'b0-cp', 't1-cp', 't4-1n', 't4-2*', 't4-3']   # rev. 4: only methods with native SAM2 input + the no-SAM2 controls
+MAIN = ['b0', 't1', 't1-a4', 't1-g0.5', 't1-g0.6', 't1-g0.7', 't1-g0.8', 't4-1n']
 COLS = ['JF', 'J_mean', 'F_mean', 'J_decay', 'DRE', 'NRE', 'P_norm', 'J@10', 'J@25', 'J@50']
-COMPARISONS = [('t1-cp-hybrid', 't1', 'composite, GT-free tracker alignment, SAMURAI'),
-               ('b0-cp-hybrid', 'b0', 'composite, GT-free tracker alignment, SAM2'),
-               ('t1-cp-hybrid', 't1-cp', 'tracker vs GT alignment, SAMURAI'),
-               ('b0-cp-hybrid', 'b0-cp', 'tracker vs GT alignment, SAM2'),
-               ('t1-cp', 't1', 'composite-prepend memory init, SAMURAI'),
-               ('b0-cp', 'b0', 'composite-prepend memory init, SAM2'),
-               ('t1-cp', 'b0-cp', 'SAMURAI vs SAM2 given the composite'),
-               ('t4-1n', 'b0', 'per-frame SAM2 + tracker prompt (no memory) vs memory propagation'),
-               ('t4-1n', 't1', 'same, vs SAMURAI'),
-               ('t4-1n', 't4-3', 'does SAM2 add to the frame-t blob'),
-               ('t4-2*', 't4-3', 'integration effect, without SAM2')]
+COMPARISONS = [('t1', 'b0', 'SAMURAI vs SAM2'),
+               ('t1-a4', 't1', 'fixed A/4 composite insertion, SAMURAI'),
+               *[(f't1-g{tau:g}', 't1', f'confidence-gated A/4 (tau = {tau:g}), SAMURAI') for tau in (0.5, 0.6, 0.7, 0.8)],
+               ('t4-1n', 'b0', 'per-frame SAM2 + tracker prompt (no memory) vs memory propagation')]
 
 
 def md_table(df):
     head = '| method | ' + ' | '.join(df.columns) + ' |'
     rows = [f'| {i} | ' + ' | '.join(f'{v:.3f}' for v in r) + ' |' for i, r in df.iterrows()]
     return '\n'.join([head, '|' + '---|' * (len(df.columns) + 1), *rows])
-
-
-def pick_vote_m(per_trial):
-    """T4-2*: one m for the whole pilot, best mean headline J&F (spec §4). Favours the control."""
-    v = per_trial[per_trial.method.str.startswith('t4-2_m')]
-    return int(v.groupby('method')['JF'].mean().idxmax().split('_m')[1])
 
 
 XBIN = 8          # px (224 space), ~ a third of a body width
@@ -102,12 +89,6 @@ def fe_with_loo(df, effect='frame'):
     return est, {k: (loo[k].min(), loo[k].max()) for k in 'bcde'}
 
 
-def rename_star(df, m):
-    df = df.copy()
-    df.loc[df.method == f't4-2_m{m}', 'method'] = 't4-2*'
-    return df
-
-
 def run_record():
     git = lambda *a, cwd='.': subprocess.run(['git', *a], cwd=cwd, capture_output=True, text=True).stdout.strip()
     return dict(nfo_unet_commit=git('rev-parse', 'HEAD'), nfo_unet_dirty=bool(git('status', '--porcelain', '--', 'benchmark')),
@@ -123,23 +104,15 @@ def main():
     pt = pd.read_csv(f'{RES}/per_trial.csv')
     pf = pd.read_csv(f'{RES}/per_frame.csv')
     pf = pf[(pf.dt > 0) & (pf.dt < pf.groupby('trial').dt.transform('max'))]   # DAVIS range: first/last dropped
-    m = pick_vote_m(pt) if pt.method.str.startswith('t4-2_m').any() else None
-    vote = pt[pt.method.str.startswith('t4-2_m')].groupby('method')['JF'].mean()
-    if m is not None:
-        pt, pf = rename_star(pt, m), rename_star(pf, m)
     present = [x for x in MAIN if x in set(pt.method)]
 
     sec = {}
     for meth in present:
-        d = f'{RES}/masks/{"t4-2_m%d" % m if meth == "t4-2*" else meth}'
+        d = f'{RES}/masks/{meth}'
         sec[meth] = np.median([float(np.load(f'{d}/{f}')['sec_per_frame']) for f in os.listdir(d)])
 
-    L = ['# NFO VOS pilot: results', '',
-         'seq1 segments 4-5, 21 starts, 51-frame windows, pseudo-GT at 224. **Descriptive only** '
-         '(two segments; spec §5).', '']
-    if m is not None:
-        L += [f'T4-2* = vote m = {m} (best mean J&F of m=1..7: ' +
-              ', '.join(f'm{k.split("_m")[1]} {v:.3f}' for k, v in vote.items()) + ').', '']
+    L = [f'# NFO VOS benchmark: results ({TR.RUN})', '',
+         f'{pt.trial.nunique()} starts, {TR.W}-frame windows (round-robin schedule, spec §3a), pseudo-GT at 224.', '']
     tab = pt[pt.method.isin(present)].groupby('method')[COLS].mean().reindex(present)
     tab.insert(1, 'init fails', pt[pt.method.isin(present)].groupby('method').init_fail.sum())
     tab['s/frame*'] = pd.Series(sec)
@@ -201,8 +174,7 @@ def main():
     for tid in sorted(pt.trial.unique()):
         stacks = {}
         for meth in present:
-            src = f't4-2_m{m}' if meth == 't4-2*' else meth
-            path = f'{RES}/masks/{src}/{tid}.npz'
+            path = f'{RES}/masks/{meth}/{tid}.npz'
             if os.path.exists(path):
                 stacks[meth] = score.to_224(np.load(path)['masks'])
         score.montage(trials[tid], stacks, f'{IMG}/{tid}.png')

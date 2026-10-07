@@ -33,14 +33,12 @@ def build_predictor(method):
     return build_sam2_video_predictor(CONFIGS[method], CKPT, device='cuda')
 
 
-def run_trial(predictor, trial, max_frames=None, prepend=None, schedule=None, comp_dir=None):
-    """prepend: path of a composite frame (composite.py) staged as frame 0 and prompted there
-    instead of raw t0, so it becomes the conditioning memory; its own output is dropped."""
+def run_trial(predictor, trial, max_frames=None, schedule=None, comp_dir=None):
+    """One window. schedule (A/4, a4.py): times t at which composite C_t (comp_dir/<t>.jpg) is
+    inserted just before raw frame R_t into the same memory bank; None or [] = plain run."""
     frames = trial['frames'][:max_frames] if max_frames else trial['frames']
-    off = 1 if prepend else 0
-    # staged sequence: (kind, t) per SAM2 frame. 'c' = composite C_t from comp_dir/<t>.jpg,
-    # inserted just before raw R_t (A/4, a4.py); 'r' = raw frame t. prepend = one 'c' before t = 0.
-    seq = [('p', 0)] if prepend else []
+    # staged sequence: (kind, t) per SAM2 frame; 'c' = composite C_t, 'r' = raw frame t
+    seq = []
     for t in range(len(frames)):
         if schedule is not None and t in schedule:
             seq.append(('c', t))
@@ -48,7 +46,7 @@ def run_trial(predictor, trial, max_frames=None, prepend=None, schedule=None, co
     stage = tempfile.mkdtemp(prefix='nfo_vos_')
     try:
         for i, (kind, t) in enumerate(seq):         # SAM2's loader sorts by int(filename)
-            src = (prepend if kind == 'p' else f'{comp_dir}/{t:02d}.jpg' if kind == 'c'
+            src = (f'{comp_dir}/{t:02d}.jpg' if kind == 'c'
                    else f"{NATIVE_DIR}/{trial['seq']}/{frames[t]:05d}.jpg")
             os.symlink(os.path.abspath(src), os.path.join(stage, f'{i}.jpg'))
         torch.cuda.reset_peak_memory_stats()
@@ -65,8 +63,8 @@ def run_trial(predictor, trial, max_frames=None, prepend=None, schedule=None, co
         predictor._forward_sam_heads = capture
         with torch.inference_mode(), torch.autocast('cuda', dtype=torch.float16):
             state = predictor.init_state(stage, offload_video_to_cpu=True, offload_state_to_cpu=True)
-            # prompt the first staged frame (raw t0, or the prepended composite) and, under a
-            # schedule, also raw t0 when C_t0 precedes it (A/4: same prompt on C_t0 and R_t0)
+            # prompt the first staged frame, and raw t0 too when C_t0 precedes it
+            # (A/4: the same prompt on C_t0 and R_t0)
             prompt_idx = [0] + ([1] if schedule is not None and seq[0] == ('c', 0) else [])
             prompt_calls = {}
             for pi in prompt_idx:
@@ -130,14 +128,9 @@ def main():
     p.add_argument('--trial-index', type=int, default=None, help='run one admissible trial (array task)')
     p.add_argument('--a4', choices=('fixed', 'gated'), default=None, help='A/4 composite insertion')
     p.add_argument('--tau', type=float, default=0.6, help='gate: insert when baseline predicted IoU < tau')
-    p.add_argument('--prepend-dir', default=None, help='composites dir -> method <name>-cp')
     a = p.parse_args()
     trials = select_trials(json.load(open(TRIALS)), a.limit, a.trial_index)
-    # composites -> <m>-cp (GT-aligned); composites_<align> -> <m>-cp-<align>
-    tag = os.path.basename(os.path.normpath(a.prepend_dir)).replace('composites', '').replace('_', '-') if a.prepend_dir else ''
-    name = a.method + (f'-cp{tag}' if a.prepend_dir else '')
-    if a.a4:
-        name = a.method + ('-a4' if a.a4 == 'fixed' else f'-g{a.tau:g}')
+    name = a.method if not a.a4 else a.method + ('-a4' if a.a4 == 'fixed' else f'-g{a.tau:g}')
     out_dir = os.path.join(CACHE, name)
     os.makedirs(out_dir, exist_ok=True)
     predictor = build_predictor(a.method)
@@ -145,17 +138,14 @@ def main():
         path = os.path.join(out_dir, f"{t['id']}.npz")
         if os.path.exists(path) and not a.force:
             continue
-        comp = os.path.join(a.prepend_dir, f"{t['id']}.jpg") if a.prepend_dir else None
-        if comp and not os.path.exists(comp):
-            print(f"{name} {t['id']}: no composite, skipped"); continue
         if a.a4:
             sched = schedule_for(t, a.a4, a.tau, os.path.join(CACHE, a.method, f"{t['id']}.npz"))
             r = run_trial(predictor, t, schedule=sched, comp_dir=f"results/benchmark/{RUN}/composites_a4/{t['id']}")
         else:
-            r = run_trial(predictor, t, prepend=comp)
+            r = run_trial(predictor, t)
         np.savez_compressed(path, **r)
         print(f"{name} {t['id']}: {r['sec_per_frame'] * 1000:.0f} ms/frame, "
-              f"peak {r['peak_mem_gb']:.2f} GB, frame-50 area {r['masks'][-1].sum()}")
+              f"peak {r['peak_mem_gb']:.2f} GB, last-frame area {r['masks'][-1].sum()}")
 
 
 if __name__ == '__main__':

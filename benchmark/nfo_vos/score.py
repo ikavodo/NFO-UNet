@@ -89,7 +89,7 @@ def montage(trial, stacks, path):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--montage-methods', default='b0,t1,t4,t4-1,t4-2*,t4-3')
+    p.add_argument('--montage-methods', default='b0,t1,t1-a4,t4-1n')
     a = p.parse_args()
     trials = {t['id']: t for t in json.load(open(TR.OUT)) if t['admissible']}
     methods = sorted(os.listdir(f'{RES}/masks'))
