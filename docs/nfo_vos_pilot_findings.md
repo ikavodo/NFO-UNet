@@ -89,6 +89,23 @@ numbers descriptive.
   1.6× more travel at run speed, which means more velocity error and articulation in the
   integrated image.
 
+## Full baselines and the A/4 dev run (seq1) — 2026-10-07
+- Full rr run, 61 starts: B0 J&F 0.828 (17 init failures), T1 0.831 (15). T1 − B0 = +0.003,
+  95% CI [−0.003, +0.011]. Cover/backup twins r = 0.94 / 0.91. SAM2's predicted IoU flags failing
+  frames (J < 0.5): AUC 0.860 (B0) / 0.863 (T1).
+- Init failures concentrate in the first two windows of a segment (28–31% vs 8% in the third) and
+  at low v(t₀) (median 0.27 vs 0.70).
+- **A/4 dev (seq1, T1 base, partial: 13–15 of 15 starts per arm), modal J&F Δ vs T1:**
+  fixed A/4 −0.017 (two large losses: t853 −0.166, t1154 −0.128); gated τ = 0.5 / 0.6 / 0.7
+  +0.003 / +0.003 / +0.004 (CIs include or touch 0); τ = 0.8 −0.006. Gating removes A/4's losses
+  but rescues little: the worst start (t11, J&F 0.08) gains +0.001 despite 10 composites. Its
+  history is as occluded as t₀, so the composite has nothing to add.
+- **Amodal extent (secondary), on inserted frames:** composite ∪ raw vs T1's mask, box IoU against
+  the amodal GT boxes: fixed A/4 0.619 vs 0.581 (**+0.038**, better on 11/14 starts); gated τ = 0.7
+  +0.027 (11/14). This reproduces GPJATK: A/4 helps full extent and costs visible-part accuracy;
+  gating keeps the visible part at baseline.
+- Cluster determinism: identical inputs on different GPU nodes differ by ≤ 5·10⁻⁴ J&F.
+
 ## Next (cheapest first)
 0. **Do not miss:** SAM-PT and SAM-PD are required baselines for T4-1n in the full run (spec §8).
 1. Decide the benchmark's question: modal VOS (B0 strong, integration does not help) vs amodal
