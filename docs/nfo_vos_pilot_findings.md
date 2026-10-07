@@ -106,6 +106,16 @@ numbers descriptive.
   gating keeps the visible part at baseline.
 - Cluster determinism: identical inputs on different GPU nodes differ by ≤ 5·10⁻⁴ J&F.
 
+## A/4 pre-registered test (seq2–4, T1 base, τ = 0.7 fixed on seq1) — 2026-10-07
+- Visible-part ΔJ&F vs T1 (45 starts, 95% cluster-bootstrap CI stratified by sequence):
+  **gated −0.003 [−0.008, +0.002]** (better/worse 14/18); **fixed A/4 −0.006 [−0.012, −0.000]**.
+  **Decision rule 3 fires:** the composite's extent cue does not repair visible-part failures.
+- **Full extent (secondary) holds on unseen scenes:** box IoU vs amodal GT on inserted frames, gated
+  0.687 vs 0.609 (**+0.078**, 130 frames); fixed 0.719 vs 0.663 (**+0.056**, 450 frames).
+- Implication: on NFO, A/4 is a full-extent method, not a visible-part one. To beat the baselines on
+  the visible part, the lever is initialisation. Next: an oracle GT-mask-init ceiling run
+  (`--init-mask`, methods b0-om/t1-om).
+
 ## Next (cheapest first)
 0. **Do not miss:** SAM-PT and SAM-PD are required baselines for T4-1n in the full run (spec §8).
 1. Decide the benchmark's question: modal VOS (B0 strong, integration does not help) vs amodal
