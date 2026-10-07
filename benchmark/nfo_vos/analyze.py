@@ -21,7 +21,7 @@ import torch
 from benchmark.nfo_vos import score, trials as TR
 
 RES, IMG = score.RES, score.IMG
-MAIN = ['b0', 't1', 'b0-cp', 't1-cp', 'b0-cp-hybrid', 't1-cp-hybrid', 't4-1n', 't4-2*', 't4-3']   # rev. 4: only methods with native SAM2 input + the no-SAM2 controls
+MAIN = ['b0', 't1', 'b0-cp-hybrid', 't1-cp-hybrid', 'b0-cp', 't1-cp', 't4-1n', 't4-2*', 't4-3']   # rev. 4: only methods with native SAM2 input + the no-SAM2 controls
 COLS = ['JF', 'J_mean', 'F_mean', 'J_decay', 'DRE', 'NRE', 'P_norm', 'J@10', 'J@25', 'J@50']
 COMPARISONS = [('t1-cp-hybrid', 't1', 'composite, GT-free tracker alignment, SAMURAI'),
                ('b0-cp-hybrid', 'b0', 'composite, GT-free tracker alignment, SAM2'),
@@ -161,14 +161,17 @@ def main():
     os.makedirs(IMG, exist_ok=True)
     fig, axs = plt.subplots(1, len(present), figsize=(10, 2.4), sharey=True)
     for ax, meth in zip(np.atleast_1d(axs), present):
-        s = pt[pt.method == meth]
-        ax.scatter(s.v, s['J@50'], s=12, c=s.seg.map({4: 'C0', 5: 'C1'}))
-        k, c0 = np.polyfit(s.v, s['J@50'], 1)
-        xs = np.linspace(s.v.min(), s.v.max(), 2); ax.plot(xs, k * xs + c0, 'k-', lw=0.8)
-        ax.set_title(f'{meth} slope {k:+.2f}', fontsize=8); ax.set_xlabel('v(t0)', fontsize=8)
-    np.atleast_1d(axs)[0].set_ylabel('J@50 (blue seg4, orange seg5)', fontsize=7)
-    fig.tight_layout(); fig.savefig(f'{IMG}/j50_vs_v.png', dpi=80); plt.close(fig)
-    L += [f'Scatter: `{IMG}/j50_vs_v.png`. Montages (rows = methods): `{IMG}/<trial>.png`.']
+        s = pt[pt.method == meth].dropna(subset=['JF'])
+        col = s.gait.map({'walk': 'C0', 'run': 'C1'}).fillna('C2') if 'gait' in s else 'C0'
+        ax.scatter(s.v, s.JF, s=12, c=col)
+        if len(s) > 1:
+            k, c0 = np.polyfit(s.v, s.JF, 1)
+            xs = np.linspace(s.v.min(), s.v.max(), 2); ax.plot(xs, k * xs + c0, 'k-', lw=0.8)
+            ax.set_title(f'{meth} slope {k:+.2f}', fontsize=8)
+        ax.set_xlabel('v(t0)', fontsize=8)
+    np.atleast_1d(axs)[0].set_ylabel('J&F (blue walk, orange run)', fontsize=7)
+    fig.tight_layout(); fig.savefig(f'{IMG}/jf_vs_v.png', dpi=80); plt.close(fig)
+    L += [f'Scatter: `{IMG}/jf_vs_v.png`. Montages (rows = methods): `{IMG}/<trial>.png`.']
 
     trials = {t['id']: t for t in json.load(open(TR.OUT))}
     for tid in sorted(pt.trial.unique()):

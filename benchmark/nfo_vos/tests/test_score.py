@@ -29,3 +29,8 @@ def test_headline_drops_first_and_last_frame_davis_and_flags_init_failure():
     P = gt.copy(); P[0] = False; P[-1] = False       # wrong only on the prompted and the last frame
     _, s = score.score_trial('x', t, P)
     assert s['JF'] == 1 and s['J0'] == 0 and s['init_fail']
+
+
+def test_montage_frames_fit_any_window_length():
+    assert score.montage_dts(40) == [0, 8, 16, 23, 31, 39]
+    assert score.montage_dts(51)[-1] == 50

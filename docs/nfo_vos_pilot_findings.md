@@ -71,6 +71,24 @@ numbers descriptive.
   starts, so pre-register it for the full run, and fix κ as a constant (0.39) there, because the
   pilot's κ is GT-derived.
 
+## Round-robin pilot (rr, seq1, 15 starts, W = 40; cluster env) — 2026-10-07
+- **The twin design works:** cover vs backup twins (same position, different pass) give J&F
+  r = +0.99 (B0) / +1.00 (T1), mean |Δ| 0.05 / 0.04. Outcome is set by position in the scene,
+  which supports the schedule's premise.
+- Baselines: B0 J&F 0.754 (5/15 init failures), T1 0.758 (3/14; one T1 task, array id 21, missing).
+- **The hybrid composite does not replicate on the broader pilot:** T1-cp-hybrid 0.733 (−0.017, better
+  on 8/15), B0-cp-hybrid 0.684 (−0.071). Walks are about neutral (Δ −0.005 / −0.022). **Runs are
+  harmed** (Δ −0.057 / −0.205: t617 B0 0.92 → 0.02, t1835 T1 0.91 → 0.60), except one big gain
+  (t2050 +0.16/+0.18). The old pilot's +0.033 came from 2 walking segments and a lock-in
+  rescue (t1184) that is not a start here. Composites are also less reliable across twins
+  (r 0.64 / 0.89).
+- **The oversized-cut-out gate (S/expected ≤ 2.5) fails out of sample:** no rr composite exceeds
+  2.5. The losers do have the largest S (2.18–2.44), so the direction holds, but any threshold
+  would be refitted on this pilot.
+- Hypothesis for the run failures (untested): a fixed span of 7 × stride 2 frames covers about
+  1.6× more travel at run speed, which means more velocity error and articulation in the
+  integrated image.
+
 ## Next (cheapest first)
 0. **Do not miss:** SAM-PT and SAM-PD are required baselines for T4-1n in the full run (spec §8).
 1. Decide the benchmark's question: modal VOS (B0 strong, integration does not help) vs amodal

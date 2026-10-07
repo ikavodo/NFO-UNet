@@ -18,7 +18,6 @@ from benchmark.nfo_vos import metrics, trials as TR
 
 RES = TR.RES
 IMG = TR.IMG
-MONTAGE_DT = (0, 10, 20, 30, 40, 50)
 HORIZONS = (10, 25, 50)          # secondary, descriptive trajectory readouts
 INIT_FAIL_J = 0.5                 # standard IoU success threshold (OTB success rate, PASCAL)
 
@@ -62,12 +61,17 @@ def score_trial(method, trial, P):
     return rows, summary
 
 
+def montage_dts(n):
+    """Six frame offsets spread over a window of n frames, first and last included."""
+    return [int(round(v)) for v in np.linspace(0, n - 1, 6)]
+
+
 def montage(trial, stacks, path):
-    """Rows = methods, cols = MONTAGE_DT. Green = GT contour, red fill = prediction."""
+    """Rows = methods, cols = montage_dts(window). Green = GT contour, red fill = prediction."""
     rows = []
     for method, P in stacks.items():
         tiles = []
-        for dt in MONTAGE_DT:
+        for dt in montage_dts(len(trial['frames'])):
             idx = trial['frames'][dt]
             img = cv2.cvtColor(cv2.imread(f"{TR.seq_dir(trial['seq'])}/{idx:05d}_or.jpg", 0), cv2.COLOR_GRAY2BGR)
             img[P[dt]] = (0.45 * img[P[dt]] + 0.55 * np.array([0, 0, 255])).astype(np.uint8)
