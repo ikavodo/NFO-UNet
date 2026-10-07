@@ -39,3 +39,28 @@ def test_empty_schedule_reproduces_the_plain_run_bit_for_bit():
     plain = R.run_trial(pred, trial, max_frames=4)
     sched = R.run_trial(pred, trial, max_frames=4, schedule=[], comp_dir=None)
     assert (plain['masks'] == sched['masks']).all() and not sched['inserted'].any()
+
+
+def test_velocity_from_the_causal_chain_window_in_native_px():
+    from benchmark.nfo_vos import a4_build as B
+    chain = {k: (2.0 * k, 5.0) for k in range(0, 12)}               # 2 px/frame in 224 space
+    assert np.isclose(B.velocity_at(chain, 10, fallback=-9.0), 2.0 * 800 / 224)
+    assert B.velocity_at({0: (1.0, 5.0), 1: (3.0, 5.0)}, 1, fallback=-9.0) == -9.0   # < 3 points
+
+
+def test_build_writes_native_composites_for_requested_times(tmp_path):
+    import json, cv2
+    from benchmark.nfo_vos import a4_build as B
+    trial = [t for t in json.load(open('results/benchmark/rr/trials.json')) if t['admissible']][3]
+    B.build(trial, [0, 4], str(tmp_path))
+    imgs = [cv2.imread(str(tmp_path / f'{t:02d}.jpg'), 0) for t in (0, 4)]
+    assert all(im is not None and im.shape == (600, 800) for im in imgs)
+
+
+def test_runner_schedule_for_fixed_and_gated(tmp_path):
+    import json
+    from benchmark.nfo_vos import run_sam2_video as R
+    trial = {'id': 'x', 'frames': list(range(40))}
+    assert R.schedule_for(trial, 'fixed', None, None) == list(range(0, 40, 4))
+    np.savez(tmp_path / 'x.npz', pred_iou=np.r_[0.4, np.full(39, 0.9)])
+    assert R.schedule_for(trial, 'gated', 0.6, str(tmp_path / 'x.npz')) == [0]

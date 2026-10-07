@@ -43,10 +43,11 @@ else
   export PYTHONPATH=$SAMURAI_SAM2                          # T1 = SAMURAI's sam2 fork (configs/samurai)
 fi
 PREPEND=${PREPEND_DIR:+--prepend-dir $PREPEND_DIR}
+A4OPT=${A4:+--a4 $A4 --tau ${TAU:-0.6}}           # A4=fixed | A4=gated TAU=0.6 (composites_a4 must exist)
 
 pwd; hostname; date; nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
-echo "method=$METHOD trial-index=$IDX prepend=${PREPEND_DIR:-none} python=$PY"
+echo "method=$METHOD trial-index=$IDX prepend=${PREPEND_DIR:-none} a4=${A4:-none} tau=${TAU:-} python=$PY"
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
-srun "$PY" -m benchmark.nfo_vos.run_sam2_video --method "$METHOD" --trial-index "$IDX" $PREPEND --force
+srun "$PY" -m benchmark.nfo_vos.run_sam2_video --method "$METHOD" --trial-index "$IDX" $PREPEND $A4OPT --force
 date

@@ -105,6 +105,15 @@ def run_trial(predictor, trial, max_frames=None, prepend=None, schedule=None, co
         shutil.rmtree(stage)
 
 
+def schedule_for(trial, mode, tau, baseline_npz):
+    """A/4 insertion times for one trial: 'fixed' (every 4th t) or 'gated' (open-loop, from the
+    baseline run's logged predicted IoU, density-capped). See a4.py."""
+    from benchmark.nfo_vos import a4
+    if mode == 'fixed':
+        return a4.schedule_fixed(len(trial['frames']))
+    return a4.schedule_gated(np.load(baseline_npz)['pred_iou'], tau)
+
+
 def select_trials(trials, limit=None, index=None):
     """Admissible trials; index picks exactly one (a SLURM array task), limit the first few.
     Same contract as run_t4.select_trials, duplicated so this file stays importable in the
@@ -119,12 +128,16 @@ def main():
     p.add_argument('--limit', type=int, default=None)
     p.add_argument('--force', action='store_true')
     p.add_argument('--trial-index', type=int, default=None, help='run one admissible trial (array task)')
+    p.add_argument('--a4', choices=('fixed', 'gated'), default=None, help='A/4 composite insertion')
+    p.add_argument('--tau', type=float, default=0.6, help='gate: insert when baseline predicted IoU < tau')
     p.add_argument('--prepend-dir', default=None, help='composites dir -> method <name>-cp')
     a = p.parse_args()
     trials = select_trials(json.load(open(TRIALS)), a.limit, a.trial_index)
     # composites -> <m>-cp (GT-aligned); composites_<align> -> <m>-cp-<align>
     tag = os.path.basename(os.path.normpath(a.prepend_dir)).replace('composites', '').replace('_', '-') if a.prepend_dir else ''
     name = a.method + (f'-cp{tag}' if a.prepend_dir else '')
+    if a.a4:
+        name = a.method + ('-a4' if a.a4 == 'fixed' else f'-g{a.tau:g}')
     out_dir = os.path.join(CACHE, name)
     os.makedirs(out_dir, exist_ok=True)
     predictor = build_predictor(a.method)
@@ -135,7 +148,11 @@ def main():
         comp = os.path.join(a.prepend_dir, f"{t['id']}.jpg") if a.prepend_dir else None
         if comp and not os.path.exists(comp):
             print(f"{name} {t['id']}: no composite, skipped"); continue
-        r = run_trial(predictor, t, prepend=comp)
+        if a.a4:
+            sched = schedule_for(t, a.a4, a.tau, os.path.join(CACHE, a.method, f"{t['id']}.npz"))
+            r = run_trial(predictor, t, schedule=sched, comp_dir=f"results/benchmark/{RUN}/composites_a4/{t['id']}")
+        else:
+            r = run_trial(predictor, t, prepend=comp)
         np.savez_compressed(path, **r)
         print(f"{name} {t['id']}: {r['sec_per_frame'] * 1000:.0f} ms/frame, "
               f"peak {r['peak_mem_gb']:.2f} GB, frame-50 area {r['masks'][-1].sum()}")
