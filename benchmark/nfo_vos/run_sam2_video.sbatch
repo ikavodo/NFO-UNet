@@ -3,15 +3,14 @@
 # Trials are independent and each writes its own npz
 # (results/benchmark/$NFO_RUN/masks/<method>[-cp-<tag>]/<trial>.npz), so tasks share no state.
 #
-#   sbatch benchmark/nfo_vos/run_sam2_video.sbatch                         # 42 tasks, raw prompt
-#   PREPEND_DIR=results/benchmark/$NFO_RUN/composites_hybrid \
-#     sbatch --export=ALL benchmark/nfo_vos/run_sam2_video.sbatch          # composite-prepend
-#   sbatch --array=21-41 ...                                               # T1 only
+#   N = number of admissible trials in results/benchmark/$NFO_RUN/trials.json (rr seq1 pilot: 15)
+#   sbatch --export=ALL --array=0-$((N-1))      ...   # B0  (no PYTHONPATH: official sam2)
+#   sbatch --export=ALL --array=$N-$((2*N-1))   ...   # T1  (PYTHONPATH=<samurai>/sam2, PYTHON_T1)
+#   add PREPEND_DIR=results/benchmark/$NFO_RUN/composites_hybrid for the composite variant
 #
-# Task map: id 0-20 -> B0, trial id; id 21-41 -> T1, trial id-21.
+# Task map: id 0..N-1 -> B0, trial id; id N..2N-1 -> T1, trial id-N.
 # Needs on the cluster: this repo (branch vos-benchmark-pilot), results/benchmark/$NFO_RUN/trials.json
-# and the composites dir (both committed), the NATIVE frames data/nfo_final/nfo_final/seq1/
-# (only frames ~1140-1625 are read by the pilot), the base_plus checkpoint at NFO_SAM2_CKPT, a
+# and the composites dir (both committed), the NATIVE frames data/nfo_final/nfo_final/<seq>/, the base_plus checkpoint at NFO_SAM2_CKPT, a
 # sam2 1.x env for B0 (PYTHON_B0) and the SAMURAI repo's sam2 fork for T1 (PYTHON_T1).
 
 #SBATCH --job-name=nfo_sam2v

@@ -3,13 +3,11 @@
 # each has its own warm-up, its own tracker run and its own causal buffer, and writes its own
 # npz files (results/benchmark/$NFO_RUN/masks/<method>/<trial>.npz), so tasks share no state.
 #
-#   sbatch benchmark/nfo_vos/run_t4.sbatch                  # all 42 tasks
-#   sbatch --array=0-20 benchmark/nfo_vos/run_t4.sbatch     # box+point variant only
-#   sbatch --array=21-41 benchmark/nfo_vos/run_t4.sbatch    # box-only variant only
+#   N = number of admissible trials in results/benchmark/$NFO_RUN/trials.json (rr seq1 pilot: 15)
+#   sbatch --export=ALL --array=0-$((2*N-1)) benchmark/nfo_vos/run_t4.sbatch
 #
-# Task map: id 0-20 -> --variant point, trial id; id 21-41 -> --variant box, trial id-21.
-# Needs on the cluster: this repo with data/nfo_processed/seq1_gt (224 frames + _sammask.png,
-# about 76 MB), results/benchmark/$NFO_RUN/trials.json, and the base_plus checkpoint at NFO_SAM2_CKPT.
+# Task map: id 0..N-1 -> --variant point, trial id; id N..2N-1 -> --variant box, trial id-N.
+# Needs on the cluster: this repo with data/nfo_processed/<seq>_gt (224 frames + _sammask.png), results/benchmark/$NFO_RUN/trials.json, and the base_plus checkpoint at NFO_SAM2_CKPT.
 # T4 never reads the native frames.
 
 #SBATCH --job-name=nfo_t4
