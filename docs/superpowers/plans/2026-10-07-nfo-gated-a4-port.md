@@ -37,7 +37,7 @@ identical to the baseline, and puts the extent cue exactly where the baseline is
 |---|---|
 | T1 | raw frames (baseline, already run) |
 | T1-A4 | C_t before R_t at every 4th t (ported design, fixed) |
-| **T1-G(τ)** | C_t before R_t **only if the baseline's predicted IoU at t−1 < τ** (and at t₀: if the baseline's predicted IoU on the prompted frame < τ, insert C_t0 and prompt both C_t0 and R_t0) |
+| **T1-G(τ)** | C_t before R_t **only if the baseline's predicted IoU at t−1 < τ and no composite was inserted in the previous 3 frames** (density cap: never denser than A/4). At t₀: if the baseline's predicted IoU on the prompted frame < τ, insert C_t0 and prompt both C_t0 and R_t0 |
 
 **Open-loop gate:** the trigger uses the baseline run's logged predicted IoU, not the gated run's
 own (SAM2 cannot add frames mid-propagation, and skipping preloaded slots would shrink its memory
@@ -48,7 +48,9 @@ confidence) is a later refinement, if the open-loop gate works.
 ## 2. Construction (port; reuse, do not rewrite)
 
 - **Composite C_t:** recency-weighted mean (exp(−age/3.5)) of the 7 native frames ending at t,
-  each shifted onto frame t by the **GT-free hybrid tracker velocity**
+  each shifted onto frame t by a **GT-free constant velocity**: OLS on x over T4's causal
+  tracker chain (`run_t4.track`, which follows the person forward from the shared t₀ prompt) in
+  [t−6, t]; if fewer than 3 chain points are available, the pre-t₀ hybrid estimate
   (`composite.estimate_shifts(..., 'hybrid_x')`, 7.7 native px median error). Full frame, no mask,
   no cut-out. Port `recency_fusion` from `master_thesis/.../fusion_location.py:493`, cite it.
   Frames before t₀ are allowed in the buffer (causal; the tracker has seen them).

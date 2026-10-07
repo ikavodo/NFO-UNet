@@ -33,18 +33,24 @@ def build_predictor(method):
     return build_sam2_video_predictor(CONFIGS[method], CKPT, device='cuda')
 
 
-def run_trial(predictor, trial, max_frames=None, prepend=None):
+def run_trial(predictor, trial, max_frames=None, prepend=None, schedule=None, comp_dir=None):
     """prepend: path of a composite frame (composite.py) staged as frame 0 and prompted there
     instead of raw t0, so it becomes the conditioning memory; its own output is dropped."""
     frames = trial['frames'][:max_frames] if max_frames else trial['frames']
     off = 1 if prepend else 0
+    # staged sequence: (kind, t) per SAM2 frame. 'c' = composite C_t from comp_dir/<t>.jpg,
+    # inserted just before raw R_t (A/4, a4.py); 'r' = raw frame t. prepend = one 'c' before t = 0.
+    seq = [('p', 0)] if prepend else []
+    for t in range(len(frames)):
+        if schedule is not None and t in schedule:
+            seq.append(('c', t))
+        seq.append(('r', t))
     stage = tempfile.mkdtemp(prefix='nfo_vos_')
     try:
-        if prepend:
-            os.symlink(os.path.abspath(prepend), os.path.join(stage, '0.jpg'))
-        for local, raw in enumerate(frames):        # SAM2's loader sorts by int(filename)
-            os.symlink(os.path.abspath(f"{NATIVE_DIR}/{trial['seq']}/{raw:05d}.jpg"),
-                       os.path.join(stage, f'{local + off}.jpg'))
+        for i, (kind, t) in enumerate(seq):         # SAM2's loader sorts by int(filename)
+            src = (prepend if kind == 'p' else f'{comp_dir}/{t:02d}.jpg' if kind == 'c'
+                   else f"{NATIVE_DIR}/{trial['seq']}/{frames[t]:05d}.jpg")
+            os.symlink(os.path.abspath(src), os.path.join(stage, f'{i}.jpg'))
         torch.cuda.reset_peak_memory_stats()
         # SAM2's own per-frame confidence is computed in _forward_sam_heads and then discarded by
         # both builds; capture it with an instance-level wrapper (no change to either SAM2 build).
@@ -59,27 +65,41 @@ def run_trial(predictor, trial, max_frames=None, prepend=None):
         predictor._forward_sam_heads = capture
         with torch.inference_mode(), torch.autocast('cuda', dtype=torch.float16):
             state = predictor.init_state(stage, offload_video_to_cpu=True, offload_state_to_cpu=True)
-            predictor.add_new_points_or_box(state, frame_idx=0, obj_id=0,
-                                            points=np.array([trial['point_native']], np.float32),
-                                            labels=np.array([1], np.int32),
-                                            box=np.array(trial['box_native'], np.float32))
+            # prompt the first staged frame (raw t0, or the prepended composite) and, under a
+            # schedule, also raw t0 when C_t0 precedes it (A/4: same prompt on C_t0 and R_t0)
+            prompt_idx = [0] + ([1] if schedule is not None and seq[0] == ('c', 0) else [])
+            prompt_calls = {}
+            for pi in prompt_idx:
+                predictor.add_new_points_or_box(state, frame_idx=pi, obj_id=0,
+                                                points=np.array([trial['point_native']], np.float32),
+                                                labels=np.array([1], np.int32),
+                                                box=np.array(trial['box_native'], np.float32))
+                prompt_calls[pi] = calls[-1] if calls else (np.nan, np.nan)
             masks = np.zeros((len(frames), state['video_height'], state['video_width']), bool)
+            extent = np.zeros_like(masks)                # composite-frame masks (A/4 only)
+            inserted = np.zeros(len(frames), bool)
             pred_iou = np.full(len(frames), np.nan, np.float32)
             obj_score = np.full(len(frames), np.nan, np.float32)
-            prompt_call = calls[-1] if calls else (np.nan, np.nan)   # the prompted frame's head call
             seen = len(calls)
             torch.cuda.synchronize()
             t_start = time.perf_counter()
             for fi, _, logits in predictor.propagate_in_video(state):
-                call = calls[-1] if len(calls) > seen else prompt_call   # cached cond frame -> prompt call
+                call = calls[-1] if len(calls) > seen else prompt_calls.get(fi, (np.nan, np.nan))
                 seen = len(calls)
-                if fi >= off:
-                    masks[fi - off] = (logits[0, 0] > 0).cpu().numpy()
-                    pred_iou[fi - off], obj_score[fi - off] = call
+                kind, t = seq[fi]
+                m = (logits[0, 0] > 0).cpu().numpy()
+                if kind == 'r':
+                    masks[t] = m
+                    pred_iou[t], obj_score[t] = call
+                elif kind == 'c':
+                    extent[t], inserted[t] = m, True
             torch.cuda.synchronize()
             dt = (time.perf_counter() - t_start) / len(frames)
-        return dict(masks=masks, frames=np.array(frames), sec_per_frame=dt, pred_iou=pred_iou,
-                    obj_score=obj_score, peak_mem_gb=torch.cuda.max_memory_allocated() / 2 ** 30)
+        out = dict(masks=masks, frames=np.array(frames), sec_per_frame=dt, pred_iou=pred_iou,
+                   obj_score=obj_score, peak_mem_gb=torch.cuda.max_memory_allocated() / 2 ** 30)
+        if schedule is not None:
+            out.update(extent=extent, inserted=inserted)
+        return out
     finally:
         predictor._forward_sam_heads = orig
         shutil.rmtree(stage)
