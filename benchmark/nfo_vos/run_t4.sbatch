@@ -1,7 +1,7 @@
 #!/bin/bash
 # T4 family on the pilot trials, one array task per (trial, variant). Trials are independent:
 # each has its own warm-up, its own tracker run and its own causal buffer, and writes its own
-# npz files (results/benchmark/pilot/masks/<method>/<trial>.npz), so tasks share no state.
+# npz files (results/benchmark/$NFO_RUN/masks/<method>/<trial>.npz), so tasks share no state.
 #
 #   sbatch benchmark/nfo_vos/run_t4.sbatch                  # all 42 tasks
 #   sbatch --array=0-20 benchmark/nfo_vos/run_t4.sbatch     # box+point variant only
@@ -9,11 +9,11 @@
 #
 # Task map: id 0-20 -> --variant point, trial id; id 21-41 -> --variant box, trial id-21.
 # Needs on the cluster: this repo with data/nfo_processed/seq1_gt (224 frames + _sammask.png,
-# about 76 MB), results/benchmark/pilot/trials.json, and the base_plus checkpoint at NFO_SAM2_CKPT.
+# about 76 MB), results/benchmark/$NFO_RUN/trials.json, and the base_plus checkpoint at NFO_SAM2_CKPT.
 # T4 never reads the native frames.
 
 #SBATCH --job-name=nfo_t4
-#SBATCH --array=0-41
+#SBATCH --array=0-29          # = 2 x N_TRIALS - 1; override with --array (rr seq1 pilot: 15 trials)
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
@@ -27,7 +27,9 @@
 PYTHON=${PYTHON:-/home/wiss/akid/miniconda3/envs/comp_vis/bin/python3}
 export NFO_SAM2_CKPT=${NFO_SAM2_CKPT:-$HOME/checkpoints/sam2.1_hiera_base_plus.pt}
 
-N_TRIALS=21
+export NFO_RUN=${NFO_RUN:-rr}
+# number of admissible trials of this run (array ids: first N -> first method/variant, next N -> second)
+N_TRIALS=$($PYTHON -c "import json; print(sum(t['admissible'] for t in json.load(open('results/benchmark/$NFO_RUN/trials.json'))))")
 if [ "$SLURM_ARRAY_TASK_ID" -lt "$N_TRIALS" ]; then
   VARIANT=point; IDX=$SLURM_ARRAY_TASK_ID
 else
