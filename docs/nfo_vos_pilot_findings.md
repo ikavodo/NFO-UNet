@@ -116,7 +116,11 @@ numbers descriptive.
   the visible part, the lever is initialisation. Next: an oracle GT-mask-init ceiling run
   (`--init-mask`, methods b0-om/t1-om).
 
-## Oracle-init ceiling (GT mask at t₀ instead of box + p*) — 2026-10-07, 57–58 of 61 starts
+## Oracle-init ceiling (GT mask at t₀ instead of box + p*) — 2026-10-07
+- **Final, all 61 starts:** B0 0.828 → 0.858 (+0.030 [+0.007, +0.055]); T1 0.831 → 0.861
+  (+0.030 [+0.012, +0.053]). On each method's own init-failure starts: B0 0.714 → 0.806 (+0.092,
+  n = 17), T1 0.709 → 0.803 (+0.094, n = 15). By scene (T1): seq1 +0.071, seq4 +0.036, seq2/seq3 ≤ 0.01.
+- Preliminary (57–58 starts) numbers below, kept for the record:
 - B0 0.831 → **0.861 (+0.030, 95% CI [+0.006, +0.056])**; T1 0.831 → **0.863 (+0.032, [+0.012, +0.057])**.
 - The gain sits on the init-failure starts: B0 0.713 → 0.813 (+0.101, n = 15), T1 0.727 → 0.811 (+0.084,
   n = 17). Other starts gain +0.005 to +0.010. By scene: seq1 +0.082, seq4 +0.03, seq2/seq3 ≈ 0.
