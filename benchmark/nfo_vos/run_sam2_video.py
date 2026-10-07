@@ -46,6 +46,17 @@ def run_trial(predictor, trial, max_frames=None, prepend=None):
             os.symlink(os.path.abspath(f"{NATIVE_DIR}/{trial['seq']}/{raw:05d}.jpg"),
                        os.path.join(stage, f'{local + off}.jpg'))
         torch.cuda.reset_peak_memory_stats()
+        # SAM2's own per-frame confidence is computed in _forward_sam_heads and then discarded by
+        # both builds; capture it with an instance-level wrapper (no change to either SAM2 build).
+        # Logged: best candidate's predicted IoU and the object-score logit, per SAM-head call.
+        calls = []
+        orig = predictor._forward_sam_heads
+
+        def capture(*args, **kwargs):
+            out = orig(*args, **kwargs)
+            calls.append((float(out[2].max()), float(out[6].max()) if out[6] is not None else float('nan')))
+            return out
+        predictor._forward_sam_heads = capture
         with torch.inference_mode(), torch.autocast('cuda', dtype=torch.float16):
             state = predictor.init_state(stage, offload_video_to_cpu=True, offload_state_to_cpu=True)
             predictor.add_new_points_or_box(state, frame_idx=0, obj_id=0,
@@ -53,16 +64,24 @@ def run_trial(predictor, trial, max_frames=None, prepend=None):
                                             labels=np.array([1], np.int32),
                                             box=np.array(trial['box_native'], np.float32))
             masks = np.zeros((len(frames), state['video_height'], state['video_width']), bool)
+            pred_iou = np.full(len(frames), np.nan, np.float32)
+            obj_score = np.full(len(frames), np.nan, np.float32)
+            prompt_call = calls[-1] if calls else (np.nan, np.nan)   # the prompted frame's head call
+            seen = len(calls)
             torch.cuda.synchronize()
             t_start = time.perf_counter()
             for fi, _, logits in predictor.propagate_in_video(state):
+                call = calls[-1] if len(calls) > seen else prompt_call   # cached cond frame -> prompt call
+                seen = len(calls)
                 if fi >= off:
                     masks[fi - off] = (logits[0, 0] > 0).cpu().numpy()
+                    pred_iou[fi - off], obj_score[fi - off] = call
             torch.cuda.synchronize()
             dt = (time.perf_counter() - t_start) / len(frames)
-        return dict(masks=masks, frames=np.array(frames), sec_per_frame=dt,
-                    peak_mem_gb=torch.cuda.max_memory_allocated() / 2 ** 30)
+        return dict(masks=masks, frames=np.array(frames), sec_per_frame=dt, pred_iou=pred_iou,
+                    obj_score=obj_score, peak_mem_gb=torch.cuda.max_memory_allocated() / 2 ** 30)
     finally:
+        predictor._forward_sam_heads = orig
         shutil.rmtree(stage)
 
 

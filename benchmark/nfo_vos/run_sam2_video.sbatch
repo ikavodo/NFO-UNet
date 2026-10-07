@@ -15,7 +15,7 @@
 # sam2 1.x env for B0 (PYTHON_B0) and the SAMURAI repo's sam2 fork for T1 (PYTHON_T1).
 
 #SBATCH --job-name=nfo_sam2v
-#SBATCH --array=0-29          # = 2 x N_TRIALS - 1; override with --array (rr seq1 pilot: 15 trials)
+#SBATCH --array=0-121         # = 2 x N_TRIALS - 1; full rr run: 61 trials (seq1 pilot alone: 0-29)
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4

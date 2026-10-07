@@ -11,7 +11,7 @@
 # T4 never reads the native frames.
 
 #SBATCH --job-name=nfo_t4
-#SBATCH --array=0-29          # = 2 x N_TRIALS - 1; override with --array (rr seq1 pilot: 15 trials)
+#SBATCH --array=0-121         # = 2 x N_TRIALS - 1; full rr run: 61 trials (seq1 pilot alone: 0-29)
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4

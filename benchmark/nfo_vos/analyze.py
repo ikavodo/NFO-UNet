@@ -69,6 +69,23 @@ def fe_fit(df, effect='frame'):
     return dict(b=b, c=c, d=d, e=e, n_obs=len(df), n_frames=key.nunique(), n_trials=df.trial.nunique())
 
 
+def cluster_bootstrap_ci(df, col, cluster, B=10000, seed=0, strata=None):
+    """95% CI of mean(df[col]) resampling whole clusters with replacement (cluster/block bootstrap,
+    Davison & Hinkley 1997), optionally within strata (e.g. sequence), so the correlation of rows
+    inside a cluster (starts of one twin group share position and scene) is kept."""
+    rng = np.random.default_rng(seed)
+    groups = {k: g[col].values for k, g in df.groupby(cluster)}
+    if strata is None:
+        by_stratum = {None: list(groups)}
+    else:
+        by_stratum = {s: list(g[cluster].unique()) for s, g in df.groupby(strata)}
+    means = []
+    for _ in range(B):
+        vals = [groups[k] for keys in by_stratum.values() for k in rng.choice(keys, len(keys))]
+        means.append(np.concatenate(vals).mean())
+    return float(np.percentile(means, 2.5)), float(np.percentile(means, 97.5))
+
+
 def twin_reliability(pt, metric='JF'):
     """Cover vs backup twins (same seq, dir, gait, phase, window m): test-retest of a metric."""
     if 'half' not in pt or pt.half.isna().all():
@@ -133,12 +150,19 @@ def main():
           'sharing the GPU, not comparable (re-profile on the cluster).', '']
 
     L += ['## Comparisons answering §1 (paired over trials)', '',
-          '| comparison | question | ΔJ&F mean | trials A > B (J&F) | ΔJ@50 mean |', '|---|---|---|---|---|']
+          'ΔJ&F with a 95% cluster-bootstrap CI (twin groups, stratified by sequence).', '',
+          '| comparison | question | ΔJ&F mean [95% CI] | trials A > B (J&F) | ΔJ@50 mean |', '|---|---|---|---|---|']
     for a, b, q in COMPARISONS:
         if a in present and b in present:
             A = pt[pt.method == a].set_index('trial'); B = pt[pt.method == b].set_index('trial')
             dJ, dF = (A['J@50'] - B['J@50']), (A.JF - B.JF)
-            L.append(f'| {a} − {b} | {q} | {dF.mean():+.3f} | {(dF > 0).sum()}/{len(dF)} | {dJ.mean():+.3f} |')
+            ci = ''
+            if {'seq', 'dir', 'gait'} <= set(A.columns):
+                d = pd.DataFrame({'d': dF}).join(A[['seq', 'dir', 'gait']]).dropna()
+                d['cl'] = d.seq.astype(str) + d.dir.astype(str) + d.gait.astype(str)
+                lo, hi = cluster_bootstrap_ci(d, 'd', 'cl', strata='seq')
+                ci = f' [{lo:+.3f}, {hi:+.3f}]'
+            L.append(f'| {a} − {b} | {q} | {dF.mean():+.3f}{ci} | {(dF > 0).sum()}/{len(dF)} | {dJ.mean():+.3f} |')
     L += ['']
 
     effect = 'pos' if 'x' in pf and pf.x.notna().all() else 'frame'

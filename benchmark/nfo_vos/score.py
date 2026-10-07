@@ -28,7 +28,7 @@ def to_224(masks):
     return np.stack([metrics.native_to_224(m) for m in masks])
 
 
-def score_trial(method, trial, P):
+def score_trial(method, trial, P, conf=None):
     rows, Gs, Ps, boxes = [], [], [], []
     for dt, idx in enumerate(trial['frames']):
         G = TR.gt_mask(idx, trial['seq'])
@@ -39,7 +39,9 @@ def score_trial(method, trial, P):
         m = metrics.frame_metrics(P[dt], G)
         rows.append(dict(method=method, trial=trial['id'], seq=trial['seq'], seg=trial['seg_idx'], t0=trial['t0'],
                          t=idx, dt=dt, v=trial['v'], n_frag=trial['n_frag'],
-                         x=(box[0] + box[2]) / 2, cerr=metrics.centre_error_norm(P[dt], box), **m))
+                         x=(box[0] + box[2]) / 2, cerr=metrics.centre_error_norm(P[dt], box),
+                         pred_iou=conf['pred_iou'][dt] if conf else np.nan,
+                         obj_score=conf['obj_score'][dt] if conf else np.nan, **m))
         Gs.append(G); Ps.append(P[dt]); boxes.append(box)
     J = {r['dt']: r['J'] for r in rows}
     # headline aggregates follow DAVIS semi-supervised: drop the first (prompted) and last frame
@@ -95,8 +97,10 @@ def main():
     for method in methods:
         for path in sorted(glob.glob(f'{RES}/masks/{method}/*.npz')):
             tid = os.path.basename(path)[:-4]
-            P = to_224(np.load(path)['masks'])
-            rows, s = score_trial(method, trials[tid], P)
+            z = np.load(path)
+            P = to_224(z['masks'])
+            conf = {k: z[k] for k in ('pred_iou', 'obj_score')} if 'pred_iou' in z else None
+            rows, s = score_trial(method, trials[tid], P, conf)
             all_rows += rows; summaries.append(s)
             stacks.setdefault(tid, {})[method] = P
     for name, data in (('per_frame', all_rows), ('per_trial', summaries)):

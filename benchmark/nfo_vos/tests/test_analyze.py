@@ -47,3 +47,17 @@ def test_position_fixed_effects_recover_coefficients_without_frame_overlap():
                                  v=v, n_frag=1, J=a_x + 0.2 * v - 0.004 * dt + 0.003 * v * dt + rng.normal(0, 1e-3)))
     est = analyze.fe_fit(pd.DataFrame(rows), effect='pos')
     assert np.allclose([est['b'], est['c'], est['d']], [0.2, -0.004, 0.003], atol=0.03)
+
+
+def test_cluster_bootstrap_ci_contains_true_mean_and_is_wider_than_naive_for_clustered_data():
+    rng = np.random.default_rng(3)
+    rows = []
+    for g in range(16):                       # 16 clusters with a shared offset each
+        off = rng.normal(0, 0.1)
+        for k in range(4):
+            rows.append(dict(cluster=f'g{g}', d=0.02 + off + rng.normal(0, 0.01)))
+    d = pd.DataFrame(rows)
+    lo, hi = analyze.cluster_bootstrap_ci(d, 'd', 'cluster', B=4000, seed=0)
+    naive = np.percentile([rng.choice(d.d.values, len(d)).mean() for _ in range(4000)], [2.5, 97.5])
+    assert lo < d.d.mean() < hi
+    assert (hi - lo) > 1.5 * (naive[1] - naive[0])
