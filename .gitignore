@@ -189,3 +189,10 @@ results/benchmark/*/masks/
 # visual traces are never tracked (code only)
 *.png
 *.mp4
+
+# result artifacts are never tracked (code only); trials.json is a cluster input
+results/**/*.jpg
+results/**/*.csv
+results/**/*.json
+images/**/*.csv
+!results/benchmark/rr/trials.json
