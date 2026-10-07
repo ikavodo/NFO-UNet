@@ -107,7 +107,7 @@ numbers descriptive.
 - Cluster determinism: identical inputs on different GPU nodes differ by ≤ 5·10⁻⁴ J&F.
 
 ## A/4 pre-registered test (seq2–4, T1 base, τ = 0.7 fixed on seq1) — 2026-10-07
-- Visible-part ΔJ&F vs T1 (45 starts, 95% cluster-bootstrap CI stratified by sequence):
+- Visible-part ΔJ&F vs T1 (final, 46 starts: gated −0.0025 [−0.0078, +0.0017], fixed −0.0058 [−0.0123, −0.0007]; earlier 45-start values: 95% cluster-bootstrap CI stratified by sequence):
   **gated −0.003 [−0.008, +0.002]** (better/worse 14/18); **fixed A/4 −0.006 [−0.012, −0.000]**.
   **Decision rule 3 fires:** the composite's extent cue does not repair visible-part failures.
 - **Full extent (secondary) holds on unseen scenes:** box IoU vs amodal GT on inserted frames, gated
@@ -115,6 +115,16 @@ numbers descriptive.
 - Implication: on NFO, A/4 is a full-extent method, not a visible-part one. To beat the baselines on
   the visible part, the lever is initialisation. Next: an oracle GT-mask-init ceiling run
   (`--init-mask`, methods b0-om/t1-om).
+
+## Oracle-init ceiling (GT mask at t₀ instead of box + p*) — 2026-10-07, 57–58 of 61 starts
+- B0 0.831 → **0.861 (+0.030, 95% CI [+0.006, +0.056])**; T1 0.831 → **0.863 (+0.032, [+0.012, +0.057])**.
+- The gain sits on the init-failure starts: B0 0.713 → 0.813 (+0.101, n = 15), T1 0.727 → 0.811 (+0.084,
+  n = 17). Other starts gain +0.005 to +0.010. By scene: seq1 +0.082, seq4 +0.03, seq2/seq3 ≈ 0.
+- Drift almost disappears (DRE 0.014 → 0.005 / 0.001).
+- Reading: a better first mask is a real lever for the visible part, worth at most about +0.03
+  overall and +0.08 to +0.10 on the hard starts. Even a perfect first mask leaves the hard starts
+  below the rest (0.81 vs 0.85+), so propagation under heavy occlusion still loses some.
+- Upper bound only: the GT mask is the 224 pseudo-GT mapped to native.
 
 ## Next (cheapest first)
 0. **Do not miss:** SAM-PT and SAM-PD are required baselines for T4-1n in the full run (spec §8).
