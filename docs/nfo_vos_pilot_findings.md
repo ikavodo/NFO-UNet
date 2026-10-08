@@ -130,6 +130,16 @@ numbers descriptive.
   below the rest (0.81 vs 0.85+), so propagation under heavy occlusion still loses some.
 - Upper bound only: the GT mask is the 224 pseudo-GT mapped to native.
 
+## Visible-mask decomposition at t₀ (extent ∩ background-difference) — 2026-10-08
+- On the 17 hard starts (B0 or T1 init failures), J vs the GT t₀ mask: T1's own t₀ mask 0.292,
+  B0 0.253. Extent ∩ foreground(t₀) (Otsu inside the extent): prompt box 0.322, A/4 composite
+  cut-out 0.325, **oracle GT-aligned composite cut-out 0.335**. Far below the pre-registered
+  ≥ 0.6 bar, so no SAM2 init run.
+- With the oracle extent the result is no better, so the bottleneck is the **visibility cue**:
+  a static-background difference does not separate visible person pixels under foliage.
+  (`diag_init_mask.py`, `results/benchmark/rr/diag_init_mask.csv`, traces in
+  `images/benchmark/rr_checks/init_mask_test/`.)
+
 ## Next (cheapest first)
 0. **Do not miss:** SAM-PT and SAM-PD are required baselines for T4-1n in the full run (spec §8).
 1. Decide the benchmark's question: modal VOS (B0 strong, integration does not help) vs amodal
