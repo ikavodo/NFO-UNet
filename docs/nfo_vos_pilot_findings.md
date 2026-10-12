@@ -285,3 +285,30 @@ numbers descriptive.
     remains is learned decoder-level integration (master_thesis
     `docs/superpowers/plans/2026-10-12-static-cue-dense-prompt-adapter.md`), where the no-cue adapter
     control is decisive.
+
+## PRE-REGISTERED (2026-10-12, written before running): adding missed visible pixels with a cleaned composite
+- **Question.** Can frame-t evidence, compared against two references (the empty scene and a
+  person-aligned cleaned composite of t−6…t−1), recover visible person pixels that T1 missed, without
+  amodal extent? The framing is the layered model of Wang & Adelson (IEEE TIP 1994): each pixel is
+  assigned to the layer that explains it better, either the static background layer (exact per pixel,
+  static camera) or the moving person layer (the composite, with a small search window for alignment
+  and limb error).
+- **Data.** All 61 windows; frames t₀+6, +9, …, +36 (11 per window); T1 = cached cluster masks.
+  Alignment = GT box centres (oracle; tracker alignment is a later arm).
+- **Candidates.** Pixels in a 10 px ring around T1's mask, inside the GT box at t (dilated 10 px).
+  Labels: pseudo-GT visible mask.
+- **Composites.** raw recency; GT-free cleaned (each view weighted by sigmoid(z_pix − 3) against the
+  warm-up background); oracle-cleaned (pseudo-GT visibility).
+- **Scores** (higher = add):
+  - z16 (stride-16 empty-scene cue);
+  - z4 (the same on SAM2 stride-4 features);
+  - corr4_C = max over a 7×7 cell window of cos(f₄,t, f₄,C);
+  - layer_f4_C = log(1 − cos(f₄,t, f₄,bg)) − log(1 − corr4_C);
+  - layer_pix_C = log(SSD_bg) − log(min over |δx| ≤ 6, |δy| ≤ 3 of SSD_C), with SSD over 5×5 grey patches;
+  - pix_bg = log SSD_bg (background residual only).
+- **Metrics.** Pooled precision at 50% reach (recall of missed GT pixels in the ring), and AUC.
+  Mask-level: J of T1 ∪ {ring ∧ s > τ}, with τ per score tuned on seq1 frames. ΔJ vs T1 on seq2–4
+  frames, cluster bootstrap by twin group, stratified by sequence. J at native resolution.
+- **Pass:** the best GT-free score has precision ≥ 0.30 at 50% reach, AND ΔJ (seq2–4) > 0 with CI
+  lower bound > 0. **Kill:** the oracle-cleaned layered score stays < 0.30 precision at 50% reach (no
+  fine person evidence in the composite).
