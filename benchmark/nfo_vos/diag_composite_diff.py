@@ -177,7 +177,7 @@ def main():
     print(f'-> {OUT_CSV}, traces {TRACE}/')
 
 
-if __name__ == '__main__' and not os.environ.get('LAYERED') and not os.environ.get('MULTI'):
+if __name__ == '__main__' and not any(os.environ.get(k) for k in ('LAYERED', 'MULTI', 'GALLERY')):
     main()
 
 
@@ -299,6 +299,58 @@ def multilevel_check():
                        index=['AUC', 'P@R.9', 'Jbest']).round(3).to_string())
     print(f'({len(d)} hard starts)')
 
+
+def gallery():
+    """Composite gallery for eyeballing 'good' composites (2026-10-12): every admissible window whose
+    7-frame history at t0 has masks (GT, else _ext). Tiles: R_t0 + GT outline | raw recency composite of
+    the history | GT-FREE cleaned (each view's pixel weighted by sigmoid(z_pix - 3), z_pix = per-frame
+    robust z of |view - warm-up background|, computed before alignment) | ORACLE-cleaned (pseudo-GT
+    visibility weights). Alignment = GT box centres (oracle). Also a contact sheet of the GT-free column."""
+    T = [x for x in json.load(open(TR.OUT)) if x['admissible']]
+    out = f'{TR.IMG}_checks/composite_gallery'; os.makedirs(out, exist_ok=True)
+    sheet = []
+    for t in T:
+        W = window(t)
+        if W is None:
+            continue
+        seq, f = t['seq'], t['t0']
+        H = list(range(f - a4.N + 1, f))
+        g0 = box_centre(seq, f); cs = [box_centre(seq, k) for k in H]
+        if g0 is None or any(c is None for c in cs):
+            continue
+        w0, w1 = t['warmup']
+        bg = np.median(np.stack([V.native(k, seq) for k in range(w0, w1 + 1)]), 0).astype(np.float32)
+        G = []
+        for k, c in zip(H, cs):
+            d = np.abs(V.native(k, seq).astype(np.float32) - bg)
+            med = np.median(d); mad = 1.4826 * np.median(np.abs(d - med))
+            zk = (d - med) / max(mad, 1e-6)
+            G.append(shift(1 / (1 + np.exp(-(zk - 3))), g0[0] - c[0], g0[1] - c[1]))
+        G = np.stack(G); w = W['w'][:, None, None]
+        zc = (w * G * W['A']).sum(0) / np.maximum((w * G).sum(0), 1e-6)
+        C, _ = composites(W)
+        G0, _ = mask_native(seq, f)
+        x0, y0, x1, y1 = (int(round(v)) for v in t['box_native'])
+        sl = (slice(max(0, y0 - 30), min(600, y1 + 30)), slice(max(0, x0 - 30), min(800, x1 + 30)))
+        def tile(img, name, outline=True):
+            im = cv2.cvtColor(np.clip(img[sl], 0, 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
+            if outline:
+                cnt, _ = cv2.findContours(G0[sl].astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+                cv2.drawContours(im, cnt, -1, (0, 255, 0), 1)
+            im = cv2.resize(im, (150, 240)); cv2.putText(im, name, (3, 12), cv2.FONT_HERSHEY_SIMPLEX, 0.34, (0, 255, 255), 1)
+            return im
+        tiles = [tile(V.native(f, seq).astype(np.float32), 'R t0 + GT'), tile(C['raw'], 'raw C', False),
+                 tile(zc, 'GT-free clean C', False), tile(C['clean'], 'oracle clean C', False)]
+        cv2.imwrite(f"{out}/{t['id']}.png", np.hstack(tiles))
+        s_ = tiles[2].copy(); cv2.putText(s_, t['id'], (3, 234), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (0, 255, 255), 1)
+        sheet.append(s_)
+    rows = [np.hstack(sheet[i:i + 10] + [np.zeros_like(sheet[0])] * (10 - len(sheet[i:i + 10]))) for i in range(0, len(sheet), 10)]
+    cv2.imwrite(f'{out}/_contact_sheet_gtfree.png', np.vstack(rows))
+    print(f'{len(sheet)} windows -> {out}/')
+
+
+if __name__ == '__main__' and os.environ.get('GALLERY'):
+    gallery()
 
 if __name__ == '__main__' and os.environ.get('MULTI'):
     multilevel_check()
