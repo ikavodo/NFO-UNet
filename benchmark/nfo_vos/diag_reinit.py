@@ -42,7 +42,7 @@ def tracker_rows(t):
     T1 = np.load(f"{TR.RES}/masks/t1/{t['id']}.npz")
     h_nat = (t['box_native'][3] - t['box_native'][1])
     rows = []
-    for k in range(1, len(P['frames'])):
+    for k in range(0, len(P['frames'])):
         idx = t['frames'][k]
         ax, ay, _ = R.readout_line(chain, k)
         cx, cy = merged_center(dets[k], ax, ay, kw['merge_radius'])
@@ -58,7 +58,8 @@ def tracker_rows(t):
         d = np.hypot(xs.mean() - ccx, ys.mean() - ccy) / h_nat if len(xs) else np.nan
         lock = k in chain and sum(j in chain for j in range(k - LOCK_N + 1, k + 1)) >= LOCK_K
         m224, g224 = metrics.native_to_224(M), metrics.native_to_224(G)
-        rows.append(dict(trial=t['id'], seq=t['seq'], t=k, lock=lock, blob=p224 is not None,
+        rows.append(dict(trial=t['id'], seq=t['seq'], t=k, lock=lock, blob=p224 is not None, blob_area=int(blob.sum()),
+                         n_blobs=int(cv2.connectedComponents(blob.astype(np.uint8))[0] - 1), gt_area=int(g224.sum()), t1_area=int(m224.sum()),
                          p_in_gt=inside(G), p_in_t1=inside(M), d=d, q=float(T1['pred_iou'][k]),
                          J=metrics.frame_metrics(m224, g224)['J'], gt_empty=not G.any()))
     return rows
@@ -81,8 +82,9 @@ def part_tracker():
         print(f'{i + 1}/{len(T)} {tid}', flush=True)
     d = pd.DataFrame(rows)
     d = d[~d.gt_empty]
-    d['hard'] = d.trial.isin(hard)
     d.to_csv(f'{TR.RES}/diag_reinit_tracker.csv', index=False)
+    d = d[d.t >= 1]
+    d['hard'] = d.trial.isin(hard)
     fail = d.J < 0.5
     print(f'\nframes {len(d)} (hard-start frames {d.hard.sum()}), T1 J<0.5 on {fail.mean():.3f}')
     print(f'lock rate {d.lock.mean():.2f}; P(p in GT | lock) {d[d.lock].p_in_gt.mean():.2f}, | no lock {d[~d.lock].p_in_gt.mean():.2f}')
