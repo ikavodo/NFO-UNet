@@ -395,9 +395,12 @@ def extend_segment_edge(predictor, seq_dir, bbs, start, end, seg_idx, side, ext_
         for lbl in range(1, n_lab):
             if stats[lbl, cv2.CC_STAT_WIDTH] >= round(min_width_px * img_w / OUT_SIZE):
                 keep |= labels == lbl
-        mask_224, _ = scale_and_pad_img_to_square((keep * 255).astype(np.uint8),
-                                                  BoundingBox(0, 0, 0, 0), OUT_SIZE)
-        cv2.imwrite(os.path.join(seq_dir, f'{raw_idx:05d}_{EXT_TAG}.png'), mask_224)
+        if NATIVE_ONLY:   # same mask before the 224 downscale; the 224 *_ext files are left untouched
+            cv2.imwrite(os.path.join(seq_dir, f'{raw_idx:05d}_{EXT_TAG}_native.png'), (keep > 0).astype(np.uint8) * 255)
+        else:
+            mask_224, _ = scale_and_pad_img_to_square((keep * 255).astype(np.uint8),
+                                                      BoundingBox(0, 0, 0, 0), OUT_SIZE)
+            cv2.imwrite(os.path.join(seq_dir, f'{raw_idx:05d}_{EXT_TAG}.png'), mask_224)
         written.append((raw_idx, int(keep.sum())))
     return written
 
@@ -425,8 +428,8 @@ def main():
                         help='skip the main per-segment pass, only run --extend-edges (for adding '
                              'extensions to masks that already exist)')
     parser.add_argument('--native-only', action='store_true',
-                        help=f'write only *_{NATIVE_TAG}.png (native 800x600, no downscale) for the main '
-                             f'per-segment pass; the existing 224 *_{OUT_TAG}.png files are not touched')
+                        help=f'write only native 800x600 masks (no downscale): *_{NATIVE_TAG}.png for the main pass, '
+                             f'*_{EXT_TAG}_native.png for --extend-edges/--extend-only; the 224 files are not touched')
     args = parser.parse_args()
     global NATIVE_ONLY
     NATIVE_ONLY = args.native_only
