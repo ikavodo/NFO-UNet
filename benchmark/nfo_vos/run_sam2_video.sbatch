@@ -4,6 +4,7 @@
 # (results/benchmark/$NFO_RUN/masks/<method>[-cp-<tag>]/<trial>.npz), so tasks share no state.
 #
 #   sbatch benchmark/nfo_vos/run_sam2_video.sbatch                       # B0 + T1, plain
+#   POINT_ONLY=1 sbatch --export=ALL benchmark/nfo_vos/run_sam2_video.sbatch   # B0-pt + T1-pt: t0 prompt p* alone
 #   A4=fixed sbatch --export=ALL ...;  A4=gated TAU=0.6 sbatch --export=ALL ...   # A/4 (composites_a4 must exist)
 #   N = number of admissible trials in results/benchmark/$NFO_RUN/trials.json; the default
 #   --array=0-29 fits the rr seq1 pilot (N = 15). Paths for the checkpoint, SAMURAI and Python are

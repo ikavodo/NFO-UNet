@@ -21,9 +21,12 @@ import torch
 from benchmark.nfo_vos import score, trials as TR
 
 RES, IMG = score.RES, score.IMG
-MAIN = ['b0', 't1', 't1-a4', 't1-g0.5', 't1-g0.6', 't1-g0.7', 't1-g0.8', 't4-1n']
+MAIN = ['b0', 't1', 'b0-pt', 't1-pt', 't1-a4', 't1-g0.5', 't1-g0.6', 't1-g0.7', 't1-g0.8', 't4-1n']
 COLS = ['JF', 'J_mean', 'F_mean', 'J_decay', 'DRE', 'NRE', 'P_norm', 'J@10', 'J@25', 'J@50']
 COMPARISONS = [('t1', 'b0', 'SAMURAI vs SAM2'),
+               ('b0-pt', 'b0', 't0 prompt p* alone vs box + p*, SAM2'),
+               ('t1-pt', 't1', 't0 prompt p* alone vs box + p*, SAMURAI'),
+               ('t1-pt', 'b0-pt', 'SAMURAI vs SAM2, point prompt'),
                ('t1-a4', 't1', 'fixed A/4 composite insertion, SAMURAI'),
                *[(f't1-g{tau:g}', 't1', f'confidence-gated A/4 (tau = {tau:g}), SAMURAI') for tau in (0.5, 0.6, 0.7, 0.8)],
                ('t4-1n', 'b0', 'per-frame SAM2 + tracker prompt (no memory) vs memory propagation')]
