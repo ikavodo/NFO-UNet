@@ -107,3 +107,45 @@ but it is data-hungry. With one segment of hand masks the static-occluder struct
 prior than anything a diffusion model could learn from 33 masks. The closest diffusion work, pix2gestalt
 (CVPR 2024, arXiv 2401.14398), synthesises amodal **wholes**: the hidden parts. That is the opposite of our
 target (visible now). Not recommended at this stage.
+
+## Auto-completion strategy (revised 2026-10-12, measured path overlap)
+
+**Fact (measured):** every seq1 segment walks through the same pixels as segment 4. 91–99% of each
+segment's box-swept area lies inside segment 4's, and 99–100% of each segment's visible (pseudo-GT) pixels
+do. So one hand-labelled segment observes the whole occluder in front of the path, for the whole
+sequence.
+
+**Key idea:** "visible person" is the product of a **static** property and a **per-frame** property:
+- static: is pixel x a **gap** in the foliage? Fixed for the sequence, learnable once from the hand
+  masks.
+- per-frame: is **something new** at x now? The frame differs from the empty scene.
+
+Inside a gap the scene behind is static, so "something new" there is the person, or their shadow on the
+ground. The cue's earlier failure, false positives on moving foliage, disappears once it is restricted
+to gap pixels.
+
+1. **Gap map Ŵ(x) from segment 4.** Ŵ(x) = n_visible(x) / n_box-covered(x) over the hand frames: how
+   often x showed the person when the person passed. A Beta prior shrinks rarely covered pixels.
+   - To generalise beyond observed pixels, train a tiny classifier on the **empty-scene image itself**
+     (pixel colour/texture + SAM2 stride-16 background features), "gap vs leaf", with labels from Ŵ.
+   - Then the gap map is defined everywhere, including pixels segment 4 never covered.
+2. **Per-pixel labeller**, trained on segment 4's hand frames:
+   - logistic regression or a small gradient-boosted classifier;
+   - features: Ŵ(x), pixel z and feature z16 vs empty scene, the pseudo-GT, position in the GT box
+     (relative y), distance to the pseudo-GT;
+   - target: hand mask (void excluded).
+
+   Few parameters, interpretable, and it learns e.g. that new pixels at the box bottom are shadow.
+3. **Apply to the other segments.** GT boxes exist for every frame, so restrict to the box. Output: an
+   auto label per frame.
+4. **Validate before trusting:**
+   - Leave-frames-out within segment 4 (train on 2/3, test on 1/3) gives an immediate estimate.
+   - Then hand-label 5 frames of segment 5 (opposite direction) and 3 of segment 6 (run).
+   - Bar: auto label J vs hand ≥ pseudo-GT J vs hand + 0.05, with precision no more than 0.02 below
+     the pseudo-GT's.
+5. **Human in the loop:** import the auto labels into CVAT and correct only the errors, which is
+   much faster than labelling. Log correction time per frame.
+
+**Circularity, stated up front:** the auto labels contain the empty-scene cue. They are fine for training
+and transfer. But evaluating cue-based methods against *uncorrected* auto labels would favour them, so
+benchmark verdicts use only hand-corrected frames.
