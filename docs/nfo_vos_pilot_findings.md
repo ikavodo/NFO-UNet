@@ -220,3 +220,18 @@ numbers descriptive.
     But cutting on every frame costs the 86% of frames where T1 is already fine.
   - Next (pre-register before running): gate only on frames where SAM2's predicted IoU q(t) is
     below τ (the failure detector, AUC 0.86), with θ and τ tuned on seq1 and evaluated on seq2–4.
+
+## PRE-REGISTERED (2026-10-12, written before running): confidence-gated static-layer gate
+- **Hypothesis.** The feature gate removes the right pixels (beats erosion by +0.015), but it hurts
+  frames where T1 is already right. Applying it only where SAM2's predicted IoU q(t) is low should keep
+  the gain on failing frames and avoid the loss elsewhere.
+- **Method `t1-gateq`.** On frame t, if q(t) < τ: M′ = M ∧ (z > θ); otherwise M′ = M. Output-only.
+  q(t) is T1's own logged predicted IoU for frame t, available causally.
+- **Tuning.** On seq1 only, by mean J over frames t₀+1…t₀+38. Grid θ ∈ {3, 4, 5, 6, 8},
+  τ ∈ {0.5, 0.6, 0.7, 0.8, 0.9}.
+- **Control `t1-erodeq`.** Area-matched erosion applied on exactly the same frames.
+- **Test.** seq2–4 only (46 starts). ΔJ&F with 95% cluster-bootstrap CI (twin groups, stratified by
+  sequence).
+- **Pass:** gateq − T1 ≥ +0.005 with CI lower bound > 0, AND gateq − erodeq CI lower bound > 0.
+  **Kill:** gateq − T1 CI includes 0 → output-only gating is not a method on NFO (one failure-log
+  line). Hard/easy split reported, but not used for the decision.
