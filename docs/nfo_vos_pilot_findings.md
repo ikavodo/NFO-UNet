@@ -312,3 +312,22 @@ numbers descriptive.
 - **Pass:** the best GT-free score has precision ≥ 0.30 at 50% reach, AND ΔJ (seq2–4) > 0 with CI
   lower bound > 0. **Kill:** the oracle-cleaned layered score stays < 0.30 precision at 50% reach (no
   fine person evidence in the composite).
+- **RESULT (pre-registered fine-addition test): KILL.**
+  - 61 windows, 667 frames, 3.4 M ring pixels, 6.8% of them missed visible person.
+  - Precision at 50% reach:
+
+    | Score | Precision |
+    |---|---|
+    | best overall: z4 (stride-4 empty-scene cue, no composite) | 0.143 |
+    | composite correspondence corr4 (raw / GT-free / oracle) | ≈ chance (AUC 0.47–0.51) |
+    | layered, pixel space | 0.115–0.127 |
+    | layered, stride-4 features | 0.110–0.117 |
+
+  - Oracle cleaning moves the layered pixel score from 0.115 to 0.127, nowhere near the 0.30 bar.
+  - Mask-level ΔJ on seq2–4: −0.0014 to 0.0000 for every arm. τ tuned on seq1 adds almost nothing.
+- **Why (measured, interpretation not verified):** missed GT pixels hug T1's boundary: 51% lie within
+  2 px of T1's mask, 66% within 4 px, 82% within 10 px. The pseudo-GT is 224 px upsampled, about
+  3.6 native px per GT pixel. So most "missed visible pixels" are consistent with boundary
+  quantization between T1's native mask and the coarse pseudo-GT, not real uncovered body parts.
+  Hand masks at native resolution (the earlier hand-annotation proposal) would settle it.
+- `diag_fine_add.py`.
