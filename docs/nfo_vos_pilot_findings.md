@@ -273,3 +273,15 @@ numbers descriptive.
 - **Test.** seq2–4, ΔJ&F with cluster-bootstrap CI vs T1-lg (same run's masks).
 - **Pass:** fuse − T1-lg ≥ +0.005 with CI lower bound > 0, AND fuse − const CI lower bound > 0.
   **Kill otherwise.**
+- **RESULT (pre-registered logit fusion): KILL.**
+  - Tuned on seq1: θ = 4.5, λ = 2, the bottom of the λ grid. seq1: +0.011 J over T1-lg.
+  - seq2–4 (decision set): fuse − T1-lg **−0.009 [−0.012, −0.007]** (better on 11/46).
+    fuse − constant-shrink control −0.010 [−0.015, −0.004].
+  - All 61: −0.005. Hard and easy starts are equal (−0.005 each).
+  - T1-lg (local rerun) vs cluster T1: −0.001 [−0.002, +0.000] on seq2–4.
+  - Three training-free output-level uses of the static cue have now failed held out: gate,
+    confidence gate, uncertainty-weighted logit fusion. The cue is real at t₀ (AUC 0.95) and picks
+    better pixels than erosion, but post-hoc edits of SAMURAI's output do not convert it into J&F. What
+    remains is learned decoder-level integration (master_thesis
+    `docs/superpowers/plans/2026-10-12-static-cue-dense-prompt-adapter.md`), where the no-cue adapter
+    control is decisive.
