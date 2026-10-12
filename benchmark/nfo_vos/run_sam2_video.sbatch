@@ -5,6 +5,7 @@
 #
 #   sbatch benchmark/nfo_vos/run_sam2_video.sbatch                       # B0 + T1, plain
 #   POINT_ONLY=1 sbatch --export=ALL benchmark/nfo_vos/run_sam2_video.sbatch   # B0-pt + T1-pt: t0 prompt p* alone
+#   SAVE_LOGITS=1 sbatch --export=ALL --array=61-121 benchmark/nfo_vos/run_sam2_video.sbatch   # T1-lg: T1 + logits
 #   A4=fixed sbatch --export=ALL ...;  A4=gated TAU=0.6 sbatch --export=ALL ...   # A/4 (composites_a4 must exist)
 #   N = number of admissible trials in results/benchmark/$NFO_RUN/trials.json; the default
 #   --array=0-29 fits the rr seq1 pilot (N = 15). Paths for the checkpoint, SAMURAI and Python are
@@ -44,6 +45,7 @@ else
   export PYTHONPATH=$SAMURAI_SAM2                          # T1 = SAMURAI's sam2 fork (configs/samurai)
 fi
 A4OPT=${A4:+--a4 $A4 --tau ${TAU:-0.6}}
+LGOPT=${SAVE_LOGITS:+--save-logits}                  # SAVE_LOGITS=1: also store logits (-> <method>-lg); T1 only: --array=61-121
 PTOPT=${POINT_ONLY:+--point-only}                    # POINT_ONLY=1: prompt t0 with p* alone, no box (-> <method>-pt)
 INITOPT=${INIT_MASK:+--init-mask}                    # INIT_MASK=1: ORACLE GT-mask prompt at t0 (-> <method>-om)           # A4=fixed | A4=gated TAU=0.6 (composites_a4 must exist)
 
@@ -51,5 +53,5 @@ pwd; hostname; date; nvidia-smi --query-gpu=name,memory.total --format=csv,nohea
 echo "method=$METHOD trial-index=$IDX a4=${A4:-none} tau=${TAU:-} python=$PY"
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
-srun "$PY" -m benchmark.nfo_vos.run_sam2_video --method "$METHOD" --trial-index "$IDX" $A4OPT $INITOPT $PTOPT --force
+srun "$PY" -m benchmark.nfo_vos.run_sam2_video --method "$METHOD" --trial-index "$IDX" $A4OPT $INITOPT $PTOPT $LGOPT --force
 date

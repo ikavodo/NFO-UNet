@@ -97,7 +97,7 @@ def feats(img):
     pred = R.image_predictor()
     pred.set_image(np.stack([np.clip(img, 0, 255).astype(np.uint8)] * 3, -1))
     hr = pred._features['high_res_feats']
-    return {4: hr[0][0], 16: pred._features['image_embed'][0]}
+    return {4: hr[0][0], 8: hr[1][0], 16: pred._features['image_embed'][0]}
 
 
 def cosine_map(Fa, Fb, shape):
@@ -177,7 +177,7 @@ def main():
     print(f'-> {OUT_CSV}, traces {TRACE}/')
 
 
-if __name__ == '__main__' and not os.environ.get('LAYERED'):
+if __name__ == '__main__' and not os.environ.get('LAYERED') and not os.environ.get('MULTI'):
     main()
 
 
@@ -260,6 +260,48 @@ def layered_memory_check():
     print(f'\nmean over {len(d)} starts:'); print(d.drop(columns='trial').mean().round(3).to_string())
     print('pooled AUC:', {k: round(auc(P[k].values, P.y.values), 3) for k in ['cosD', 'D-S', 'D-Sbg', '-cosSbg', 'cosDclean', 'r', 'bgdiff_pix']})
 
+
+def multilevel_check():
+    """Background cue at each SAM2 decoder level (2026-10-12): z of cos(f_t, S_bg) at strides 4, 8 (the
+    encoder's high-res features the mask decoder adds during upsampling) and 16 (image embedding), plus the
+    pixel background difference. All 17 hard starts (needs only frame t0 and the warm-up background).
+    Inside the GT box: AUC visible vs not, precision at recall 0.9, best J (per-start oracle threshold)."""
+    T = {x['id']: x for x in json.load(open(TR.OUT)) if x['admissible']}
+    pt = pd.read_csv(f'{TR.RES}/per_trial.csv')
+    hard = sorted(set(pt[pt.method.isin(['b0', 't1']) & pt.init_fail].trial))
+    rows = []
+    with torch.inference_mode():
+        for tid in hard:
+            t = T[tid]; seq, f = t['seq'], t['t0']
+            w0, w1 = t['warmup']
+            bg = np.median(np.stack([V.native(k, seq) for k in range(w0, w1 + 1)]), 0).astype(np.float32)
+            Rt = V.native(f, seq).astype(np.float32)
+            FR, FB = feats(Rt), feats(bg)
+            sc = {}
+            for s in (4, 8, 16):
+                z = static_z(FR[s], FB[s])[None, None]
+                sc[f'z{s}'] = torch.nn.functional.interpolate(z, size=(600, 800), mode='bilinear', align_corners=False)[0, 0].cpu().numpy()
+            sc['z4+z16'] = sc['z4'] + sc['z16']
+            sc['pix'] = cv2.blur(np.abs(Rt - bg), (3, 3))
+            G0, _ = mask_native(seq, f)
+            x0, y0, x1, y1 = (int(round(v)) for v in t['box_native'])
+            E = np.zeros((600, 800), bool); E[max(0, y0):y1, max(0, x0):x1] = True
+            y = G0[E]; r = dict(trial=tid)
+            for k, v in sc.items():
+                sv = v[E]; r[f'AUC_{k}'] = auc(sv, y)
+                o = np.argsort(-sv); yy = y[o]; tp = np.cumsum(yy); n = np.arange(1, len(yy) + 1); rec = tp / max(y.sum(), 1)
+                r[f'P@R.9_{k}'] = float((tp / n)[np.searchsorted(rec, 0.9)]) if rec[-1] >= 0.9 else np.nan
+                r[f'Jbest_{k}'] = float((tp / (n + y.sum() - tp)).max())
+            rows.append(r)
+    d = pd.DataFrame(rows); d.to_csv(f'{TR.RES}/diag_multilevel_bg.csv', index=False)
+    m = d.drop(columns='trial').mean()
+    print(pd.DataFrame({k: [m[f'AUC_{k}'], m[f'P@R.9_{k}'], m[f'Jbest_{k}']] for k in ['z4', 'z8', 'z16', 'z4+z16', 'pix']},
+                       index=['AUC', 'P@R.9', 'Jbest']).round(3).to_string())
+    print(f'({len(d)} hard starts)')
+
+
+if __name__ == '__main__' and os.environ.get('MULTI'):
+    multilevel_check()
 
 if __name__ == '__main__' and os.environ.get('LAYERED'):
     layered_memory_check()

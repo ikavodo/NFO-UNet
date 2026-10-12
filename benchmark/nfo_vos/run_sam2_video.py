@@ -43,7 +43,8 @@ def gt_mask_native(seq, idx):
     return up[100:700, :]
 
 
-def run_trial(predictor, trial, max_frames=None, schedule=None, comp_dir=None, init_mask=False, point_only=False):
+def run_trial(predictor, trial, max_frames=None, schedule=None, comp_dir=None, init_mask=False, point_only=False,
+              save_logits=False):
     """One window. schedule (A/4, a4.py): times t at which composite C_t (comp_dir/<t>.jpg) is
     inserted just before raw frame R_t into the same memory bank; None or [] = plain run."""
     frames = trial['frames'][:max_frames] if max_frames else trial['frames']
@@ -89,6 +90,8 @@ def run_trial(predictor, trial, max_frames=None, schedule=None, comp_dir=None, i
                                                     box=None if point_only else np.array(trial['box_native'], np.float32))
                 prompt_calls[pi] = calls[-1] if len(calls) > n_before else (np.nan, np.nan)
             masks = np.zeros((len(frames), state['video_height'], state['video_width']), bool)
+            # mask logits at half native resolution (300x400, float16) for logit-level fusion (save_logits)
+            logits_lr = np.zeros((len(frames), state['video_height'] // 2, state['video_width'] // 2), np.float16)
             extent = np.zeros_like(masks)                # composite-frame masks (A/4 only)
             inserted = np.zeros(len(frames), bool)
             pred_iou = np.full(len(frames), np.nan, np.float32)
@@ -103,6 +106,9 @@ def run_trial(predictor, trial, max_frames=None, schedule=None, comp_dir=None, i
                 m = (logits[0, 0] > 0).cpu().numpy()
                 if kind == 'r':
                     masks[t] = m
+                    if save_logits:
+                        logits_lr[t] = cv2.resize(logits[0, 0].float().cpu().numpy(), logits_lr.shape[:0:-1],
+                                                  interpolation=cv2.INTER_AREA).astype(np.float16)
                     pred_iou[t], obj_score[t] = call
                 elif kind == 'c':
                     extent[t], inserted[t] = m, True
@@ -112,6 +118,8 @@ def run_trial(predictor, trial, max_frames=None, schedule=None, comp_dir=None, i
                    obj_score=obj_score, peak_mem_gb=torch.cuda.max_memory_allocated() / 2 ** 30)
         if schedule is not None:
             out.update(extent=extent, inserted=inserted)
+        if save_logits:
+            out['logits'] = logits_lr
         return out
     finally:
         predictor._forward_sam_heads = orig
@@ -143,6 +151,7 @@ def main():
     p.add_argument('--trial-index', type=int, default=None, help='run one admissible trial (array task)')
     p.add_argument('--a4', choices=('fixed', 'gated'), default=None, help='A/4 composite insertion')
     p.add_argument('--init-mask', action='store_true', help='ORACLE: prompt t0 with the GT mask (-> <method>-om)')
+    p.add_argument('--save-logits', action='store_true', help='also store mask logits at 300x400 (-> <method>-lg)')
     p.add_argument('--point-only', action='store_true', help='prompt t0 with p* alone, no box (-> <method>-pt)')
     p.add_argument('--tau', type=float, default=0.6, help='gate: insert when baseline predicted IoU < tau')
     a = p.parse_args()
@@ -150,6 +159,7 @@ def main():
     name = a.method if not a.a4 else a.method + ('-a4' if a.a4 == 'fixed' else f'-g{a.tau:g}')
     name += '-om' if a.init_mask else ''
     name += '-pt' if a.point_only else ''
+    name += '-lg' if a.save_logits else ''
     out_dir = os.path.join(CACHE, name)
     os.makedirs(out_dir, exist_ok=True)
     predictor = build_predictor(a.method)
@@ -162,7 +172,7 @@ def main():
             r = run_trial(predictor, t, schedule=sched, comp_dir=f"results/benchmark/{RUN}/composites_a4/{t['id']}",
                           init_mask=a.init_mask)
         else:
-            r = run_trial(predictor, t, init_mask=a.init_mask, point_only=a.point_only)
+            r = run_trial(predictor, t, init_mask=a.init_mask, point_only=a.point_only, save_logits=a.save_logits)
         np.savez_compressed(path, **r)
         print(f"{name} {t['id']}: {r['sec_per_frame'] * 1000:.0f} ms/frame, "
               f"peak {r['peak_mem_gb']:.2f} GB, last-frame area {r['masks'][-1].sum()}")

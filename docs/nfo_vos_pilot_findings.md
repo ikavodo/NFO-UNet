@@ -242,3 +242,34 @@ numbers descriptive.
   - All 61 starts: +0.001 [−0.014, +0.015].
   - Reading: the cue removes the right pixels relative to erosion, but output-only removal at stride-16
     cells does not beat T1. Neither does restricting it to low-confidence frames.
+
+## Multi-level background cue (2026-10-12, 17 hard starts, t₀, inside the GT box)
+- z of cos(frame features, warm-up background features) at each SAM2 decoder level:
+
+  | Score | AUC | Precision at recall 0.9 | Best J |
+  |---|---|---|---|
+  | stride 4 | 0.864 | 0.263 | 0.327 |
+  | stride 8 | 0.868 | 0.276 | 0.310 |
+  | stride 16 | 0.946 | 0.462 | 0.520 |
+  | z4 + z16 | 0.948 | 0.482 | 0.524 |
+  | pixel difference | 0.862 | 0.283 | 0.399 |
+
+- The fine levels behave like the pixel cue and add little to stride 16. For the adapter: inject the
+  cue at stride 16 (dense prompt). Fine-level injection is an ablation only; boundaries come from
+  SAM2's own stride-4/8 features. `MULTI=1 python -m benchmark.nfo_vos.diag_composite_diff`.
+
+## PRE-REGISTERED (2026-10-12, written before running): uncertainty-weighted logit fusion (ViperSAM-style)
+- **Method `t1-lgfuse`.** On T1's own logits L (T1-lg run, 300×400):
+  L′ = L + λ·R·ν, with
+  - R = binary entropy of σ(L) / ln 2: SAM2's per-pixel uncertainty, highest at boundaries;
+  - ν = tanh((z − θ)/2): z is the stride-16 static-layer z map, bilinearly upsampled; ν is negative
+    where the cell looks like the empty scene.
+
+  Mask = L′ > 0 at native resolution. It can remove AND add pixels, but only where SAM2 is uncertain.
+  Output-only.
+- **Control `t1-lgconst`.** Same rule with ν ≡ −1 (shrink uncertain pixels everywhere, no cue). λ is
+  tuned separately.
+- **Tuning.** seq1 only, by mean J. θ ∈ {3, 4.5, 6}, λ ∈ {2, 4, 8, 16}.
+- **Test.** seq2–4, ΔJ&F with cluster-bootstrap CI vs T1-lg (same run's masks).
+- **Pass:** fuse − T1-lg ≥ +0.005 with CI lower bound > 0, AND fuse − const CI lower bound > 0.
+  **Kill otherwise.**
