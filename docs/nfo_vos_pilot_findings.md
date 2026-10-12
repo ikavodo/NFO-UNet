@@ -170,3 +170,15 @@ numbers descriptive.
   finding is "the amodal box prompt is mismatched with a modal target", not a new method.
 - **Next:** B0-pt and T1-pt on all 61 starts (`POINT_ONLY=1 sbatch run_sam2_video.sbatch`), with
   cluster bootstrap vs B0/T1.
+- **Result on all 61 starts (cluster, 2026-10-12): the point-only prompt does not hold up over the
+  window.**
+  - ΔJ&F vs box + p*: T1-pt − T1 **−0.016 [−0.034, +0.005]**; B0-pt − B0 −0.019 [−0.045, +0.009].
+  - Hard starts: T1 +0.005, B0 +0.018 (init failures 15 → 12 and 17 → 12).
+  - Easy starts: −0.023 / −0.034.
+  - Twin test-retest r drops from 0.87–0.92 to 0.51–0.54, so the point prompt is unstable.
+  - Large losses come with a good or similar t₀ (seq4_s2_t466: J(t₀) 0.40 → 0.89, yet J&F −0.18). The
+    box constrains propagation, even though it over-extends t₀.
+  - Choosing the prompt per start: the oracle reaches 0.853, but a GT-free pick by SAM2's predicted
+    IoU gets 0.830–0.833, i.e. none of it.
+  - **The protocol stays box + p*.** The n = 2 CPU sanity check was selected on hard starts and
+    did not predict this.
