@@ -34,9 +34,17 @@ Auto-completion targets on the same scene and path:
 - **Anchoring check:** annotate 3 frames **from scratch first**, before seeing their pseudo-GT, then the
   same 3 starting from the pseudo-GT. Their disagreement is the anchoring bias.
 - **Test–retest:** redo 3 frames on another day for your own agreement. That agreement is the noise floor.
-- **Tool:** napari labels layer on the native frame, initialised from `*_sammask_native.png`, with a
-  frame slider. Use neighbouring frames, since motion is how fragments are seen. **No SAM clicks:** a
-  SAM-assisted label would share SAM2's errors (circular).
+- **Tool:** CVAT, brush/eraser on the native frame. Import the native pseudo-GT as the starting mask
+  (e.g. CVAT's segmentation-mask import format), with a separate `void` label. Use neighbouring frames,
+  since motion is how fragments are seen.
+- **SAM / SAM2 / SAM3 clicks: not for the evaluation segment.** Any assistant's biases enter the labels
+  and favour methods that share them:
+  - SAM clicks → SAM-like blobs, which favour B0/T1;
+  - negative clicks placed from the background model → the empty-scene cue, which favours our own
+    cue-based methods;
+  - positive clicks inside the pseudo-GT → the pseudo-GT itself.
+  Assisted labelling is fine for *auto-completion and training* labels, and only with its bias measured
+  on the 3 from-scratch frames.
 - **Save:** `data/nfo_processed/seq1_gt/<idx>_handmask.png` (0/1/2 at 800×600). Data, not code:
   gitignored, back it up.
 
