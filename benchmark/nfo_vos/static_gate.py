@@ -4,6 +4,7 @@ like the empty scene, in frozen SAM2 feature space (layered-memory plan, option 
     python -m benchmark.nfo_vos.static_gate cache    # GPU: per-frame z maps -> results/benchmark/rr/static_z/<trial>.npz
     python -m benchmark.nfo_vos.static_gate tune [feat|pix]          # CPU: theta on seq1 windows only (mean J)
     python -m benchmark.nfo_vos.static_gate write <theta> <theta_pix>  # masks/t1-gate, t1-gate-pix, t1-erode
+    python -m benchmark.nfo_vos.static_gate tune_q | write_q <theta> <tau>  # confidence-gated (pre-registered)
 
 Controls (same T1 masks, output-only):
   t1-gate-pix  the same gate on PIXELS: z of |frame - warm-up background| (3x3 mean), same per-frame
@@ -113,11 +114,58 @@ def write(theta, theta_pix):
     print(f'-> masks/t1-gate (theta {theta}), t1-gate-pix (theta {theta_pix}), t1-erode')
 
 
+QTHETAS, TAUS = [3.0, 4.0, 5.0, 6.0, 8.0], [0.5, 0.6, 0.7, 0.8, 0.9]
+
+
+def gate_q(masks, z, q, theta, tau):
+    """Gate only frames where T1's predicted IoU q(t) < tau (pre-registered 2026-10-12)."""
+    G = gate(masks, z, theta)
+    on = (np.nan_to_num(q, nan=1.0) < tau)[:, None, None]
+    return np.where(on, G, masks)
+
+
+def tune_q():
+    res = {}
+    for t in [t for t in trials() if t['seq'] == 'seq1']:
+        src = np.load(f"{TR.RES}/masks/t1/{t['id']}.npz")
+        M, q = src['masks'], src['pred_iou']
+        z = np.load(f"{ZDIR}/{t['id']}.npz")['z']
+        G = [metrics.native_to_224(gt_mask_native(t['seq'], k)) for k in t['frames']]
+        ks = [k for k in range(1, len(t['frames']) - 1) if G[k].any()]
+        for th in QTHETAS:
+            Gt = gate(M, z, th)
+            for tau in TAUS:
+                on = np.nan_to_num(q, nan=1.0) < tau
+                res.setdefault((th, tau), []).extend(
+                    metrics.frame_metrics(metrics.native_to_224(Gt[k] if on[k] else M[k]), G[k])['J'] for k in ks)
+    for (th, tau), J in sorted(res.items()):
+        print(f'theta {th} tau {tau}: mean J {np.mean(J):.4f}')
+    best = max(res, key=lambda k: np.mean(res[k]))
+    print(f'best on seq1: theta {best[0]} tau {best[1]} (mean J {np.mean(res[best]):.4f})')
+
+
+def write_q(theta, tau):
+    for name in ('t1-gateq', 't1-erodeq'):
+        os.makedirs(f'{TR.RES}/masks/{name}', exist_ok=True)
+    for t in trials():
+        src = dict(np.load(f"{TR.RES}/masks/t1/{t['id']}.npz"))
+        M = src['masks']
+        Gq = gate_q(M, np.load(f"{ZDIR}/{t['id']}.npz")['z'], src['pred_iou'], theta, tau)
+        for name, masks in (('t1-gateq', Gq), ('t1-erodeq', erode_to(M, Gq))):
+            np.savez_compressed(f"{TR.RES}/masks/{name}/{t['id']}.npz",
+                                **{**src, 'masks': masks, 'gate_theta': np.float32(theta), 'gate_tau': np.float32(tau)})
+    print(f'-> masks/t1-gateq, t1-erodeq (theta {theta}, tau {tau})')
+
+
 if __name__ == '__main__':
     cmd = sys.argv[1]
     if cmd == 'cache':
         cache()
     elif cmd == 'tune':
         tune(*sys.argv[2:])
+    elif cmd == 'tune_q':
+        tune_q()
+    elif cmd == 'write_q':
+        write_q(float(sys.argv[2]), float(sys.argv[3]))
     else:
         write(float(sys.argv[2]), float(sys.argv[3]))

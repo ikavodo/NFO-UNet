@@ -21,7 +21,7 @@ import torch
 from benchmark.nfo_vos import score, trials as TR
 
 RES, IMG = score.RES, score.IMG
-MAIN = ['b0', 't1', 'b0-pt', 't1-pt', 't1-gate', 't1-gate-pix', 't1-erode', 't1-a4', 't1-g0.5', 't1-g0.6', 't1-g0.7', 't1-g0.8', 't4-1n']
+MAIN = ['b0', 't1', 'b0-pt', 't1-pt', 't1-gate', 't1-gate-pix', 't1-erode', 't1-gateq', 't1-erodeq', 't1-a4', 't1-g0.5', 't1-g0.6', 't1-g0.7', 't1-g0.8', 't4-1n']
 COLS = ['JF', 'J_mean', 'F_mean', 'J_decay', 'DRE', 'NRE', 'P_norm', 'J@10', 'J@25', 'J@50']
 COMPARISONS = [('t1', 'b0', 'SAMURAI vs SAM2'),
                ('b0-pt', 'b0', 't0 prompt p* alone vs box + p*, SAM2'),
@@ -30,6 +30,8 @@ COMPARISONS = [('t1', 'b0', 'SAMURAI vs SAM2'),
                ('t1-gate', 't1', 'static-layer feature gate (output-only) vs SAMURAI'),
                ('t1-gate', 't1-erode', 'feature gate vs area-matched erosion (which pixels, not how many)'),
                ('t1-gate', 't1-gate-pix', 'feature-space vs pixel background gate'),
+               ('t1-gateq', 't1', 'confidence-gated feature gate vs SAMURAI (pre-registered; decide on seq2-4)'),
+               ('t1-gateq', 't1-erodeq', 'confidence-gated: feature gate vs area-matched erosion on the same frames'),
                ('t1-a4', 't1', 'fixed A/4 composite insertion, SAMURAI'),
                *[(f't1-g{tau:g}', 't1', f'confidence-gated A/4 (tau = {tau:g}), SAMURAI') for tau in (0.5, 0.6, 0.7, 0.8)],
                ('t4-1n', 'b0', 'per-frame SAM2 + tracker prompt (no memory) vs memory propagation')]

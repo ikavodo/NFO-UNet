@@ -235,3 +235,10 @@ numbers descriptive.
 - **Pass:** gateq − T1 ≥ +0.005 with CI lower bound > 0, AND gateq − erodeq CI lower bound > 0.
   **Kill:** gateq − T1 CI includes 0 → output-only gating is not a method on NFO (one failure-log
   line). Hard/easy split reported, but not used for the decision.
+- **RESULT (pre-registered test above): KILL.**
+  - Tuned on seq1: θ = 6, τ = 0.9. That τ gates ~80% of frames, so the variant is nearly ungated.
+  - seq2–4 (decision set): gateq − T1 **−0.006 [−0.027, +0.008]** (better on 31/46). gateq − erodeq
+    +0.010 [+0.006, +0.015].
+  - All 61 starts: +0.001 [−0.014, +0.015].
+  - Reading: the cue removes the right pixels relative to erosion, but output-only removal at stride-16
+    cells does not beat T1. Neither does restricting it to low-confidence frames.
