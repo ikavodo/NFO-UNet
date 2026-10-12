@@ -43,7 +43,7 @@ def gt_mask_native(seq, idx):
     return up[100:700, :]
 
 
-def run_trial(predictor, trial, max_frames=None, schedule=None, comp_dir=None, init_mask=False):
+def run_trial(predictor, trial, max_frames=None, schedule=None, comp_dir=None, init_mask=False, point_only=False):
     """One window. schedule (A/4, a4.py): times t at which composite C_t (comp_dir/<t>.jpg) is
     inserted just before raw frame R_t into the same memory bank; None or [] = plain run."""
     frames = trial['frames'][:max_frames] if max_frames else trial['frames']
@@ -86,7 +86,7 @@ def run_trial(predictor, trial, max_frames=None, schedule=None, comp_dir=None, i
                     predictor.add_new_points_or_box(state, frame_idx=pi, obj_id=0,
                                                     points=np.array([trial['point_native']], np.float32),
                                                     labels=np.array([1], np.int32),
-                                                    box=np.array(trial['box_native'], np.float32))
+                                                    box=None if point_only else np.array(trial['box_native'], np.float32))
                 prompt_calls[pi] = calls[-1] if len(calls) > n_before else (np.nan, np.nan)
             masks = np.zeros((len(frames), state['video_height'], state['video_width']), bool)
             extent = np.zeros_like(masks)                # composite-frame masks (A/4 only)
@@ -143,11 +143,13 @@ def main():
     p.add_argument('--trial-index', type=int, default=None, help='run one admissible trial (array task)')
     p.add_argument('--a4', choices=('fixed', 'gated'), default=None, help='A/4 composite insertion')
     p.add_argument('--init-mask', action='store_true', help='ORACLE: prompt t0 with the GT mask (-> <method>-om)')
+    p.add_argument('--point-only', action='store_true', help='prompt t0 with p* alone, no box (-> <method>-pt)')
     p.add_argument('--tau', type=float, default=0.6, help='gate: insert when baseline predicted IoU < tau')
     a = p.parse_args()
     trials = select_trials(json.load(open(TRIALS)), a.limit, a.trial_index)
     name = a.method if not a.a4 else a.method + ('-a4' if a.a4 == 'fixed' else f'-g{a.tau:g}')
     name += '-om' if a.init_mask else ''
+    name += '-pt' if a.point_only else ''
     out_dir = os.path.join(CACHE, name)
     os.makedirs(out_dir, exist_ok=True)
     predictor = build_predictor(a.method)
@@ -160,7 +162,7 @@ def main():
             r = run_trial(predictor, t, schedule=sched, comp_dir=f"results/benchmark/{RUN}/composites_a4/{t['id']}",
                           init_mask=a.init_mask)
         else:
-            r = run_trial(predictor, t, init_mask=a.init_mask)
+            r = run_trial(predictor, t, init_mask=a.init_mask, point_only=a.point_only)
         np.savez_compressed(path, **r)
         print(f"{name} {t['id']}: {r['sec_per_frame'] * 1000:.0f} ms/frame, "
               f"peak {r['peak_mem_gb']:.2f} GB, last-frame area {r['masks'][-1].sum()}")

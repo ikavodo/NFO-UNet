@@ -43,11 +43,12 @@ else
   export PYTHONPATH=$SAMURAI_SAM2                          # T1 = SAMURAI's sam2 fork (configs/samurai)
 fi
 A4OPT=${A4:+--a4 $A4 --tau ${TAU:-0.6}}
+PTOPT=${POINT_ONLY:+--point-only}                    # POINT_ONLY=1: prompt t0 with p* alone, no box (-> <method>-pt)
 INITOPT=${INIT_MASK:+--init-mask}                    # INIT_MASK=1: ORACLE GT-mask prompt at t0 (-> <method>-om)           # A4=fixed | A4=gated TAU=0.6 (composites_a4 must exist)
 
 pwd; hostname; date; nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 echo "method=$METHOD trial-index=$IDX a4=${A4:-none} tau=${TAU:-} python=$PY"
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
-srun "$PY" -m benchmark.nfo_vos.run_sam2_video --method "$METHOD" --trial-index "$IDX" $A4OPT $INITOPT --force
+srun "$PY" -m benchmark.nfo_vos.run_sam2_video --method "$METHOD" --trial-index "$IDX" $A4OPT $INITOPT $PTOPT --force
 date

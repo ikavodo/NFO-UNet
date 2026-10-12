@@ -149,3 +149,24 @@ numbers descriptive.
    modal boxes; then the feature-fusion SAM2 variant targets amodal extent.
 3. Native resolution only matters for the SAM2-input asymmetry (T4 init failures 10/21 at 224
    vs B0 5/21 at native); the integration mechanism is scale-invariant (w/δ).
+
+## T1's failures are over-extent, and the box prompt causes them at t₀ — 2026-10-12
+- **Failure decomposition** (rr, T1, 333 frames with J < 0.5, `per_frame.csv`): 72% cover the person
+  (recall ≥ 0.5) with precision < 0.5; median recall 0.95, precision 0.33, predicted/GT area 2.68.
+  Only 11% are off the person (recall < 0.1, location drift). SAM2's predicted IoU q(t) is not
+  uniformly low: median 0.81, 23% of frames below 0.7; P(J < 0.5) is 0.92 at q < 0.3, 0.02 at q ≥ 0.85.
+- **The t₀ prompt causes the over-extent on hard starts** (`diag_reinit.py t0cands`, SAM2 image
+  predictor on CPU, J vs GT t₀ mask). The shared prompt = amodal GT box + p* (deepest GT pixel).
+  - Box + p*, 3 candidates: SAM2's own pick 0.235, best of 3 0.254. All 3 candidates are
+    over-extended, so no candidate choice can fix it.
+  - p* alone: SAM2's pick **0.525**, best of 3 0.655.
+  - Easy starts: 0.717 → 0.768 (SAM2's pick, same setup).
+- **Video sanity, 2 hard starts** (CPU, SAMURAI fork, `--point-only`; CPU T1 reproduces cached GPU
+  T1 within 0.02 J&F):
+  - J&F T1 → T1-pt: seq2_s1_t315 0.849 → 0.862, seq3_s5_t1283 0.782 → 0.865.
+  - This is n = 2: a sanity check, not evidence.
+- **Caveat for the paper:** a point-only prompt is a prompt-protocol choice that is available to
+  every baseline. If it holds on all 61 starts, B0-pt/T1-pt become the baselines to beat. The
+  finding is "the amodal box prompt is mismatched with a modal target", not a new method.
+- **Next:** B0-pt and T1-pt on all 61 starts (`POINT_ONLY=1 sbatch run_sam2_video.sbatch`), with
+  cluster bootstrap vs B0/T1.
