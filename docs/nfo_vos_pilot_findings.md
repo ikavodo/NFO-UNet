@@ -200,3 +200,23 @@ numbers descriptive.
   with a per-start oracle threshold is 0.51 (T1's t₀ mask 0.29).
 - Next: gate T1's masks on every frame by −cos(f_t, S_bg), with τ tuned on seq1; J&F vs T1 over 61
   windows. `LAYERED=1 python -m benchmark.nfo_vos.diag_composite_diff`.
+- **Cleaned dynamic layer (D_clean) adds nothing** (14 hard starts). Each history cell is weighted by
+  its own sigmoid(z − 3) static test before alignment. cos(f_t, D_clean) AUC 0.47, and r = −cos S_bg +
+  cos D_clean gives 0.91, below −cos S_bg alone (0.94). Its P@R.9 is 0.37 and best J 0.44, against
+  0.46 / 0.51 for −cos S_bg alone. The recall-refinement arm is dropped.
+- **Static-layer gate over full windows** (`static_gate.py`; output-only, T1's memory untouched;
+  θ = 6 on z tuned on seq1; plateau at θ 5–6, +0.020 J on seq1):
+
+  | Comparison (all 61 starts) | ΔJ&F | Trials better |
+  |---|---|---|
+  | gate − T1 | +0.001 [−0.017, +0.016] | 39/61 |
+  | gate − area-matched erosion | **+0.015 [+0.007, +0.024]** | 41/61 |
+  | gate − pixel background gate | **+0.021 [+0.001, +0.035]** | 58/61 |
+
+  - Held out (seq2–4, 46 starts): gate − T1 is −0.007 (J −0.013, F +0.007). The seq1 gain (+0.024)
+    does not transfer.
+  - By start type: hard starts +0.031, easy starts −0.011.
+  - Reading: the feature cue removes the *right* pixels relative to blind shrinking or the pixel cue.
+    But cutting on every frame costs the 86% of frames where T1 is already fine.
+  - Next (pre-register before running): gate only on frames where SAM2's predicted IoU q(t) is
+    below τ (the failure detector, AUC 0.86), with θ and τ tuned on seq1 and evaluated on seq2–4.

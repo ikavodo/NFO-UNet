@@ -181,18 +181,32 @@ if __name__ == '__main__' and not os.environ.get('LAYERED'):
     main()
 
 
+def static_z(F, Sbg):
+    """Per-cell z-score of 'differs from the empty scene': (median - cos) / (1.4826 MAD) of
+    cos(F, S_bg) over the frame's 64x64 cells (most cells are background). F: [..., C, H, W]."""
+    c = torch.nn.functional.cosine_similarity(F.float(), Sbg.float(), dim=-3)
+    flat = c.flatten(-2)
+    med = flat.median(-1).values[..., None, None]
+    mad = (flat - flat.median(-1).values[..., None]).abs().median(-1).values[..., None, None] * 1.4826
+    return (med - c) / mad.clamp(min=1e-6)
+
+
 def layered_memory_check():
     """Layered-memory plan (docs/Layered Memory for SAM2 Test Plan.md), option C, step 1 on NFO hard
-    starts: s = cos(f_t, D_f) - cos(f_t, S_f) at stride 16 from cached backbone features of the history
-    t0-6..t0-1. D_f = mean of history features warped by the GT shift (feature-space aggregation, as the
-    plan's build_layers), S_f = mean of the unwarped history features; S_bg = features of the
-    person-free warm-up background (an NFO-specific static layer). AUC visible vs not inside the GT box,
-    plus the person's motion over the history in stride-16 cells."""
+    starts, frozen SAM2 stride-16 backbone features of the history t0-6..t0-1, GT-shift alignment:
+      D       mean of the history features warped onto t0 (the plan's dynamic layer)
+      S       mean of the unwarped history features (the plan's static layer)
+      S_bg    features of the person-free warm-up median (NFO's clean static layer)
+      D_clean like D, but each history cell weighted by g_k = sigmoid(z_k - 3), z_k = static_z of that
+              frame vs S_bg (GT-free 'something new was visible here'), recency weights w_k
+      r       -cos(f_t, S_bg) + cos(f_t, D_clean)   (refinement score: new now AND looks like the person)
+    AUC visible vs not inside the GT box, precision at recall 0.9, best J (per-start oracle threshold)."""
     T = {x['id']: x for x in json.load(open(TR.OUT)) if x['admissible']}
     pt = pd.read_csv(f'{TR.RES}/per_trial.csv')
     hard = sorted(set(pt[pt.method.isin(['b0', 't1']) & pt.init_fail].trial))
     rows, pooled = [], []
     cell = 800 / 64                                  # native px per stride-16 cell in x (1024 input = stretched 800)
+    fn = torch.nn.functional
     with torch.inference_mode():
         for tid in hard:
             t = T[tid]; seq, f = t['seq'], t['t0']
@@ -203,42 +217,48 @@ def layered_memory_check():
             g0 = box_centre(seq, f); cs = [box_centre(seq, k) for k in H]
             if any(c is None for c in cs) or g0 is None:
                 continue                              # needs GT shifts (drops the ext-aligned start)
-            Ft = feats(V.native(f, seq).astype(np.float32))[16]
-            Fh = torch.stack([feats(V.native(k, seq).astype(np.float32))[16] for k in H])   # [N,C,64,64]
+            Ft = feats(V.native(f, seq).astype(np.float32))[16].float()
+            Fh = torch.stack([feats(V.native(k, seq).astype(np.float32))[16] for k in H]).float()   # [N,C,64,64]
+            w0, w1 = t['warmup']
+            bg = np.median(np.stack([V.native(k, seq) for k in range(w0, w1 + 1)]), 0).astype(np.float32)
+            Sbg = feats(bg)[16].float()
             dx = torch.tensor([(g0[0] - c[0]) / cell for c in cs], device=Fh.device)
             dy = torch.tensor([(g0[1] - c[1]) / (600 / 64) for c in cs], device=Fh.device)
             N, C, Hh, Ww = Fh.shape
             ys, xs = torch.meshgrid(torch.linspace(-1, 1, Hh, device=Fh.device), torch.linspace(-1, 1, Ww, device=Fh.device), indexing='ij')
-            grid = torch.stack([xs[None] - (2 * dx / (Ww - 1))[:, None, None], ys[None] - (2 * dy / (Hh - 1))[:, None, None]], -1)
-            warped = torch.nn.functional.grid_sample(Fh.float(), grid.float(), align_corners=True)
-            valid = torch.nn.functional.grid_sample(torch.ones_like(Fh[:, :1]).float(), grid.float(), align_corners=True)
-            D = (warped * valid).sum(0) / valid.sum(0).clamp(min=1e-6)
-            S = Fh.float().mean(0)
-            w0, w1 = t['warmup']
-            bg = np.median(np.stack([V.native(k, seq) for k in range(w0, w1 + 1)]), 0).astype(np.float32)
-            Sbg = feats(bg)[16].float()
+            grid = torch.stack([xs[None] - (2 * dx / (Ww - 1))[:, None, None], ys[None] - (2 * dy / (Hh - 1))[:, None, None]], -1).float()
+            warp = lambda X: fn.grid_sample(X, grid, align_corners=True)
+            valid = warp(torch.ones_like(Fh[:, :1]))
+            D = (warp(Fh) * valid).sum(0) / valid.sum(0).clamp(min=1e-6)
+            S = Fh.mean(0)
+            w = torch.tensor(W['w'], device=Fh.device, dtype=torch.float32)[:, None, None, None]
+            g = torch.sigmoid(static_z(Fh, Sbg) - 3)[:, None]                 # [N,1,64,64]
+            den = (warp(w * g) * valid).sum(0)
+            Dc = (warp(w * g * Fh) * valid).sum(0) / den.clamp(min=1e-6)
             shape = (600, 800)
-            cD, cS, cB = (cosine_map(Ft, X, shape) for X in (D, S, Sbg))
+            cD, cS, cB, cDc = (cosine_map(Ft, X, shape) for X in (D, S, Sbg, Dc))
+            cov = fn.interpolate(den[None], size=shape, mode='bilinear', align_corners=False)[0, 0].cpu().numpy() > 0.05
             G0, _ = mask_native(seq, f)
             x0, y0, x1, y1 = (int(round(v)) for v in t['box_native'])
             E = np.zeros(shape, bool); E[max(0, y0):y1, max(0, x0):x1] = True
             sc = {'cosD': cD, 'D-S': cD - cS, 'D-Sbg': cD - cB, '-cosSbg': -cB,
+                  'cosDclean': np.where(cov, cDc, -1.0), 'r': -cB + np.where(cov, cDc, 0.0),
                   'bgdiff_pix': cv2.blur(np.abs(V.native(f, seq).astype(np.float32) - bg), (3, 3))}
             y = G0[E]
-            r = dict(trial=tid, motion_cells=float(abs(dx).max()), **{k: auc(v[E], y) for k, v in sc.items()})
-            for k in ('-cosSbg', 'D-Sbg', 'bgdiff_pix'):
+            r = dict(trial=tid, motion_cells=float(abs(dx).max()), Dclean_cov=float(cov[E].mean()),
+                     **{k: auc(v[E], y) for k, v in sc.items()})
+            for k in ('-cosSbg', 'r', 'cosDclean', 'bgdiff_pix'):
                 sv = sc[k][E]; o = np.argsort(-sv); yy = y[o]; tp = np.cumsum(yy); n = np.arange(1, len(yy) + 1)
                 rec, prec = tp / max(y.sum(), 1), tp / n
-                jac = tp / (n + y.sum() - tp)
                 r[f'P@R.9_{k}'] = float(prec[np.searchsorted(rec, 0.9)]) if rec[-1] >= 0.9 else np.nan
-                r[f'Jbest_{k}'] = float(jac.max())
+                r[f'Jbest_{k}'] = float((tp / (n + y.sum() - tp)).max())
             rows.append(r); pooled.append(pd.DataFrame({'y': y, **{k: v[E] for k, v in sc.items()}}))
-            print(f"{tid}: history motion {r['motion_cells']:.1f} cells  AUC cosD {r['cosD']:.2f}  D-S {r['D-S']:.2f}  "
-                  f"D-Sbg {r['D-Sbg']:.2f}  -cosSbg {r['-cosSbg']:.2f}", flush=True)
+            print(f"{tid}: motion {r['motion_cells']:.1f} cells, D_clean coverage {r['Dclean_cov']:.2f}  AUC -cosSbg {r['-cosSbg']:.2f}  "
+                  f"cosDclean {r['cosDclean']:.2f}  r {r['r']:.2f}  cosD {r['cosD']:.2f}", flush=True)
     d = pd.DataFrame(rows); d.to_csv(f'{TR.RES}/diag_layered_memory_c.csv', index=False)
     P = pd.concat(pooled)
     print(f'\nmean over {len(d)} starts:'); print(d.drop(columns='trial').mean().round(3).to_string())
-    print('pooled AUC:', {k: round(auc(P[k].values, P.y.values), 3) for k in ['cosD', 'D-S', 'D-Sbg', '-cosSbg', 'bgdiff_pix']})
+    print('pooled AUC:', {k: round(auc(P[k].values, P.y.values), 3) for k in ['cosD', 'D-S', 'D-Sbg', '-cosSbg', 'cosDclean', 'r', 'bgdiff_pix']})
 
 
 if __name__ == '__main__' and os.environ.get('LAYERED'):
