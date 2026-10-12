@@ -182,3 +182,21 @@ numbers descriptive.
     IoU gets 0.830–0.833, i.e. none of it.
   - **The protocol stays box + p*.** The n = 2 CPU sanity check was selected on hard starts and
     did not predict this.
+
+## Layered-memory option C on NFO: the static layer carries the visibility signal — 2026-10-12
+- Plan: `docs/Layered Memory for SAM2 Test Plan.md`, option C step 1. Score inside the GT box at t₀,
+  14 hard starts. Features are frozen SAM2 stride-16 backbone features of t₀−6…t₀−1, aligned by the
+  GT shift. Motion over the history is 1.5–5.4 cells. AUC, visible vs not:
+
+  | Score | AUC |
+  |---|---|
+  | cos(f_t, D) | 0.39 (inverted) |
+  | the plan's s = cos(f_t, D) − cos(f_t, S) | 0.75 |
+  | cos(f_t, D) − cos(f_t, S_bg) | 0.89 |
+  | **−cos(f_t, S_bg)** (S_bg = features of the person-free warm-up median) | **0.94** |
+  | pixel background difference | 0.85 |
+
+- For −cos(f_t, S_bg): precision at recall 0.9 is 0.46 (pixel background difference 0.28). The best J
+  with a per-start oracle threshold is 0.51 (T1's t₀ mask 0.29).
+- Next: gate T1's masks on every frame by −cos(f_t, S_bg), with τ tuned on seq1; J&F vs T1 over 61
+  windows. `LAYERED=1 python -m benchmark.nfo_vos.diag_composite_diff`.
