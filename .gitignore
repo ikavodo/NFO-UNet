@@ -196,3 +196,7 @@ results/**/*.csv
 results/**/*.json
 images/**/*.csv
 !results/benchmark/rr/trials.json
+
+# derived benchmark caches and reports (regeneratable; only keep code)
+results/**/*.npz
+results/**/summary.md
