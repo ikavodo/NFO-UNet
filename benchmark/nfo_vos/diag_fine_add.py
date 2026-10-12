@@ -5,6 +5,7 @@ references, the empty scene (static background layer) and a person-aligned clean
 
     python -m benchmark.nfo_vos.diag_fine_add run       # GPU: ring scores per frame -> results/.../fine_add/<trial>.npz
     python -m benchmark.nfo_vos.diag_fine_add report    # CPU: precision at 50% reach, AUC, tau on seq1, dJ on seq2-4
+    python -m benchmark.nfo_vos.diag_fine_add gallery   # visual trace of ring candidates and additions
 
 Per window, frames t0+6, +9, ..., +36; candidates = 10 px ring around T1's mask inside the GT box at t
 (dilated 10 px); label = pseudo-GT visible. Alignment = GT box centres (oracle).
@@ -195,5 +196,60 @@ def report():
               f'seq2-4 dJ {w.d.mean():+.4f} [{ci[0]:+.4f}, {ci[1]:+.4f}]  hard {hh:+.4f} easy {ee:+.4f}')
 
 
+
+
+def gallery(ids=('seq2_s1_t315', 'seq4_s1_t313', 'seq3_s5_t1283', 'seq1_s4_t1194', 'seq2_s3_t1103', 'seq4_s7_t1428'), rel=18):
+    """Visual trace of the ring test (2026-10-12), one row per window at frame t0+rel. Tiles:
+    frame + GT (green) + T1 edge (magenta) | ring candidates: yellow = missed visible (GT, not T1),
+    red = ring not GT | additions at 50% reach by layer_pix_gtfree: green = correct, red = wrong |
+    GT-free cleaned composite | Vbar = aligned PSEUDO-GT history visibility (oracle input, not a cue)."""
+    out = f'{TR.IMG}_checks/fine_add'; os.makedirs(out, exist_ok=True)
+    T = {t['id']: t for t in json.load(open(TR.OUT)) if t['admissible']}
+    rows = []
+    for tid in ids:
+        t = T[tid]; seq = t['seq']; f = t['frames'][rel]
+        w0, w1 = t['warmup']
+        bg = np.median(np.stack([V.native(k, seq) for k in range(w0, w1 + 1)]), 0).astype(np.float32)
+        C = composites(seq, f, bg)
+        G, _ = mask_native(seq, f)
+        M = np.load(f"{TR.RES}/masks/t1/{tid}.npz")['masks'][rel]
+        from gen_data.nfo_pseudo_masks.gen_nfo_pseudo_masks import gt_to_native
+        x0, y0, x1, y1 = (int(round(v)) for v in gt_to_native(TR.bbs(seq)[f][0], TR.NATIVE_W, TR.NATIVE_H))
+        E = np.zeros((600, 800), bool); E[max(0, y0 - 10):y1 + 10, max(0, x0 - 10):x1 + 10] = True
+        ring = (cv2.dilate(M.astype(np.uint8), disk(RING)) > 0) & ~M & E
+        R = V.native(f, seq).astype(np.float32)
+        s = np.full((600, 800), -np.inf, np.float32)
+        full = (slice(0, 600), slice(0, 800))
+        s[ring] = (np.log(cv2.boxFilter((R - bg) ** 2, -1, (5, 5)) + 1) - np.log(min_ssd(R, C['gtfree'], full) + 1))[ring]
+        yr = G[ring]; sv = s[ring]; o = np.argsort(-sv); tp = np.cumsum(yr[o])
+        k = min(np.searchsorted(tp / max(yr.sum(), 1), 0.5), len(o) - 1); thr = sv[o][k]
+        add = ring & (s >= thr)
+        # Vbar from the aligned pseudo-GT history (as composites() oracle weights)
+        H = list(range(f - a4.N + 1, f)); c0 = centre(seq, f)
+        w = np.exp(-np.arange(len(H) - 1, -1, -1) / a4.TAU_AGE); w /= w.sum()
+        vbar = sum(wi * shift(mask_native(seq, h)[0].astype(np.float32), c0[0] - centre(seq, h)[0], c0[1] - centre(seq, h)[1], cv2.INTER_NEAREST)
+                   for wi, h in zip(w, H))
+        sl = (slice(max(0, y0 - 30), min(600, y1 + 30)), slice(max(0, x0 - 30), min(800, x1 + 30)))
+        def base(img):
+            return cv2.cvtColor(np.clip(img, 0, 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
+        def outline(im, m, col):
+            cnt, _ = cv2.findContours(m.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE); cv2.drawContours(im, cnt, -1, col, 1)
+        a = base(R); outline(a, G, (0, 255, 0)); outline(a, M, (255, 0, 255))
+        b = base(R); b[ring & G] = (0, 255, 255); b[ring & ~G] = (0, 0, 200)
+        c = base(R); c[add & G] = (0, 255, 0); c[add & ~G] = (0, 0, 255); outline(c, M, (255, 0, 255))
+        d = base(C['gtfree']); e = base(vbar * 255); outline(e, G, (0, 255, 0))
+        tiles = []
+        for im, name in ((a, 'GT green, T1 magenta'), (b, 'ring: yellow missed, red not GT'),
+                         (c, f'adds @50% reach: prec {(add & G).sum() / max(add.sum(), 1):.2f}'),
+                         (d, 'GT-free clean C'), (e, 'Vbar = PSEUDO-GT history')):
+            im = cv2.resize(im[sl], (190, 300), interpolation=cv2.INTER_NEAREST)
+            cv2.putText(im, name, (3, 12), cv2.FONT_HERSHEY_SIMPLEX, 0.33, (255, 255, 255), 1)
+            tiles.append(im)
+        row = np.hstack(tiles); cv2.putText(row, f'{tid} t0+{rel}', (3, 294), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        rows.append(row)
+    cv2.imwrite(f'{out}/ring_candidates.png', np.vstack(rows))
+    print(f'-> {out}/ring_candidates.png')
+
+
 if __name__ == '__main__':
-    run() if sys.argv[1] == 'run' else report()
+    {'run': run, 'report': report, 'gallery': gallery}[sys.argv[1]]()
