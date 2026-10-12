@@ -331,3 +331,29 @@ numbers descriptive.
   quantization between T1's native mask and the coarse pseudo-GT, not real uncovered body parts.
   Hand masks at native resolution (the earlier hand-annotation proposal) would settle it.
 - `diag_fine_add.py`.
+
+## Native-resolution pseudo-GT and scoring — 2026-10-12
+- **Pseudo-GT regenerated at native 800×600** (`gen_nfo_pseudo_masks --native-only`; 224 files kept).
+  Native vs upsampled 224: IoU median 0.95 (p10 0.91), same area. GT loaders now prefer the native
+  files. **Scoring is native by default**; the old 224 scores are in `per_*_224.csv`.
+- **Native results** (61 starts):
+
+  | Method | J&F native | J&F 224 | Mean J (both) | Init failures native / 224 |
+  |---|---|---|---|---|
+  | B0 | 0.816 | 0.828 | 0.761 | 17 / 17 |
+  | T1 | 0.818 | 0.831 | 0.763 | 16 / 15 |
+  | T1-om | 0.849 | 0.861 | 0.789 | 0 / 0 |
+
+  - Per-frame J does change (mean |ΔJ| 0.010, max 0.40); the means cancel.
+  - F drops by about 0.025: the boundary is now measured finely.
+  - **All conclusions are unchanged:**
+
+    | Comparison | ΔJ&F at native |
+    |---|---|
+    | T1 − B0 | +0.002 [−0.003, +0.011] |
+    | oracle init (T1) | +0.031 [+0.013, +0.054] |
+    | oracle init (B0) | +0.031 |
+    | point-only, T1 | −0.016 |
+    | point-only, B0 | −0.019 |
+
+    T1 failures: 73% over-extent, 11% off-person; precision-filter ceiling 0.765 → 0.904.
