@@ -61,6 +61,12 @@ def gt_mask(idx, seq=SEQ):
     return cv2.imread(p, 0) > 127 if os.path.exists(p) else None
 
 
+def gt_mask_native(idx, seq=SEQ):
+    """Pseudo-GT at native 800x600 (gen_nfo_pseudo_masks --native-only), or None if absent."""
+    p = os.path.join(seq_dir(seq), f'{idx:05d}_sammask_native.png')
+    return cv2.imread(p, 0) > 127 if os.path.exists(p) else None
+
+
 @functools.lru_cache(maxsize=None)
 def bbs(seq=SEQ):
     return parse_bbs(os.path.join(seq_dir(seq), 'groundtruth.txt'))

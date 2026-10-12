@@ -42,6 +42,8 @@ NATIVE_DIR = 'data/nfo_final/nfo_final'  # SAM2 runs at native (800x600) resolut
 # OUT_SIZE for storage, matching the 224x224 _or.jpg frames the rest of the pipeline expects.
 OUT_SIZE = 224
 OUT_TAG = 'sammask'
+NATIVE_TAG = 'sammask_native'   # --native-only: the same masks saved at native 800x600 (no downscale)
+NATIVE_ONLY = False
 MAX_CONSECUTIVE_EMPTY = 5  # early-stop a direction once it's clearly dead, don't burn compute
 # STATIC_THRESHOLD_PX was 2.0 - measured against real GT centroid displacement (see
 # docs/nfo_pseudo_segmentation_approach.md review) that turned out to be ABOVE median real
@@ -342,6 +344,9 @@ def process_segment(predictor, seq_dir, bbs, start, end, seg_idx, out_dir_frames
 
     for local_idx, mask in combined.items():
         raw_idx = start + local_idx
+        if NATIVE_ONLY:   # same mask, before the 224 downscale; the 224 files are left untouched
+            cv2.imwrite(os.path.join(seq_dir, f'{raw_idx:05d}_{NATIVE_TAG}.png'), (mask > 0).astype(np.uint8) * 255)
+            continue
         out_path = os.path.join(seq_dir, f'{raw_idx:05d}_{OUT_TAG}.png')
         mask_224, _ = scale_and_pad_img_to_square(
             (mask * 255).astype(np.uint8), BoundingBox(0, 0, 0, 0), OUT_SIZE)
@@ -419,7 +424,12 @@ def main():
     parser.add_argument('--extend-only', action='store_true',
                         help='skip the main per-segment pass, only run --extend-edges (for adding '
                              'extensions to masks that already exist)')
+    parser.add_argument('--native-only', action='store_true',
+                        help=f'write only *_{NATIVE_TAG}.png (native 800x600, no downscale) for the main '
+                             f'per-segment pass; the existing 224 *_{OUT_TAG}.png files are not touched')
     args = parser.parse_args()
+    global NATIVE_ONLY
+    NATIVE_ONLY = args.native_only
     if args.extend_only:
         args.extend_edges = True
 
