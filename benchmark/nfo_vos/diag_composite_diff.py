@@ -39,9 +39,12 @@ BINS = [(0, 0.2), (0.2, 0.5), (0.5, 1.01)]
 
 
 def mask_native(seq, idx):
-    """Pseudo-GT visible mask, else the _ext mask; (mask, kind) or (None, None)."""
-    for kind, suf in (('gt', 'sammask'), ('ext', 'sammask_ext')):
+    """Pseudo-GT visible mask, else the _ext mask; (mask, kind) or (None, None). Native files
+    (*_native.png, 2026-10-12) are preferred over the upsampled 224 ones."""
+    for kind, suf in (('gt', 'sammask_native'), ('gt', 'sammask'), ('ext', 'sammask_ext_native'), ('ext', 'sammask_ext')):
         p = f'data/nfo_processed/{seq}_gt/{idx:05d}_{suf}.png'
+        if os.path.exists(p) and suf.endswith('native'):
+            return cv2.imread(p, 0) > 127, kind
         if os.path.exists(p):
             up = cv2.resize(cv2.imread(p, 0), (800, 800), interpolation=cv2.INTER_LINEAR) > 127
             return up[100:700, :], kind

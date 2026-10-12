@@ -35,9 +35,13 @@ def build_predictor(method):
 
 
 def gt_mask_native(seq, idx):
-    """224 pseudo-GT mask -> native 800x600: undo the padded-square downscale
-    (scale_and_pad_img_to_square: pad 600 -> 800 rows, then 800 -> 224), i.e. upscale to 800x800
-    and drop the 100-row pads. Bilinear + threshold, cv2 only (importable in the SAMURAI env)."""
+    """Pseudo-GT at native 800x600. Prefers the native mask (*_sammask_native.png, written by
+    gen_nfo_pseudo_masks --native-only, 2026-10-12); otherwise upsamples the 224 mask by undoing the
+    padded-square downscale (pad 600 -> 800 rows, then 800 -> 224): upscale to 800x800 and drop the
+    100-row pads. Bilinear + threshold, cv2 only (importable in the SAMURAI env)."""
+    p = f'data/nfo_processed/{seq}_gt/{idx:05d}_sammask_native.png'
+    if os.path.exists(p):
+        return cv2.imread(p, 0) > 127
     m = cv2.imread(f'data/nfo_processed/{seq}_gt/{idx:05d}_sammask.png', 0)
     up = cv2.resize(m, (800, 800), interpolation=cv2.INTER_LINEAR) > 127
     return up[100:700, :]
