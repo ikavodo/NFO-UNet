@@ -457,3 +457,30 @@ RESULT (2026-10-13): PASS by the pre-registered rule.
   silhouettes (retrieved by pseudo-GT coverage minus "background seen through a gap") ∪ pseudo-GT.
 - Limits: 8 held-out frames (CI lower bound below the +0.05 margin), one annotator, one sequence.
   Figure: images/benchmark/rr_checks/hand/extent_label_heldout.png.
+
+## Reference: humans outline occluded objects near-amodally, and consistently (logged 2026-10-13)
+
+Zhu, Tian, Metaxas & Dollár, "Semantic Amodal Segmentation", CVPR 2017 (arXiv 1509.01329): annotators asked
+to outline occluded objects draw amodal (full-extent) regions, with high agreement between annotators. This
+supports treating our polygon labels as near-amodal and SAM2 pseudo-GT as modal. Our annotator tried to stay
+modal but still drew extent-leaning outlines (polygon ⊇ brush, 86–94% containment, 10–46% larger).
+
+## Label robustness: do conclusions depend on the label? (label_robustness.py) — 2026-10-13, seq1 only
+
+Mean region J (native). Labels: pseudo-GT / silhouette label (L = (silhouette − disparity > 0.2) ∪ pseudo-GT),
+over 15 seq1 windows; and on hand frames inside windows: polygons (n = 13) / brush (n = 14).
+| method | pseudo-GT | silhouette | polygon | brush |
+| b0 | 0.681 | 0.593 | 0.528 | 0.511 |
+| t1 | 0.699 | 0.609 | 0.555 | 0.563 |
+| b0-om | 0.757 | 0.640 | 0.567 | 0.580 |
+| t1-om | 0.764 | 0.650 | 0.583 | 0.588 |
+| b0-pt | 0.693 | 0.587 | 0.502 | 0.552 |
+| t1-pt | 0.697 | 0.592 | 0.499 | 0.551 |
+Differences (95% bootstrap CI over windows / frames; no twin clustering, indicative):
+- T1 − B0: +0.018 [−0.001, +0.048] / +0.016 [−0.001, +0.039] / +0.027 [+0.000, +0.074] / +0.052 [−0.000, +0.122]
+- T1-om − T1: +0.064 [+0.006, +0.145] / +0.041 [+0.004, +0.097] / +0.028 [−0.028, +0.098] / +0.025 [−0.045, +0.102]
+- B0-om − B0: +0.076 [+0.008, +0.160] / +0.046 [+0.001, +0.104] / +0.040 [−0.013, +0.105] / +0.069 [+0.018, +0.133]
+Reading: the sign of every main comparison is the same under all four labels (oracle init helps; T1 ≥ B0 by a
+small margin). Absolute J drops by ~0.1 under the silhouette label and ~0.15 under hand labels. Gaps shrink under
+the extent-leaning labels, and on 13–14 hand frames the oracle-init CIs include 0. Point vs box prompt is the one
+ordering that flips (pt below box on pseudo-GT/polygon, above B0 on brush): small n, not interpreted.
