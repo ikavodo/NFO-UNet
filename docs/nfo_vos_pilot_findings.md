@@ -389,3 +389,14 @@ Robustness test for every static-scene cue (empty-scene z, gap map, depth gap).
   between near foliage and the person, which no single registration can undo. Flag this in the paper.
 - Arms: raw jitter, and jitter + stabilisation (registration to the warm-up frames) as the do-nothing
   compensator. Expected: B0/T1 roughly unchanged; static cues degrade unless stabilised.
+
+## First hand masks (seq1 seg 4, 20 frames, semi-modal) vs pseudo-GT — 2026-10-13
+
+- 20 frames annotated in CVAT (16 drawn without prefill, 4 edited from the prefill: +438..826 / −185..1073 px).
+  The annotator ignored thin branches over the body, so the masks are **semi-modal**.
+- Pseudo-GT vs hand (mean over frames): J 0.527 / P 0.744 / R 0.652 on frames < 1230; J 0.693 / P 0.783 /
+  R 0.855 on frames ≥ 1230.
+- Disagreement goes both ways: 14.4k px only in hand, 20.7k px only in pseudo-GT. Of each, ~11% is in the feet
+  band (bottom 1/6 of the box), ~36–41% within 3 px of the pseudo-GT edge, ~48–53% farther.
+  Figure: images/benchmark/rr_checks/hand/hand_vs_pseudo.png.
+- Not yet known: the annotator's own test–retest agreement (noise floor).
