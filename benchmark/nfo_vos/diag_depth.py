@@ -1,6 +1,8 @@
 """Quick feasibility check: does empty-scene depth mark where the person CAN be seen (foliage gaps)? 2026-10-13
 
-    python -m benchmark.nfo_vos.diag_depth      # seq1 segment 4, every 5th frame, inside the GT box
+    python -m benchmark.nfo_vos.diag_depth      # seq1 segment 4, every 5th frame; regions: GT box, and
+                                                # convex hull of the pseudo-GT (oracle silhouette proxy) in the box;
+                                                # depth input short side 518 (default) and 1036
 
 Labels: native pseudo-GT (visible = 1, rest of the box = 0); hand masks replace them later.
 Scores (AUC for visible vs not):
@@ -28,13 +30,14 @@ SEQ, WARM, K = 'seq1', (946, 1113), range(1154, 1309, 5)
 IMG = 'images/benchmark/rr_checks/depth'
 
 
-def depth_fn():
+def depth_fn(short=518):
     proc = AutoImageProcessor.from_pretrained(MODEL)
     net = AutoModelForDepthEstimation.from_pretrained(MODEL).cuda().eval()
 
     @torch.inference_mode()
     def f(gray):
-        x = proc(images=cv2.cvtColor(gray.astype(np.uint8), cv2.COLOR_GRAY2RGB), return_tensors='pt')
+        x = proc(images=cv2.cvtColor(gray.astype(np.uint8), cv2.COLOR_GRAY2RGB), return_tensors='pt',
+                 size={'height': short, 'width': short})
         d = net(**{k: v.cuda() for k, v in x.items()}).predicted_depth[None]
         return torch.nn.functional.interpolate(d, (600, 800), mode='bilinear')[0, 0].cpu().numpy()
     return f
@@ -49,9 +52,21 @@ def box(k):
     return m
 
 
+def hull(g):
+    h = np.zeros((600, 800), np.uint8)
+    cv2.fillPoly(h, [cv2.convexHull(cv2.findNonZero(g.astype(np.uint8)))], 1)
+    return h.astype(bool)
+
+
 def main():
     os.makedirs(IMG, exist_ok=True)
-    depth = depth_fn()
+    for short in (518, 1036):
+        for region in ('box', 'hull'):
+            print(f'--- depth input short side {short}, region {region}')
+            run(depth_fn(short), region, fig=short == 1036 and region == 'hull')
+
+
+def run(depth, region, fig):
     bg = np.median(np.stack([V.native(k, SEQ) for k in range(WARM[0], WARM[1] + 1)]), 0)
     dbg = depth(bg)
     trials = {t['frames'][0]: t for t in json.load(open(TR.OUT)) if t['seq'] == SEQ}
@@ -60,6 +75,7 @@ def main():
         b, g = box(k), gt_mask_native(SEQ, k)
         if b is None or g is None or not g.any():
             continue
+        b = b & hull(g) if region == 'hull' else b
         dt = depth(V.native(k, SEQ))
         A = np.c_[dt[~b], np.ones((~b).sum())]
         a, c = np.linalg.lstsq(A, dbg[~b], rcond=None)[0]
@@ -87,6 +103,8 @@ def main():
         print(f'held-out frames ({len(te)}), logistic {"+".join(keys):13s} AUC '
               f'{roc_auc_score(cat("y", te), lr.decision_function(X(te, keys))):.3f}')
 
+    if not fig:
+        return
     import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt
     k, g, change, b = ex
     fig, ax = plt.subplots(2, 2, figsize=(10, 7.5))
@@ -98,10 +116,10 @@ def main():
     im = ax[1, 1].imshow(np.where(b, change, np.nan), cmap='coolwarm', vmin=-np.nanpercentile(abs(change[b]), 99),
                          vmax=np.nanpercentile(abs(change[b]), 99))
     ax[1, 1].contour(g, [0.5], colors='k', linewidths=0.5); fig.colorbar(im, ax=ax[1, 1], fraction=0.035)
-    ax[1, 1].set_title(f'frame {k}: δ_t − δ_bg in box (red = nearer now), black = pseudo-GT')
+    ax[1, 1].set_title(f'frame {k}: δ_t − δ_bg in hull (red = nearer now), black = pseudo-GT')
     for a_ in ax.flat:
         a_.axis('off')
-    fig.tight_layout(); fig.savefig(f'{IMG}/seg4_depth.png', dpi=80)
+    fig.tight_layout(); fig.savefig(f'{IMG}/seg4_depth_1036.png', dpi=80)
     print(f'-> {IMG}/seg4_depth.png')
 
 
