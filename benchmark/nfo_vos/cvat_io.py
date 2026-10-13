@@ -75,8 +75,11 @@ def import_(xml, tag='handmask'):
             for m in masks:
                 if m.get('label') == want:
                     lab[rle_decode(m.get('rle'), *(int(float(m.get(a))) for a in ('left', 'top', 'width', 'height')))] = val
-        cv2.imwrite(f'{GT}/{k:05d}_{tag}.png', lab)
         p, h = gt_mask_native(SEQ, k), lab == 1
+        if p is not None and (lab == p.astype(np.uint8)).all():   # untouched prefill: not a hand label
+            print(f'{k}: identical to pseudo-GT, skipped (not annotated yet?)')
+            continue
+        cv2.imwrite(f'{GT}/{k:05d}_{tag}.png', lab)
         keep = lab != 2
         tp = (p & h & keep).sum()
         print(f'{k}: pseudo-GT precision {tp / max((p & keep).sum(), 1):.2f} recall {tp / max(h.sum(), 1):.2f}'
