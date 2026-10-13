@@ -400,3 +400,12 @@ Robustness test for every static-scene cue (empty-scene z, gap map, depth gap).
   band (bottom 1/6 of the box), ~36–41% within 3 px of the pseudo-GT edge, ~48–53% farther.
   Figure: images/benchmark/rr_checks/hand/hand_vs_pseudo.png.
 - Not yet known: the annotator's own test–retest agreement (noise floor).
+
+## Exemplar silhouettes as labels (exemplar_gt.py) — 2026-10-13, seq1 seg 4, NOT held out
+
+Retrieve clear-frame silhouettes of the same person by partial evidence (pseudo-GT = visible; far + unchanged
+= background through a gap), blend the top 3 by signed distance, remove near depth (> 0.2), union pseudo-GT.
+vs brush hand masks (20 fr): J 0.582 / P 0.644 / R 0.850 (pseudo-GT 0.618 / 0.766 / 0.764).
+vs polygon hand masks (3 fr): J 0.579 / P 0.759 / R 0.717 (pseudo-GT 0.500 / 0.852 / 0.555).
+Caveat: the depth threshold (0.2 vs 0.3) was chosen on these same frames. A verdict needs held-out hand frames.
+Walker polygon (rolling_polygon.py) and mean template (template_gt.py) were worse: J 0.41 / 0.33 vs brush.
