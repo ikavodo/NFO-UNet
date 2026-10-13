@@ -1,8 +1,14 @@
 """CVAT round trip for hand masks on seq1 segment 4 (docs/hand_annotation_plan.md). 2026-10-13
 
-    python -m benchmark.nfo_vos.cvat_io export            # -> data/cvat/seq1_seg4/{images/, prefill.xml}
+    python -m benchmark.nfo_vos.cvat_io export            # -> data/cvat/upload/seq1_seg4/{images/, prefill.xml}
     python -m benchmark.nfo_vos.cvat_io import <xml> [tag]  # CVAT-for-images-1.1 export -> seq1_gt/<idx>_<tag>.png
-    python -m benchmark.nfo_vos.cvat_io images <name> <first> <last>  # images only -> data/cvat/<name>/images
+    python -m benchmark.nfo_vos.cvat_io images <name> <first> <last>  # images only -> data/cvat/upload/<name>/images
+
+data/cvat layout (gitignored): upload/<seq_seg>/ = what was uploaded to CVAT (regenerable with export/images);
+exports/ = CVAT annotation exports, the source of the hand labels:
+  seq1_seg4_brush        20 semi-modal brush frames        -> seq1_gt/*_handmask_raw.png
+  seq1_seg4_poly_first3  free-hand polygons 1183/1214/1263 -> *_handpoly.png
+  seq1_seg{4,5,0}_poly   pre-registered polygon frames     -> *_handpoly.png
 
 Hull annotation (2026-10-13): a 'points' shape is turned into its convex hull; several points shapes on one frame
 (e.g. head+torso+arms, left leg, right leg) give the union of their hulls.
@@ -32,7 +38,7 @@ SCRATCH = [1164, 1214, 1264]
 # pre-registered hull-annotation frames (docs/nfo_vos_pilot_findings.md, 2026-10-13): tuning seg 4, held-out seg 5 / 0.
 # Imports with tag 'handhull' keep only these, so interpolated track frames never become labels.
 HULL_FRAMES = [1164, 1183, 1194, 1214, 1224, 1244, 1263, 1274, 1294, 1490, 1520, 1550, 1580, 1610, 30, 70, 110]                # annotated from scratch first (anchoring check)
-OUT = 'data/cvat/seq1_seg4'
+OUT = 'data/cvat/upload/seq1_seg4'
 FRAMES = f'data/nfo_final/nfo_final/{SEQ}'
 GT = f'data/nfo_processed/{SEQ}_gt'
 
@@ -105,10 +111,10 @@ def import_(xml, tag='handmask'):
 
 
 def images(name, a, b):
-    os.makedirs(f'data/cvat/{name}/images', exist_ok=True)
+    os.makedirs(f'data/cvat/upload/{name}/images', exist_ok=True)
     for k in range(int(a), int(b) + 1):
-        shutil.copy(f'{FRAMES}/{k:05d}.jpg', f'data/cvat/{name}/images/{k:05d}.jpg')
-    print(f'data/cvat/{name}/images: frames {a}-{b}; CVAT frame = real frame - {a}')
+        shutil.copy(f'{FRAMES}/{k:05d}.jpg', f'data/cvat/upload/{name}/images/{k:05d}.jpg')
+    print(f'data/cvat/upload/{name}/images: frames {a}-{b}; CVAT frame = real frame - {a}')
 
 
 if __name__ == '__main__':
