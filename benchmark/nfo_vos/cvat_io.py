@@ -2,6 +2,10 @@
 
     python -m benchmark.nfo_vos.cvat_io export            # -> data/cvat/seq1_seg4/{images/, prefill.xml}
     python -m benchmark.nfo_vos.cvat_io import <xml> [tag]  # CVAT-for-images-1.1 export -> seq1_gt/<idx>_<tag>.png
+    python -m benchmark.nfo_vos.cvat_io images <name> <first> <last>  # images only -> data/cvat/<name>/images
+
+Hull annotation (2026-10-13): a 'points' shape is turned into its convex hull; several points shapes on one frame
+(e.g. head+torso+arms, left leg, right leg) give the union of their hulls.
 
 export: all 155 native frames (annotate only the TARGETS; the rest are for flipping) and a CVAT-for-images 1.1
 annotation file pre-filling the TARGETS with the native pseudo-GT as one 'person' mask each.
@@ -67,7 +71,7 @@ def export():
 def import_(xml, tag='handmask'):
     for img in ET.parse(xml).getroot().iter('image'):
         k = int(os.path.splitext(img.get('name'))[0])
-        shapes = [m for m in img if m.tag in ('mask', 'polygon')]
+        shapes = [m for m in img if m.tag in ('mask', 'polygon', 'points')]
         if not shapes:
             continue
         lab = np.zeros((600, 800), np.uint8)
@@ -77,6 +81,9 @@ def import_(xml, tag='handmask'):
                     continue
                 if m.tag == 'mask':
                     lab[rle_decode(m.get('rle'), *(int(float(m.get(a))) for a in ('left', 'top', 'width', 'height')))] = val
+                elif m.tag == 'points':   # convex hull of clicked points
+                    pts = np.array([[float(v) for v in xy.split(',')] for xy in m.get('points').split(';')])
+                    cv2.fillPoly(lab, [cv2.convexHull(np.round(pts).astype(np.int32))], val)
                 else:   # polygon "x1,y1;x2,y2;..." (also what CVAT writes per frame for interpolated polygon tracks)
                     pts = np.array([[float(v) for v in xy.split(',')] for xy in m.get('points').split(';')])
                     cv2.fillPoly(lab, [np.round(pts).astype(np.int32)], val)
@@ -91,5 +98,12 @@ def import_(xml, tag='handmask'):
               f'  void {(~keep).mean() * 100:.2f}% of frame')
 
 
+def images(name, a, b):
+    os.makedirs(f'data/cvat/{name}/images', exist_ok=True)
+    for k in range(int(a), int(b) + 1):
+        shutil.copy(f'{FRAMES}/{k:05d}.jpg', f'data/cvat/{name}/images/{k:05d}.jpg')
+    print(f'data/cvat/{name}/images: frames {a}-{b}; CVAT frame = real frame - {a}')
+
+
 if __name__ == '__main__':
-    export() if sys.argv[1] == 'export' else import_(*sys.argv[2:])
+    {'export': export, 'import': import_, 'images': images}[sys.argv[1]](*sys.argv[2:])

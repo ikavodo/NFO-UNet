@@ -417,3 +417,27 @@ v2 (head-complete exemplars, 4-band sideways alignment to evidence, positive evi
 | v2 (S - depth>0.2) u P u G | 0.594 / 0.648 / 0.881 | 0.604 / 0.747 / 0.758 |
 30% of clear-frame pseudo-GT silhouettes lack the head (top 12% of box < 2% of mask). G alone: precision 0.87 vs
 brush, covers 0.47 of it. G is the pixel empty-scene cue, so labels containing it favour cue-based methods.
+
+## PRE-REGISTERED (2026-10-13, written before running): automatic extent-leaning labels vs polygon hand labels
+
+Question: does a simple automatic label agree with the annotator's polygon labels better than the pseudo-GT, with
+recall prioritised?
+- Reference: polygon hand labels, drawn as convex hulls of clicked points (one hull per part: head+torso+arms,
+  each leg; union). The 3 earlier free-hand polygons (1183, 1214, 1263) are a side check only.
+- Tuning frames (seq1 seg 4, R walk): 1164, 1183, 1194, 1214, 1224, 1244, 1263, 1274, 1294.
+- Held-out frames, not inspected before the freeze: seg 5 (L walk) 1490, 1520, 1550, 1580, 1610; seg 0 (R walk)
+  30, 70, 110.
+- Method (exemplar_gt.py v2 without G):
+  1. bank = pseudo-GT of seq1 frames with visibility v >= v_min and head present (top 12% of box >= 2% of mask),
+     cropped to the GT box, mirrored to one direction; excluded within ±10 frames of the target; hand masks never
+     enter the bank;
+  2. retrieve the top 3 by |S n P| / |P| - |S n N| / |S| (P = pseudo-GT; N = disparity < 0.1 and
+     |frame - empty scene| < 8), aspect within 15%, shift ±10% of box width; blend by mean signed distance;
+     4-band sideways alignment (±15%, bands with >= 20 evidence pixels only);
+  3. remove pixels with empty-scene disparity > θ;
+  4. label = cleaned silhouette ∪ P.
+- Tuned on the tuning frames only: θ ∈ {0.15, 0.2, 0.3, none}, v_min ∈ {0.6, 0.8, clear frames}; max F₂.
+- Primary criterion: F₂ (recall weighted 2×) vs the polygon labels, pooled mean over held-out frames.
+  PASS: F₂(label) ≥ F₂(pseudo-GT) + 0.05 AND precision ≥ 0.60. J, P, R also reported.
+- Ablations on the held-out frames (one change each): no band alignment; no depth cleaning; v_min = clear frames.
+- Context: brush vs free-hand polygon J 0.58–0.69 on 3 frames = scale of the annotator's own variation.
