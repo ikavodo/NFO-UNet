@@ -357,3 +357,35 @@ numbers descriptive.
     | point-only, B0 | −0.019 |
 
     T1 failures: 73% over-extent, 11% off-person; precision-filter ceiling 0.765 → 0.904.
+
+## PLANNED (2026-10-13, not run): depth ordering as a label-free gap map
+
+Z-buffer model, static camera, static occluder: x shows the person at t iff S_t(x) = 1 and Z_bg(x) > Z_p(t),
+where S_t = full silhouette (extent), Z_bg = depth of the empty scene, Z_p = person depth. Motion is
+almost purely horizontal (fronto-parallel), so Z_p(t) ≈ Z_p per segment, and the visible-capable region is
+one threshold on one static map: G = {x : Z_bg(x) > Z_p}. It is the label-free version of the gap map Ŵ
+in docs/hand_annotation_plan.md.
+- Depth: Depth Anything V2 (relative disparity δ = a/Z + b, affine unknown per image). Ordering survives,
+  but δ from different images is not comparable: align each frame's δ_t to δ_bg by a least-squares
+  affine fit on pixels outside the GT box before comparing. δ_p = median δ_t over pseudo-GT pixels.
+- Per-frame variant (replaces unknown S_t): visible_t(x) = G(x) ∧ |δ_t(x) − δ_p| < ε.
+- The motion-aligned composite is not needed for δ_p (only a scalar is needed, and the composite is out of
+  distribution for a depth net).
+- Kill test (seq1 seg 4, inside GT boxes, the 31 hand frames once they exist; pseudo-GT before that):
+  pixel AUC of δ_bg for visible vs not-visible. Continue only if AUC ≥ 0.85 AND it adds to the
+  empty-scene z (logistic on z alone vs z + δ_bg, leave-frames-out, ΔAUC ≥ 0.02).
+- Rhyme: a z AUC of 0.94 did not turn into J gains when gating T1 (−0.007 on seq2–4). Use depth for
+  annotation auto-completion and as an adapter input, not as another output gate on T1.
+- Risk: depth nets blur thin structures, so narrow gaps may inherit foliage depth.
+
+## LATER (logged 2026-10-13): camera-jitter variant of the benchmark
+
+Robustness test for every static-scene cue (empty-scene z, gap map, depth gap).
+- V-ESAI (from the REDIR paper) applies one random affine per sample group: a viewpoint augmentation that
+  leaves static-scene methods intact. We need **temporal** jitter: a smooth random trajectory per frame
+  (e.g. an Ornstein–Uhlenbeck process on t_x, t_y, θ, log s), with magnitudes taken from real handheld
+  footage. Warp frames, masks and boxes identically, and crop to the region valid in all frames.
+- Limit: a 2-D warp simulates camera rotation and zoom only. Real camera translation adds parallax
+  between near foliage and the person, which no single registration can undo. Flag this in the paper.
+- Arms: raw jitter, and jitter + stabilisation (registration to the warm-up frames) as the do-nothing
+  compensator. Expected: B0/T1 roughly unchanged; static cues degrade unless stabilised.

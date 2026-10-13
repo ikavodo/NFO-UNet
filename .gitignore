@@ -200,3 +200,4 @@ images/**/*.csv
 # derived benchmark caches and reports (regeneratable; only keep code)
 results/**/*.npz
 results/**/summary.md
+data/cvat/
