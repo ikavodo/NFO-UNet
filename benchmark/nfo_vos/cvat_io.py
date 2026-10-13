@@ -28,7 +28,10 @@ from benchmark.nfo_vos.run_sam2_video import gt_mask_native
 
 SEQ, A, B = 'seq1', 1154, 1308
 TARGETS = list(range(A, B + 1, 5))          # every 5th frame; includes the t0s 1154, 1194, 1234
-SCRATCH = [1164, 1214, 1264]                # annotated from scratch first (anchoring check)
+SCRATCH = [1164, 1214, 1264]
+# pre-registered hull-annotation frames (docs/nfo_vos_pilot_findings.md, 2026-10-13): tuning seg 4, held-out seg 5 / 0.
+# Imports with tag 'handhull' keep only these, so interpolated track frames never become labels.
+HULL_FRAMES = [1164, 1183, 1194, 1214, 1224, 1244, 1263, 1274, 1294, 1490, 1520, 1550, 1580, 1610, 30, 70, 110]                # annotated from scratch first (anchoring check)
 OUT = 'data/cvat/seq1_seg4'
 FRAMES = f'data/nfo_final/nfo_final/{SEQ}'
 GT = f'data/nfo_processed/{SEQ}_gt'
@@ -71,6 +74,8 @@ def export():
 def import_(xml, tag='handmask'):
     for img in ET.parse(xml).getroot().iter('image'):
         k = int(os.path.splitext(img.get('name'))[0])
+        if tag == 'handhull' and k not in HULL_FRAMES:
+            continue
         shapes = [m for m in img if m.tag in ('mask', 'polygon', 'points')]
         if not shapes:
             continue
@@ -92,6 +97,7 @@ def import_(xml, tag='handmask'):
             print(f'{k}: identical to pseudo-GT, skipped (not annotated yet?)')
             continue
         cv2.imwrite(f'{GT}/{k:05d}_{tag}.png', lab)
+        print(f'{k}: {len(shapes)} shapes ({", ".join(sorted({m.tag for m in shapes}))}), {int((lab == 1).sum())} px')
         keep = lab != 2
         tp = (p & h & keep).sum()
         print(f'{k}: pseudo-GT precision {tp / max((p & keep).sum(), 1):.2f} recall {tp / max(h.sum(), 1):.2f}'
