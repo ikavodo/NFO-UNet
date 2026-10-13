@@ -441,3 +441,19 @@ recall prioritised?
   PASS: F₂(label) ≥ F₂(pseudo-GT) + 0.05 AND precision ≥ 0.60. J, P, R also reported.
 - Ablations on the held-out frames (one change each): no band alignment; no depth cleaning; v_min = clear frames.
 - Context: brush vs free-hand polygon J 0.58–0.69 on 3 frames = scale of the annotator's own variation.
+AMENDMENT (2026-10-13, before running): reference = free-hand polygon labels (CVAT, mask type; *_handpoly.png),
+not point hulls (three hulls were 1.3–1.7× the polygon area on 3 frames). Empty scene for N = median of the target
+segment's warm-up frames (seg 0/4: 946–1113, seg 5: 1349–1435). Code: benchmark/nfo_vos/extent_label_test.py.
+RESULT (2026-10-13): PASS by the pre-registered rule.
+- Tuning (seg 4, 9 frames) selected theta = none (no depth cleaning) and v_min = clear frames (122 head-complete
+  exemplars); F2 0.776 vs pseudo-GT 0.639.
+- Held-out (seg 5 + seg 0, 8 frames), mean: label F2 0.798 / J 0.615 / P 0.686 / R 0.835; pseudo-GT F2 0.706 /
+  J 0.641 / P 0.920 / R 0.682. ΔF2 +0.093, 95% bootstrap CI over frames [+0.012, +0.203]; precision 0.686 ≥ 0.60.
+- The gain sits in heavily occluded frames (1610: 0.658 vs 0.228; 30: 0.557 vs 0.421; 1520: 0.821 vs 0.677);
+  easy frames tie. J is 0.026 lower: the label trades precision for recall, as intended.
+- Ablations on held-out: no band alignment F2 0.800; no depth cleaning and v_min = clear are identical to the
+  frozen label (both were already its setting). Depth and band alignment contribute nothing measurable.
+- So the simplest version suffices: label = signed-distance blend of the 3 best head-complete clear-frame
+  silhouettes (retrieved by pseudo-GT coverage minus "background seen through a gap") ∪ pseudo-GT.
+- Limits: 8 held-out frames (CI lower bound below the +0.05 margin), one annotator, one sequence.
+  Figure: images/benchmark/rr_checks/hand/extent_label_heldout.png.

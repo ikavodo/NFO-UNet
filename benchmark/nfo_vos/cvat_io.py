@@ -74,7 +74,7 @@ def export():
 def import_(xml, tag='handmask'):
     for img in ET.parse(xml).getroot().iter('image'):
         k = int(os.path.splitext(img.get('name'))[0])
-        if tag == 'handhull' and k not in HULL_FRAMES:
+        if tag in ('handhull', 'handpoly') and k not in HULL_FRAMES:
             continue
         shapes = [m for m in img if m.tag in ('mask', 'polygon', 'points')]
         if not shapes:
