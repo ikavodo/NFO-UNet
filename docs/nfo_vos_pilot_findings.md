@@ -409,3 +409,11 @@ vs brush hand masks (20 fr): J 0.582 / P 0.644 / R 0.850 (pseudo-GT 0.618 / 0.76
 vs polygon hand masks (3 fr): J 0.579 / P 0.759 / R 0.717 (pseudo-GT 0.500 / 0.852 / 0.555).
 Caveat: the depth threshold (0.2 vs 0.3) was chosen on these same frames. A verdict needs held-out hand frames.
 Walker polygon (rolling_polygon.py) and mean template (template_gt.py) were worse: J 0.41 / 0.33 vs brush.
+v2 (head-complete exemplars, 4-band sideways alignment to evidence, positive evidence G = far-gap pixels changed
+> 25 grey levels vs the empty scene), fixed before running, same frames (not held out):
+| label | vs brush J / P / R (20 fr) | vs polygon J / P / R (3 fr) |
+| pseudo-GT P | 0.618 / 0.766 / 0.764 | 0.500 / 0.852 / 0.555 |
+| P u G | 0.636 / 0.744 / 0.814 | 0.551 / 0.845 / 0.623 |
+| v2 (S - depth>0.2) u P u G | 0.594 / 0.648 / 0.881 | 0.604 / 0.747 / 0.758 |
+30% of clear-frame pseudo-GT silhouettes lack the head (top 12% of box < 2% of mask). G alone: precision 0.87 vs
+brush, covers 0.47 of it. G is the pixel empty-scene cue, so labels containing it favour cue-based methods.
