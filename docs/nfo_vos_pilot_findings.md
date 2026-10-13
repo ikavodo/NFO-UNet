@@ -358,7 +358,7 @@ numbers descriptive.
 
     T1 failures: 73% over-extent, 11% off-person; precision-filter ceiling 0.765 → 0.904.
 
-## PLANNED (2026-10-13, not run): depth ordering as a label-free gap map
+## RAN (2026-10-13): depth ordering as a label-free gap map — FAILED the pre-set bar (AUC 0.672, +0.000 over z; diag_depth.py)
 
 Z-buffer model, static camera, static occluder: x shows the person at t iff S_t(x) = 1 and Z_bg(x) > Z_p(t),
 where S_t = full silhouette (extent), Z_bg = depth of the empty scene, Z_p = person depth. Motion is
