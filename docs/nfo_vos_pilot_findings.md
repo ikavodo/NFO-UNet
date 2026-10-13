@@ -484,3 +484,24 @@ Reading: the sign of every main comparison is the same under all four labels (or
 small margin). Absolute J drops by ~0.1 under the silhouette label and ~0.15 under hand labels. Gaps shrink under
 the extent-leaning labels, and on 13–14 hand frames the oracle-init CIs include 0. Point vs box prompt is the one
 ordering that flips (pt below box on pseudo-GT/polygon, above B0 on brush): small n, not interpreted.
+
+### Where the gap to the hand labels sits: precision vs recall (2026-10-13, ad hoc, seq1 windows)
+
+Same frames as the robustness table. Mean per frame of J / P / R / area(pred)/area(hand); "pseudo" = the pseudo-GT
+itself scored against the hand label (= the label generator, non-causal multi-anchor SAM2).
+
+| vs polygon (n=13) | J | P | R | area ratio | vs brush (n=14) | J | P | R | area ratio |
+|---|---|---|---|---|---|---|---|---|---|
+| b0     | 0.528 | 0.721 | 0.573 | 1.12 | | 0.511 | 0.609 | 0.700 | 1.86 |
+| t1     | 0.555 | 0.754 | 0.629 | 1.13 | | 0.563 | 0.668 | 0.793 | 1.83 |
+| b0-om  | 0.567 | 0.910 | 0.600 | 0.66 | | 0.580 | 0.850 | 0.662 | 0.80 |
+| t1-om  | 0.583 | 0.908 | 0.618 | 0.68 | | 0.588 | 0.844 | 0.674 | 0.81 |
+| b0-pt  | 0.502 | 0.935 | 0.526 | 0.57 | | 0.552 | 0.860 | 0.629 | 0.75 |
+| t1-pt  | 0.499 | 0.933 | 0.522 | 0.56 | | 0.551 | 0.862 | 0.624 | 0.74 |
+| pseudo | 0.606 | 0.889 | 0.653 | 0.73 | | 0.607 | 0.781 | 0.731 | 0.94 |
+
+Reading: box-init errors are mixed (leaks: P 0.72-0.75 at ~polygon-sized area). Oracle init removes the leaks
+(P -> 0.91) but does not raise recall (0.57-0.63 -> 0.60-0.62), hence the small J gain. Oracle-init methods sit within
+0.02 J of the pseudo-GT itself; the remaining gap to the polygon is recall (~0.35-0.40 of polygon area), i.e. the
+modal/near-amodal gap plus missed fragments (not separable without per-frame visibility). Area ratios are means of
+per-frame ratios (skewed by a few leaking frames). seq1 only, one annotator.
