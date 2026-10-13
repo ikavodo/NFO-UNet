@@ -515,3 +515,11 @@ excluding 0. Reference: oracle-init gain. Script: benchmark/nfo_vos/bg_suppress.
 Decision (user, 2026-10-13): benchmark windows must not start on a confirmed-clear frame (11/61 currently do, grid
 placement trials.py:161). Window redesign (starts only inside occluded stretches) pending; gains are additionally
 reported on the 50 non-clear-start windows.
+
+**RESULT: FAIL.** seq1 J falls monotonically with tau (0.699 plain T1 -> 0.657 / 0.614 / ... / 0.479 at tau 4..24), so
+tau = 4 (smallest). seq2-4 (46 windows): J(T1+bg) - J(T1) = -0.040 [-0.048, -0.032]; non-clear-start windows (37):
+-0.036 [-0.044, -0.029]. vs seq1 polygons: P 0.754 -> 0.775, R 0.629 -> 0.573. Per-pixel intensity change removes
+person pixels (grayscale person ~ background intensity) faster than leak pixels. Does not kill the feature-level
+per-cell change detector (features carry texture, not just intensity), but the pixel shortcut is dead.
+Side result: on seq2-4, T1 - B0 = -0.003 [-0.008, +0.002] and oracle-init gain +0.015 [+0.003, +0.027]: much smaller
+than on seq1 (+0.018, +0.064). The baselines barely separate outside seq1.
