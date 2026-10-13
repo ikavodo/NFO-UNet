@@ -505,3 +505,13 @@ Reading: box-init errors are mixed (leaks: P 0.72-0.75 at ~polygon-sized area). 
 0.02 J of the pseudo-GT itself; the remaining gap to the polygon is recall (~0.35-0.40 of polygon area), i.e. the
 modal/near-amodal gap plus missed fragments (not separable without per-frame visibility). Area ratios are means of
 per-frame ratios (skewed by a few leaking frames). seq1 only, one annotator.
+
+### PRE-REGISTERED: pixel-level background suppression of T1 (2026-10-13, written before running)
+
+T1 (SAMURAI, box start) masks with pixels where |frame - empty-scene median| < tau deleted. tau from {4, 8, 12, 16, 24}
+chosen on seq1 by window J vs pseudo-GT; applied unchanged to seq2-4. PASS: seq2-4 J gain > 0, 95% window-bootstrap CI
+excluding 0. Reference: oracle-init gain. Script: benchmark/nfo_vos/bg_suppress.py.
+
+Decision (user, 2026-10-13): benchmark windows must not start on a confirmed-clear frame (11/61 currently do, grid
+placement trials.py:161). Window redesign (starts only inside occluded stretches) pending; gains are additionally
+reported on the 50 non-clear-start windows.
