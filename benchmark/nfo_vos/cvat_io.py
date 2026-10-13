@@ -5,7 +5,7 @@
 
 export: all 155 native frames (annotate only the TARGETS; the rest are for flipping) and a CVAT-for-images 1.1
 annotation file pre-filling the TARGETS with the native pseudo-GT as one 'person' mask each.
-import: rasterise 'person' (1) and 'void' (2, painted over person) masks to 0/1/2 PNGs at 800x600
+import: rasterise 'person' (1) and 'void' (2, painted over person) masks and polygons to 0/1/2 PNGs at 800x600
 (tag 'handmask' by default, 'handmask_scratch' for the from-scratch task), then print pseudo-GT P/R vs hand.
 
 Mask RLE (CVAT XML <mask rle=... left top width height>): run lengths over the mask's bounding box,
@@ -67,14 +67,19 @@ def export():
 def import_(xml, tag='handmask'):
     for img in ET.parse(xml).getroot().iter('image'):
         k = int(os.path.splitext(img.get('name'))[0])
-        masks = list(img.iter('mask'))
-        if not masks:
+        shapes = [m for m in img if m.tag in ('mask', 'polygon')]
+        if not shapes:
             continue
         lab = np.zeros((600, 800), np.uint8)
         for want, val in (('person', 1), ('void', 2)):
-            for m in masks:
-                if m.get('label') == want:
+            for m in shapes:
+                if m.get('label') != want:
+                    continue
+                if m.tag == 'mask':
                     lab[rle_decode(m.get('rle'), *(int(float(m.get(a))) for a in ('left', 'top', 'width', 'height')))] = val
+                else:   # polygon "x1,y1;x2,y2;..." (also what CVAT writes per frame for interpolated polygon tracks)
+                    pts = np.array([[float(v) for v in xy.split(',')] for xy in m.get('points').split(';')])
+                    cv2.fillPoly(lab, [np.round(pts).astype(np.int32)], val)
         p, h = gt_mask_native(SEQ, k), lab == 1
         if p is not None and (lab == p.astype(np.uint8)).all():   # untouched prefill: not a hand label
             print(f'{k}: identical to pseudo-GT, skipped (not annotated yet?)')
