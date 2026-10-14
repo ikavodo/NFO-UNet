@@ -584,3 +584,27 @@ than on seq1 (+0.018, +0.064). The baselines barely separate outside seq1.
   fix, including per-cell change detection at stride 16: it inherits the same limit; evidence must come from
   stride-4/8 features or pixels.
 - `h2_fragments.py`; visual `images/benchmark/rr_checks/h2/filter_removed.png`.
+
+## Composite gating tests, 2026-10-14 (`composite_tests.py`, bars fixed in its docstring before running)
+- **Test 1 (fine evidence vs brush, 18 seg-4 frames; candidates = GT box ∖ pseudo-GT, 317 k px, 4.3% person,
+  411 px in sub-cell brush components): PASS.** AUC all / sub-cell:
+
+  | score | all | sub-cell |
+  |---|---|---|
+  | pix_bg (5×5 SSD vs empty scene) | 0.905 | **0.941** |
+  | layer_pix_gtfree | 0.871 | 0.915 |
+  | z4 (stride-4 features vs empty scene) | 0.848 | 0.892 |
+  | layer_f4_gtfree | 0.830 | 0.871 |
+  | z16 | 0.800 | 0.723 |
+  | corr4 (composite correspondence), any composite | 0.46–0.50 | 0.39–0.52 |
+
+  The same scores were killed on 2026-10-12 against the coarse pseudo-GT (precision 0.11–0.14 at 50% reach): consistent
+  with that kill being a label artefact. The composite adds nothing beyond the empty-scene cue (correspondence at
+  chance; layered < pix_bg). Not measured: precision at useful recall (4% positives; AUC alone can hide low precision);
+  sub-cell positives come from few components.
+- **Test 2 (SAM2 image predictor on the GT-free composite, box + centre point): FAIL.** vs polygons (17):
+  pseudo-GT J/P/R 0.597/0.892/0.642; M_C 0.485/0.527/0.872; M ∪ M_C 0.512 (ΔJ −0.085 [−0.151, −0.014]);
+  S1 prompt candidate M_C ∧ changed cells 0.493. vs brush ΔJ −0.172. The composite mask leaks (precision 0.53):
+  same signature as the amodal box prompt (T4c-1). S1 in this form is dead.
+- Implication: sub-cell evidence exists at pixel/stride-4 level from the empty scene alone; pseudo-GT-based scoring
+  cannot reward recovering it (the pseudo-GT lacks those pieces), so S3 must be evaluated on human labels.
