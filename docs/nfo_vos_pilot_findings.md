@@ -806,3 +806,47 @@ The amodal additions are 40% / 39% / 59% inside the label. On seq1 polygons the 
 Reading: the seq2–4 labels sit between modal and amodal. seq4 leans amodal; seq2 and seq3 do not, which is
 consistent with the annotator's own description ("depends on the frame"). This is a label-convention measurement,
 not a method result.
+
+## seq2–4 with void (modal convention), 2026-10-14 (`score_void.py`, labels `handAv`: 1 person, 2 void)
+Void covers on average 47.6% of the (person ∪ void) area per frame. Void pixels are ignored in all of J, P and R.
+
+**Scores, J / P / R (n = 23):**
+
+| arm | J | P | R |
+|---|---|---|---|
+| T1 | 0.750 | 0.887 | 0.819 |
+| B0 | 0.755 | 0.901 | 0.814 |
+| SAM2-ceiling | 0.716 | 0.883 | 0.783 |
+| V̂ anchored (u* = 0.85) | 0.749 | 0.868 | 0.835 |
+| Diffusion-VAS amodal | 0.693 | 0.772 | 0.866 |
+
+**ΔJ against T1:**
+
+| arm | ΔJ − T1 | 95% CI |
+|---|---|---|
+| B0 | +0.005 | [−0.008, +0.017] |
+| SAM2-ceiling | −0.034 | [−0.077, −0.003] |
+| V̂ | −0.001 | [−0.009, +0.008] |
+| amodal | −0.057 | [−0.089, −0.026] |
+
+The amodal model now loses clearly, consistent with void having turned the labels modal.
+
+**Post-hoc V̂ does not replicate its seq1 gain (+0.042) on modal seq2–4 labels.** Only 22% of T1's missed non-void
+area shows change against the empty scene (seq1: 54%).
+
+**Oracle headroom for T1 (J, seq2–4, void ignored):**
+
+| oracle edit | J |
+|---|---|
+| none | 0.750 |
+| + all sub-cell person components (3.1% of area) | 0.767 |
+| + missed pixels within 3 px of T1 | 0.849 |
+| − all false positives | 0.819 |
+| + all missed pixels | 0.908 |
+
+Dilating or eroding T1 by 1 px trades P against R almost evenly (seq2–4 J: r = −1 0.689, r = +1 0.757, r = +2
+0.718; seq1 brush: 0.531 / 0.575 / 0.543). So the boundary error is mis-placement in both directions, not a
+too-tight bias.
+
+Open question: how much of the boundary band is annotator noise. This needs inter-annotator J on the same frames,
+from the colleague's labels.
