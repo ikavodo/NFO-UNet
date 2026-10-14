@@ -698,3 +698,18 @@ than on seq1 (+0.018, +0.064). The baselines barely separate outside seq1.
   +0.021 for the chosen arm. Robust-z threshold for the chosen arm: τ_z = 7.5, J 0.560 vs 0.567 raw (equivalent),
   +0.035 [+0.012, +0.062] over T1. `run_vhat.py` re-frozen to blob alignment + blob point + τ_z 7.5 and re-run.
   Open: with the robust z, seg-0 windows (empty scene from frames 946–1113, far in time) get no additions.
+
+## S1 sanity check (causal re-prompting of SAMURAI with V̂), 2026-10-14: the injected extent does not persist
+- `s1_reprompt.py`: propagate T1 to frame j, V̂_j = (M_C ∧ pix_bg > 6.31) ∪ own mask (GT-free composite, blob
+  tracker), add_new_mask(j) as a fully trusted non-conditioning memory (SAMURAI cannot take mid-video conditioning
+  frames), continue. Every 20 (j = 20) or every 10 (j = 10, 20, 30) frames; seq1 windows with hand frames.
+- **After the re-prompt the mask snaps back:** median area S1/T1 on later frames = 1.00 in 17/18 window-arms
+  (one window 1.61×). Before the re-prompt the run reproduces stored T1 to 0.1–3.6% |xor| (one window 11.5%:
+  run-to-run variation).
+- On non-prompted hand frames after the re-prompt (n = 5–8): ΔJ S1 − T1 −0.063 / −0.004 vs polygons (every 20 /
+  every 10), −0.128 / −0.062 vs brush; post-hoc V̂ is better than S1 in every comparison (CI upper bound < 0).
+  Small n, differences dominated by run variation and one window; the clear result is the area ratio.
+- Consistent with the resolution argument: the added pixels are mostly sub-cell fragments; a mask prompt and
+  memory both act at stride 16, and SAM2 re-decodes each frame from its own image features. Training-free
+  injection at prompt/memory level does not carry pixel-level additions; post-hoc addition (or a learned
+  stride-4 path) does.
