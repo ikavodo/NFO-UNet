@@ -621,3 +621,26 @@ than on seq1 (+0.018, +0.064). The baselines barely separate outside seq1.
   z16+far+match16 0.838. The match carries no information beyond the empty-scene term (inside the envelope, "differs
   from the empty scene" ≈ "visible person": the person is the only moving thing). Not excluded: SAM2's learned q·k
   projections in memory attention using the composite differently than backbone cosine; tracker (non-oracle) alignment.
+
+## V = S ∧ ¬O at pixel level, no learning: FIRST LABEL TO BEAT THE PSEUDO-GT vs POLYGONS — 2026-10-14
+- `factorised_label.py` (fixed before running). S = M_C (SAM2 image predictor on the GT-free composite; oracle
+  GT-box alignment and box prompt); ¬O = pixel change vs the empty scene (pix_bg = log 5×5 SSD), threshold τ chosen
+  leave-one-frame-out on the brush frames (τ = 6.31 ≈ median of pix_bg inside M_C; LOFO range 6.31–6.99).
+  V̂ = (M_C ∧ pix_bg > τ) ∪ M.
+
+  | vs | label | J | P | R |
+  |---|---|---|---|---|
+  | polygons (17) | pseudo-GT M | 0.597 | 0.892 | 0.642 |
+  | | M_C ∧ change (prompt alone) | 0.568 | 0.860 | 0.624 |
+  | | **V̂** | **0.680** | 0.835 | 0.778 |
+  | brush (18) | pseudo-GT M | 0.643 | 0.773 | 0.795 |
+  | | **V̂** | 0.665 | 0.734 | 0.874 |
+
+  ΔJ vs polygons **+0.083 [+0.036, +0.135], 13/17 better: PASS**; vs brush +0.022 [−0.002, +0.052], 9/18.
+  Stride-4 features (z4) instead of pixels: +0.044 [+0.010, +0.093] vs polygons, +0.010 vs brush.
+- Why it works where every widening failed: the envelope supplies extent (S), the empty-scene change carves the
+  occluders (¬O) at pixel resolution; precision drops only 0.89 → 0.84 while recall rises 0.64 → 0.78.
+- Caveats: one sequence, one annotator; τ tuned on seg-4 brush frames (polygon frames in segs 0/5 are cross-segment,
+  not cross-sequence held out); composite alignment and SAM2 prompt use GT boxes (oracle); M is the pseudo-GT, not a
+  tracker's mask. Next: replace M by T1's own mask and GT alignment by tracker alignment.
+- Visual: `images/benchmark/rr_checks/composite_tests/factorised_added.png`.
