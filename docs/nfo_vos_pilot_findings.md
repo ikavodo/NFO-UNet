@@ -523,3 +523,23 @@ person pixels (grayscale person ~ background intensity) faster than leak pixels.
 per-cell change detector (features carry texture, not just intensity), but the pixel shortcut is dead.
 Side result: on seq2-4, T1 - B0 = -0.003 [-0.008, +0.002] and oracle-init gain +0.015 [+0.003, +0.027]: much smaller
 than on seq1 (+0.018, +0.064). The baselines barely separate outside seq1.
+
+## Test (a), 2026-10-14: amodal video model (Diffusion-VAS) on pseudo-GT vs hand polygons — FAIL
+- **Pre-registered** (in `amodal_dvas.py` docstring, before running): Diffusion-VAS amodal stage (Chen, Ramanan &
+  Khurana, CVPR 2025, arXiv 2412.04623; code @ bbea113, weights kaihuac/diffusion-vas-amodal-segmentation), input =
+  pseudo-GT modal masks + Depth Anything V2-L depth, 25-frame clips at stride 3 (25 fps footage, model trained at
+  8 fps). A = prediction ∪ pseudo-GT at native res. Pass: J(A) > J(pseudo-GT) vs polygons (paired CI > 0) and P ≥ 0.75.
+- **Result** (17 seq1 polygon frames × 3 seeds):
+
+  | | J | P | R |
+  |---|---|---|---|
+  | pseudo-GT | 0.597 | 0.892 | 0.642 |
+  | amodal A | 0.580 | 0.642 | 0.838 |
+
+  ΔJ −0.017 [−0.061, +0.034], better on 6/17; seed spread 0.015 J. Only 32% of the added pixels lie inside the
+  polygon; added area 1.64× pseudo-GT. Demo-faithful low-res union: J 0.577 (deviation irrelevant).
+- Gain does not track how incomplete the pseudo-GT is (Spearman ρ = −0.22 between pseudo-GT recall and ΔJ, p = 0.41);
+  big gains only where pseudo-GT nearly vanished (1610: R 0.19 → J 0.19 → 0.43).
+- Cost: 23–25 s per 25-frame clip (25 denoising steps × CFG), 6.2 GiB peak.
+- Fourth mask-widening approach with the same signature (recall up, precision down more). Visual: 
+  `images/benchmark/rr_checks/amodal/dvas_vs_polygon.png`.
