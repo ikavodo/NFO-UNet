@@ -713,3 +713,21 @@ than on seq1 (+0.018, +0.064). The baselines barely separate outside seq1.
   memory both act at stride 16, and SAM2 re-decodes each frame from its own image features. Training-free
   injection at prompt/memory level does not carry pixel-level additions; post-hoc addition (or a learned
   stride-4 path) does.
+
+## PRE-REGISTERED seq2–4 hand-polygon frames (2026-10-14, chosen before any seq2–4 method output was looked at)
+Rule: frame at local index 20 of each admissible window (history and the V̂ envelope available; independent of
+any method's output). Tier A = every other window starting with the first, labelled first; tier B = the rest.
+Upload folders: `data/cvat/upload/<seq>_poly_<tier>/images` (file name = real frame number).
+
+| seq | tier | n | frames |
+|---|---|---|---|
+| seq2 | A | 8 | 52, 132, 335, 497, 577, 1163, 1338, 1722 |
+| seq2 | B | 8 | 92, 295, 375, 537, 1123, 1203, 1540, 1921 |
+| seq3 | A | 7 | 59, 287, 367, 615, 873, 1110, 1498 |
+| seq3 | B | 7 | 99, 327, 575, 833, 913, 1303, 1694 |
+| seq4 | A | 8 | 43, 123, 293, 486, 566, 717, 922, 1284 |
+| seq4 | B | 8 | 83, 253, 333, 526, 677, 757, 1081, 1448 |
+
+Second annotator: the same tier-A frames, imported with tag `handpoly2`. Polygon protocol as for seq1.
+Import: `python -m benchmark.nfo_vos.cvat_io import data/cvat/exports/<task>/annotations.xml handpoly <seq>`.
+Related work for the method: `docs/related_work_layered_sam2.md`.

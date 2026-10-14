@@ -1,7 +1,7 @@
 """CVAT round trip for hand masks on seq1 segment 4 (docs/hand_annotation_plan.md). 2026-10-13
 
     python -m benchmark.nfo_vos.cvat_io export            # -> data/cvat/upload/seq1_seg4/{images/, prefill.xml}
-    python -m benchmark.nfo_vos.cvat_io import <xml> [tag]  # CVAT-for-images-1.1 export -> seq1_gt/<idx>_<tag>.png
+    python -m benchmark.nfo_vos.cvat_io import <xml> [tag] [seq]  # CVAT-for-images-1.1 export -> <seq>_gt/<idx>_<tag>.png
     python -m benchmark.nfo_vos.cvat_io images <name> <first> <last>  # images only -> data/cvat/upload/<name>/images
 
 data/cvat layout (gitignored): upload/<seq_seg>/ = what was uploaded to CVAT (regenerable with export/images);
@@ -77,10 +77,11 @@ def export():
     print(f'{OUT}: {B - A + 1} frames, {len(TARGETS)} prefilled targets, scratch frames {SCRATCH}')
 
 
-def import_(xml, tag='handmask'):
+def import_(xml, tag='handmask', seq=SEQ):
+    gt = f'data/nfo_processed/{seq}_gt'   # seq argument added 2026-10-14 for seq2-4 polygons
     for img in ET.parse(xml).getroot().iter('image'):
         k = int(os.path.splitext(img.get('name'))[0])
-        if tag in ('handhull', 'handpoly') and k not in HULL_FRAMES:
+        if seq == SEQ and tag in ('handhull', 'handpoly') and k not in HULL_FRAMES:
             continue
         shapes = [m for m in img if m.tag in ('mask', 'polygon', 'points')]
         if not shapes:
@@ -98,11 +99,11 @@ def import_(xml, tag='handmask'):
                 else:   # polygon "x1,y1;x2,y2;..." (also what CVAT writes per frame for interpolated polygon tracks)
                     pts = np.array([[float(v) for v in xy.split(',')] for xy in m.get('points').split(';')])
                     cv2.fillPoly(lab, [np.round(pts).astype(np.int32)], val)
-        p, h = gt_mask_native(SEQ, k), lab == 1
+        p, h = gt_mask_native(seq, k), lab == 1
         if p is not None and (lab == p.astype(np.uint8)).all():   # untouched prefill: not a hand label
             print(f'{k}: identical to SAM2-ceiling, skipped (not annotated yet?)')
             continue
-        cv2.imwrite(f'{GT}/{k:05d}_{tag}.png', lab)
+        cv2.imwrite(f'{gt}/{k:05d}_{tag}.png', lab)
         print(f'{k}: {len(shapes)} shapes ({", ".join(sorted({m.tag for m in shapes}))}), {int((lab == 1).sum())} px')
         keep = lab != 2
         tp = (p & h & keep).sum()
