@@ -615,3 +615,9 @@ than on seq1 (+0.018, +0.064). The baselines barely separate outside seq1.
 - Pattern across today's and yesterday's labels vs polygons: pseudo-GT 0.597, Diffusion-VAS 0.580, V̂ 0.581,
   exemplar silhouette v2 0.604 (3 fr), filter-off SAM2 0.608: all J ≈ 0.58–0.61 with different P/R. Consistent with an
   annotator-noise ceiling against a single annotator; the inter-annotator J would test this.
+- **λ₂ gate (frame-vs-composite match inside the envelope M_C, `composite_match.py`): FAIL.** 18 brush frames,
+  150 k px inside M_C (47% visible person). Pooled AUC: z16 (frame vs empty scene) 0.823; match16 0.707; match8
+  0.559; match4 0.602; far 0.712. Leave-one-frame-out logistic: z16 0.815, z16+match16 0.814, z16+far 0.841,
+  z16+far+match16 0.838. The match carries no information beyond the empty-scene term (inside the envelope, "differs
+  from the empty scene" ≈ "visible person": the person is the only moving thing). Not excluded: SAM2's learned q·k
+  projections in memory attention using the composite differently than backbone cosine; tracker (non-oracle) alignment.
