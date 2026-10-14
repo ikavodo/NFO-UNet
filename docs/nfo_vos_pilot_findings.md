@@ -731,3 +731,66 @@ Upload folders: `data/cvat/upload/<seq>_poly_<tier>/images` (file name = real fr
 Second annotator: the same tier-A frames, imported with tag `handpoly2`. Polygon protocol as for seq1.
 Import: `python -m benchmark.nfo_vos.cvat_io import data/cvat/exports/<task>/annotations.xml handpoly <seq>`.
 Related work for the method: `docs/related_work_layered_sam2.md`.
+
+## First seq2–4 human labels (tier A, 23 frames) and a learned change threshold, 2026-10-14 (`learned_thresh.py`)
+Labels: user's brush masks, tier-A frames above, tag `handA` (exports `data/cvat/exports/seq{2,3,4}_poly_A_annot`).
+Annotator note: drawn closer to amodal than modal, varying by frame; visibility was uncertain in places (no void
+label used). The SAM2 tracker runs are T1 (SAMURAI) and B0 (SAM2.1); V̂ = (M_C ∧ add) ∪ T1, where M_C is the
+SAM2 mask on the GT-free person composite (as in `run_vhat.py`).
+
+**Plain scores, seq2–4 (n = 23), J / P / R:** T1 0.721 / 0.911 / 0.777; B0 0.736 / 0.927 / 0.783; SAM2-ceiling
+0.701 / 0.927 / 0.743. ΔJ B0 − T1 +0.015 [−0.005, +0.038].
+
+**Learned threshold.** Candidates are M_C ∧ ¬T1. Each frame gets GT-free anchors:
+- μ_P = median of pb over T1, where pb = log(1 + 5×5 mean (R − B)²) is the pixel change against the empty-scene
+  estimate B;
+- μ_B, σ_B = median and 1.4826·MAD of pb far from (M_C ∪ T1).
+
+Arms:
+- **anchored**: u = (pb − μ_B)/(μ_P − μ_B) > u*. One scale-free parameter.
+- **logistic**: on [pb, μ_B, σ_B, μ_P].
+
+Results:
+- **Pre-registered selection (seq1 LOFO on brush) picked logistic, and it FAILS on seq2–4:** ΔJ −0.042
+  [−0.083, −0.002]; it leaks 0.48× T1 area.
+- The anchored arm, not selected (n = 23), gives +0.009 [+0.001, +0.020], better on 14/23.
+- **Leave-one-sequence-out (LOSO),** fitting on three sequences (seq1 brush + seq2–4 handA) and scoring the
+  fourth:
+  - anchored: u* = 0.75–0.90 in every fold, pooled ΔJ **+0.010 [+0.003, +0.018], better on 22/35**;
+  - logistic: −0.012 [−0.032, +0.004]. Its σ_B weight changes sign between folds (−1.2 / +3.2), so frame-level
+    covariates are not identifiable from 4 sequences.
+- Conclusion: a single in-frame-normalised parameter transfers; anything that learns the normalisation needs many
+  more scenes (synthetic, `layered_sam2_architecture.md`).
+
+**H2 replicates on independent labels, but carries no area on seq2–4:**
+- Hand-label components below half a stride-16 cell: n = 52, T1 recall 0.01.
+- On seq2–4 these components hold 0.0–0.5% of label area. Adding all of them perfectly would raise T1's J by
+  ≤ 0.005 (seq1: 2.7% of area, +0.013).
+
+**Where T1's missing area is (% of label area; in brackets the share showing pixel change u > 0.85):**
+
+| seq | missed in total | within 3 px of T1's edge | gaps inside T1's hull | outside the hull |
+|---|---|---|---|---|
+| seq2 | 12.7% | 8.0% [19%] | 1.7% [3%] | 3.0% [8%] |
+| seq3 | 24.6% | 10.5% [31%] | 3.4% [8%] | 10.8% [34%] |
+| seq4 | 29.9% | 14.5% [14%] | 4.7% [3%] | 10.7% [8%] |
+| seq1 | 23.0% | 12.7% [54%] | 3.0% [27%] | 7.3% [54%] |
+
+On seq2–4 most of the missing area is (a) a boundary band and (b) pixels that do not differ from the empty
+scene. Those are consistent with amodal-ish labelling, and no visible-evidence cue can recover them.
+
+**With a boundary ignore band of r px either side of the label edge** (a VOC-style void border; Everingham et al.,
+IJCV 2010 — from memory, unverified), seq2–4 T1 J / R:
+- r = 0: 0.721 / 0.777
+- r = 2: 0.810 / 0.850
+- r = 3: 0.829 / 0.866
+
+**Implication for the goal (beat SAM2 on modal J by recall):**
+- Under the current seq2–4 label convention, about half of the recall gap is boundary disagreement.
+- Most of the rest is not visibly evidenced.
+- The label protocol (void label for uncertain regions, a boundary band) has to be fixed before a recall method
+  can win on seq2–4.
+
+BSUV-Net 2.0 off the shelf: all four Google Drive weight links in `ozantezcan/BSUV-Net-inference@2dc3003`
+README return 404 (2026-10-14). Only the training code is released (GPL-3.0); running it needs retraining on
+CDnet-2014.
