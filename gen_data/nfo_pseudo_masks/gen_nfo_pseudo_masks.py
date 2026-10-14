@@ -44,6 +44,7 @@ OUT_SIZE = 224
 OUT_TAG = 'sammask'
 NATIVE_TAG = 'sammask_native'   # --native-only: the same masks saved at native 800x600 (no downscale)
 NATIVE_ONLY = False
+MIN_WIDTH_224 = 4   # --min-width-scale; 0 disables the thin-component filter (H2, 2026-10-14)
 MAX_CONSECUTIVE_EMPTY = 5  # early-stop a direction once it's clearly dead, don't burn compute
 # STATIC_THRESHOLD_PX was 2.0 - measured against real GT centroid displacement (see
 # docs/nfo_pseudo_segmentation_approach.md review) that turned out to be ABOVE median real
@@ -338,7 +339,7 @@ def process_segment(predictor, seq_dir, bbs, start, end, seg_idx, out_dir_frames
         res_scale = img_w / OUT_SIZE
         combined, diagnostics = combine_checkpoint_masks_union_gt_outlier(
             per_checkpoint_results, n_seg_frames, bbs, start, img_w, img_h,
-            box_dilate_px=round(3 * res_scale), min_width_px=round(4 * res_scale))
+            box_dilate_px=round(3 * res_scale), min_width_px=round(MIN_WIDTH_224 * res_scale))
     else:
         combined, diagnostics = combine_checkpoint_masks(per_checkpoint_results, n_seg_frames)
 
@@ -406,6 +407,7 @@ def extend_segment_edge(predictor, seq_dir, bbs, start, end, seg_idx, side, ext_
 
 
 def main():
+    global NATIVE_ONLY, MIN_WIDTH_224, NATIVE_TAG
     parser = argparse.ArgumentParser()
     parser.add_argument('--seq', required=True, help='e.g. seq1')
     parser.add_argument('--model-id', default='facebook/sam2.1-hiera-large')
@@ -430,9 +432,13 @@ def main():
     parser.add_argument('--native-only', action='store_true',
                         help=f'write only native 800x600 masks (no downscale): *_{NATIVE_TAG}.png for the main pass, '
                              f'*_{EXT_TAG}_native.png for --extend-edges/--extend-only; the 224 files are not touched')
+    parser.add_argument('--min-width-scale', type=float, default=4,
+                        help='union_gt_outlier thin-component filter width in 224-space px (native: x800/224); '
+                             '0 = off. Use with --native-tag so the production pseudo-GT is not overwritten')
+    parser.add_argument('--native-tag', default=NATIVE_TAG, help='file tag for --native-only main-pass masks')
     args = parser.parse_args()
-    global NATIVE_ONLY
     NATIVE_ONLY = args.native_only
+    MIN_WIDTH_224, NATIVE_TAG = args.min_width_scale, args.native_tag
     if args.extend_only:
         args.extend_edges = True
 

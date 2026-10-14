@@ -561,3 +561,26 @@ than on seq1 (+0.018, +0.064). The baselines barely separate outside seq1.
   1610: 0.06) are whole parts the pseudo-GT missed. Not checked: whether enclosed thin gaps are branches or
   background between limbs; the pseudo-GT min-width filter (H2) also creates thin gaps from deleted thin person parts.
 - `gap_granulometry.py`; visual `images/benchmark/rr_checks/gap_granulometry/gap_by_thickness.png`.
+
+## H2 RESULT, 2026-10-14: SAM2 itself drops sub-cell visible fragments; our 14 px filter is not the cause
+- Pre-registered in `label_generators_design.md:58-66`. Raw SAM2 union re-run on seq1 segs 0/4/5 with the
+  thin-component filter off (`--min-width-scale 0 --native-tag sammask_nofilt_native`; production filter = bbox
+  width < 14 native px). Filter effect isolated as U vs filter(U) from the same run (the re-run differs from the
+  stored pseudo-GT by SAM2 run-to-run variation: 9/428 frames identical, mean |xor| 76 px).
+- Per brush (modal) component, seg4, 20 frames, 94 components (74 detached); 1 cell = 117 native px²:
+
+  | area (cells) | n | recall, filter off | recall, filter on |
+  |---|---|---|---|
+  | < 0.5 | 14 | 0.00 | 0.00 |
+  | 0.5–1 | 5 | 0.33 | 0.26 |
+  | 1–4 | 31 | 0.51 | 0.45 |
+  | ≥ 4 | 44 | 0.79 | 0.77 |
+
+  Slope of recall per doubling of area +0.086 [+0.078, +0.100] (frame-cluster bootstrap); detached sub-cell recall
+  0.09 (n = 19). **Neither kill condition met: H2 supported.**
+- vs polygons (17 frames): filter off J 0.608 vs on 0.599. The thin enclosed gap (person between branches,
+  gap_granulometry.py red pixels, 6 768 px) is recovered 4% by raw SAM2: SAM2 never predicts it.
+- Interpretation (consistent with, not proven): a resolution limit of the stride-16 decoder. Implication for any
+  fix, including per-cell change detection at stride 16: it inherits the same limit; evidence must come from
+  stride-4/8 features or pixels.
+- `h2_fragments.py`; visual `images/benchmark/rr_checks/h2/filter_removed.png`.
