@@ -608,3 +608,10 @@ than on seq1 (+0.018, +0.064). The baselines barely separate outside seq1.
   same signature as the amodal box prompt (T4c-1). S1 in this form is dead.
 - Implication: sub-cell evidence exists at pixel/stride-4 level from the empty scene alone; pseudo-GT-based scoring
   cannot reward recovering it (the pseudo-GT lacks those pieces), so S3 must be evaluated on human labels.
+- **Test 2b (composite mask as extent envelope + empty-scene depth filter, `composite_envelope.py`): FAIL.**
+  V̂ = (M_C ∧ disparity ≤ 0.2) ∪ M vs polygons (17): J/P/R 0.581/0.691/0.787 vs pseudo-GT 0.597/0.892/0.642,
+  ΔJ −0.016 [−0.070, +0.040] (7/17 better). vs brush (18): ΔJ −0.069 [−0.114, −0.022]. The depth filter raises
+  M_C's precision 0.53 → 0.67 but cuts recall 0.87 → 0.64. Containment R(M_C, polygon) 0.87; ≥ 0.9 on 5/17 frames.
+- Pattern across today's and yesterday's labels vs polygons: pseudo-GT 0.597, Diffusion-VAS 0.580, V̂ 0.581,
+  exemplar silhouette v2 0.604 (3 fr), filter-off SAM2 0.608: all J ≈ 0.58–0.61 with different P/R. Consistent with an
+  annotator-noise ceiling against a single annotator; the inter-annotator J would test this.
