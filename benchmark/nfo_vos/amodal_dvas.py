@@ -1,4 +1,4 @@
-"""Test (a), pre-registered 2026-10-14: does an amodal video model move SAM2's pseudo-GT toward the hand polygons?
+"""Test (a), pre-registered 2026-10-14: does an amodal video model move SAM2's SAM2-ceiling toward the hand polygons?
 
 Model: Diffusion-VAS (Chen, Ramanan & Khurana, CVPR 2025, arXiv 2412.04623), amodal-segmentation stage only.
 Code: github.com/Kaihua-Chen/diffusion-vas @ bbea113 (cloned to ../diffusion-vas, MIT); weights
@@ -6,10 +6,10 @@ kaihuac/diffusion-vas-amodal-segmentation (HF). Env: conda `dvas` (clone of `occ
 transformers 4.44.2).
 
 Input per seq1 polygon frame k: a 25-frame clip at stride 3 (footage 25 fps, model trained at 8 fps), k at
-position 12 (shifted later where k-36 < 0, e.g. frame 30) of pseudo-GT modal masks (empty where no pseudo-GT exists) + Depth Anything V2-L depth.
+position 12 (shifted later where k-36 < 0, e.g. frame 30) of SAM2-ceiling modal masks (empty where no SAM2-ceiling exists) + Depth Anything V2-L depth.
 Output A = upsampled prediction ∪ native-resolution modal mask; Δ = A ∖ modal (the pixels the model adds).
-Scored at the centre frame vs the polygon: J, P, R of pseudo-GT and of A (paired, same frames), 3 seeds.
-Pass: mean J(A) > mean J(pseudo-GT) with paired bootstrap CI above 0, and P(A) ≥ 0.75.
+Scored at the centre frame vs the polygon: J, P, R of SAM2-ceiling and of A (paired, same frames), 3 seeds.
+Pass: mean J(A) > mean J(SAM2-ceiling) with paired bootstrap CI above 0, and P(A) ≥ 0.75.
 
 Deviations from demo.py (flagged):
 - union with the modal mask at native 800x600, not at 256x512 (demo.py unions before upsampling, which
@@ -120,7 +120,7 @@ def main():
     # paired summary: per frame, seed-mean
     f = lambda key, i: np.array([np.mean([r[key][i] for r in rows if r['k'] == k]) for k in ks])
     rng = np.random.default_rng(0)
-    for name, key in (('pseudo-GT', 'pgt'), ('amodal (native union)', 'A'), ('amodal (demo union)', 'demo')):
+    for name, key in (('SAM2-ceiling', 'pgt'), ('amodal (native union)', 'A'), ('amodal (demo union)', 'demo')):
         print(f'{name:24s} J {f(key, 0).mean():.3f}  P {f(key, 1).mean():.3f}  R {f(key, 2).mean():.3f}  (n={len(ks)})')
     d = f('A', 0) - f('pgt', 0)
     bs = [d[rng.integers(0, len(d), len(d))].mean() for _ in range(10000)]
@@ -143,7 +143,7 @@ def main():
         a_.set_title(str(k), fontsize=8); a_.axis('off')
     for a_ in ax.ravel()[len(ks):]:
         a_.axis('off')
-    fig.suptitle('cyan = your polygon, yellow = pseudo-GT (modal input), red fill = pixels Diffusion-VAS adds (seed 23)',
+    fig.suptitle('cyan = your polygon, yellow = SAM2-ceiling (modal input), red fill = pixels Diffusion-VAS adds (seed 23)',
                  fontsize=9)
     fig.tight_layout(); fig.savefig(f'{IMG}/dvas_vs_polygon.png', dpi=75)
 

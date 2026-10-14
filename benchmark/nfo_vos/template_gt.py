@@ -3,7 +3,7 @@ depth; compared with the hand masks of seq1 segment 4. 2026-10-13
 
     python -m benchmark.nfo_vos.template_gt
 
-Template for frame t: pseudo-GT masks of seq1's confirmed-clear frames (person fully visible), each cropped to its
+Template for frame t: SAM2-ceiling masks of seq1's confirmed-clear frames (person fully visible), each cropped to its
 GT box and resized to a canonical grid (mirrored for leftward segments); average the K exemplars whose box aspect
 w/h is closest to t's (the box widens with the stride), resize into t's box, threshold 0.5.
 Exemplars within +-EXCL frames of t are excluded.  Depth variant: drop pixels with empty-scene normalised disparity
@@ -69,7 +69,7 @@ def main():
     for name, tag in labels.items():
         H = {int(os.path.basename(p)[:5]): cv2.imread(p, 0) == 1 for p in sorted(glob.glob(f'data/nfo_processed/{SEQ}_gt/*{tag}.png'))}
         print(f'--- vs your {name} masks ({len(H)} frames): mean J / precision / recall')
-        cands = {'pseudo-GT': lambda k: gt_mask_native(SEQ, k), 'template': lambda k: fits[k]}
+        cands = {'SAM2-ceiling': lambda k: gt_mask_native(SEQ, k), 'template': lambda k: fits[k]}
         for th in (0.1, 0.2, 0.3):
             cands[f'template - depth>{th}'] = lambda k, th=th: fits[k] & (d <= th)
         for k in H:
@@ -89,7 +89,7 @@ def main():
                        (gt_mask_native(SEQ, k), 'red'), (fits[k], 'yellow'), (fits[k] & (d <= 0.2), 'magenta')):
             a_.contour(c(m), [0.5], colors=col, linewidths=0.8)
         a_.set_title(str(k)); a_.axis('off')
-    fig.suptitle('green = your brush mask, red = pseudo-GT, yellow = template fit, magenta = template minus depth>0.2')
+    fig.suptitle('green = your brush mask, red = SAM2-ceiling, yellow = template fit, magenta = template minus depth>0.2')
     fig.tight_layout(); fig.savefig(f'{IMG}/template_fit.png', dpi=80)
     print(f'-> {IMG}/template_fit.png')
 

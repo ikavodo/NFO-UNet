@@ -8,13 +8,13 @@ Setup per hard start (B0 or T1 init failure) with a full 7-frame window t0-6..t0
   history H = t0-6..t0-1 (t0 itself is NOT in the composite), aligned onto t0 by GT box centres
   (seq4_s2_t466: no GT boxes before t0 -> centres of the _sammask_ext masks, flagged 'ext');
   recency weights exp(-age/3.5) (a4.recency_weights), normalised over H;
-  per-pixel history visibility Vbar = sum_k w_k * aligned visible mask_k (pseudo-GT, or _ext).
+  per-pixel history visibility Vbar = sum_k w_k * aligned visible mask_k (SAM2-ceiling, or _ext).
 Composites of H:
   raw    sum_k w_k A_k                       (the A/4 rule, history only)
   median per-pixel median of the A_k
-  clean  sum_k w_k v_k A_k / sum_k w_k v_k   ORACLE cleaning (pseudo-GT visibility); falls back to
+  clean  sum_k w_k v_k A_k / sum_k w_k v_k   ORACLE cleaning (SAM2-ceiling visibility); falls back to
          raw where no history frame saw the person (Vbar = 0)
-Scores inside the extent E = GT (amodal) box at t0; label = pseudo-GT visible mask at t0:
+Scores inside the extent E = GT (amodal) box at t0; label = SAM2-ceiling visible mask at t0:
   pix_<c>  -|R_t0 - C| (3x3 mean)      feat<s>_<c>  cosine(SAM2 features of R_t0, of C) at stride s
   bgdiff   |R_t0 - warm-up background| (the cue that failed on 2026-10-08), as the control
 Reported: pixel AUC per start (mean over starts) and pooled by Vbar bin. Derived from the mixing
@@ -39,7 +39,7 @@ BINS = [(0, 0.2), (0.2, 0.5), (0.5, 1.01)]
 
 
 def mask_native(seq, idx):
-    """Pseudo-GT visible mask, else the _ext mask; (mask, kind) or (None, None). Native files
+    """SAM2-ceiling visible mask, else the _ext mask; (mask, kind) or (None, None). Native files
     (*_native.png, 2026-10-12) are preferred over the upsampled 224 ones."""
     for kind, suf in (('gt', 'sammask_native'), ('gt', 'sammask'), ('ext', 'sammask_ext_native'), ('ext', 'sammask_ext')):
         p = f'data/nfo_processed/{seq}_gt/{idx:05d}_{suf}.png'
@@ -307,7 +307,7 @@ def gallery():
     """Composite gallery for eyeballing 'good' composites (2026-10-12): every admissible window whose
     7-frame history at t0 has masks (GT, else _ext). Tiles: R_t0 + GT outline | raw recency composite of
     the history | GT-FREE cleaned (each view's pixel weighted by sigmoid(z_pix - 3), z_pix = per-frame
-    robust z of |view - warm-up background|, computed before alignment) | ORACLE-cleaned (pseudo-GT
+    robust z of |view - warm-up background|, computed before alignment) | ORACLE-cleaned (SAM2-ceiling
     visibility weights). Alignment = GT box centres (oracle). Also a contact sheet of the GT-free column."""
     T = [x for x in json.load(open(TR.OUT)) if x['admissible']]
     out = f'{TR.IMG}_checks/composite_gallery'; os.makedirs(out, exist_ok=True)

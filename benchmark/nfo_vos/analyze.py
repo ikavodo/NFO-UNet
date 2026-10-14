@@ -120,7 +120,7 @@ def main():
         sec[meth] = np.median([float(np.load(f'{d}/{f}')['sec_per_frame']) for f in os.listdir(d)])
 
     L = [f'# NFO VOS benchmark: results ({TR.RUN})', '',
-         f'{pt.trial.nunique()} starts, {TR.W}-frame windows (round-robin schedule, spec §3a), pseudo-GT at 224.', '']
+         f'{pt.trial.nunique()} starts, {TR.W}-frame windows (round-robin schedule, spec §3a), SAM2-ceiling at 224.', '']
     tab = pt[pt.method.isin(present)].groupby('method')[COLS].mean().reindex(present)
     tab.insert(1, 'init fails', pt[pt.method.isin(present)].groupby('method').init_fail.sum())
     tab['s/frame*'] = pd.Series(sec)

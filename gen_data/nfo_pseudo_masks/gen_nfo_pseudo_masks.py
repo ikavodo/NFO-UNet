@@ -434,7 +434,7 @@ def main():
                              f'*_{EXT_TAG}_native.png for --extend-edges/--extend-only; the 224 files are not touched')
     parser.add_argument('--min-width-scale', type=float, default=4,
                         help='union_gt_outlier thin-component filter width in 224-space px (native: x800/224); '
-                             '0 = off. Use with --native-tag so the production pseudo-GT is not overwritten')
+                             '0 = off. Use with --native-tag so the production SAM2-ceiling is not overwritten')
     parser.add_argument('--native-tag', default=NATIVE_TAG, help='file tag for --native-only main-pass masks')
     args = parser.parse_args()
     NATIVE_ONLY = args.native_only

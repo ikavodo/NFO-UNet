@@ -6,7 +6,7 @@ Status: draft for sign-off (hypotheses, boundaries, pass/fail). Nothing below ha
 
 The NFO VOS benchmark needs labels. Two generators exist:
 
-- **S (appearance propagation, the pseudo-GT).** SAM2 *video* predictor, prompted with GT box + centre point at
+- **S (appearance propagation, the SAM2-ceiling).** SAM2 *video* predictor, prompted with GT box + centre point at
   every confirmed-clear checkpoint, propagated forward and backward up to the neighbouring checkpoint. Then:
   union, clip to the dilated GT box, and removal of components narrower than min_width_px
   (gen_nfo_pseudo_masks.py:230–260).
@@ -24,7 +24,7 @@ and is not a finding by itself.
 
 ## Phase 0 — cheapest kill (run first, minutes, existing data)
 
-H2 below needs only the 20 brush frames and pseudo-GT. Run it before any new generator code.
+H2 below needs only the 20 brush frames and SAM2-ceiling. Run it before any new generator code.
 
 **Confound to remove first:** S's post-processing deletes thin components. If S misses small fragments, the cause
 may be our filter, not SAM2. So H2 is computed on **raw** SAM2 propagation (pre-filter). That needs one re-run of
@@ -80,7 +80,7 @@ The variable is the **inference principle**, as a 2×2 design:
 |                           | no shape prior | shape prior (anchor silhouettes) |
 |---------------------------|----------------|----------------------------------|
 | no per-frame appearance   | box only (B)   | L: retrieval by box aspect only   |
-| per-frame appearance      | S (pseudo-GT)  | L|S ∪ S: retrieval conditioned on S, union (current) |
+| per-frame appearance      | S (SAM2-ceiling)  | L|S ∪ S: retrieval conditioned on S, union (current) |
 
 Depth cleaning and the empty-scene penalty are extra information neither S nor L has. They are a separate,
 reported add-on, not part of the 2×2.
@@ -94,7 +94,7 @@ reported add-on, not part of the 2×2.
   (J 0.58–0.69) mixes style with retest. Recommendation: a second annotator draws polygons on 10 of the 17 frames
   (~20 min). Without that, H1 is stated against "this annotator's polygons" only, and the human-behaviour claim
   rests on the citation, not on our data.
-- **v for H1** needs an independent visibility per frame. v from pseudo-GT area would be circular for S. Use
+- **v for H1** needs an independent visibility per frame. v from SAM2-ceiling area would be circular for S. Use
   v = |brush ∩ polygon| / |polygon| on frames that have both: 5 now (1164, 1183, 1214, 1224, 1263). Brush the 12
   remaining polygon frames for n = 17 (~1.5–2 h), or accept n = 5 as a pilot.
 

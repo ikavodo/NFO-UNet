@@ -1,9 +1,9 @@
 """Exemplar silhouettes retrieved by partial evidence, blended by signed distance, minus near depth; vs the hand
 masks of seq1 segment 4. 2026-10-13      python -m benchmark.nfo_vos.exemplar_gt
 
-Database: pseudo-GT of seq1's confirmed-clear frames (fully visible, same person), cropped to the GT box (mirrored
+Database: SAM2-ceiling of seq1's confirmed-clear frames (fully visible, same person), cropped to the GT box (mirrored
 for leftward segments); frames within +-EXCL of the target are excluded.
-Evidence in frame t:  P = pseudo-GT (visible person);  N = "background seen through a gap": empty-scene disparity
+Evidence in frame t:  P = SAM2-ceiling (visible person);  N = "background seen through a gap": empty-scene disparity
 < N_DISP (far) AND |frame - empty scene| < N_DIFF (unchanged) -> the person is not there.
 Retrieval: exemplars with box aspect within ASP of t's (the box width follows the stride), resized into t's box,
 shifted by dx in SHIFTS * box width; score = |S n P| / |P| - |S n N| / |S|. Blend the TOP best by averaging signed
@@ -137,7 +137,7 @@ def main():
         for k in H:
             cache.setdefault(k, silhouette(k, E, bg, d))
             c2.setdefault(k, silhouette(k, E, bg, d, v2=True))
-        cands = {'pseudo-GT P': lambda k: cache[k][1], 'P u G (gap change)': lambda k: c2[k][1] | c2[k][3],
+        cands = {'SAM2-ceiling P': lambda k: cache[k][1], 'P u G (gap change)': lambda k: c2[k][1] | c2[k][3],
                  'v1 (S - depth>0.2) u P': lambda k: (cache[k][0] & (d <= 0.2)) | cache[k][1],
                  'v2 silhouette S': lambda k: c2[k][0],
                  'v2 (S - depth>0.2) u P': lambda k: (c2[k][0] & (d <= 0.2)) | c2[k][1],
@@ -169,7 +169,7 @@ def main():
         ax[1, j].set_title(str(k))
     for a_ in ax.flat:
         a_.axis('off')
-    fig.suptitle('top: red = pseudo-GT (P), orange = changed far-gap pixels (G), blue = background seen through a gap (N), yellow = v2 silhouette\n'
+    fig.suptitle('top: red = SAM2-ceiling (P), orange = changed far-gap pixels (G), blue = background seen through a gap (N), yellow = v2 silhouette\n'
                  'bottom: green = your brush, cyan = your polygon, yellow = v2 silhouette, magenta = v2 label', fontsize=10)
     fig.tight_layout(); fig.savefig(f'{IMG}/exemplar_silhouette.png', dpi=80)
     print(f'-> {IMG}/exemplar_silhouette.png')

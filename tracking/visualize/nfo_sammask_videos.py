@@ -1,4 +1,4 @@
-"""Render each NFO sequence with its SAM2 pseudo-GT masks (*_sammask.png) overlaid, as .mp4.
+"""Render each NFO sequence with its SAM2 SAM2-ceiling masks (*_sammask.png) overlaid, as .mp4.
 
     python -m tracking.visualize.nfo_sammask_videos [--seqs seq1_gt ...] [--fps 25] [--scale 2]
 

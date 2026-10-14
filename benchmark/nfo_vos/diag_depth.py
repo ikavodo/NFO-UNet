@@ -1,10 +1,10 @@
 """Quick feasibility check: does empty-scene depth mark where the person CAN be seen (foliage gaps)? 2026-10-13
 
     python -m benchmark.nfo_vos.diag_depth      # seq1 segment 4, every 5th frame; regions: GT box, and
-                                                # convex hull of the pseudo-GT (oracle silhouette proxy) in the box;
+                                                # convex hull of the SAM2-ceiling (oracle silhouette proxy) in the box;
                                                 # depth input short side 518 (default) and 1036
 
-Labels: native pseudo-GT (visible = 1, rest of the box = 0); hand masks replace them later.
+Labels: native SAM2-ceiling (visible = 1, rest of the box = 0); hand masks replace them later.
 Scores (AUC for visible vs not):
   far    -delta_bg(x): empty-scene disparity (Depth Anything V2 Large, larger = nearer); a gap shows far stuff
   change delta_t(x) - delta_bg(x), delta_t affine-aligned to delta_bg on pixels outside the box (label-free)
@@ -112,11 +112,11 @@ def run(depth, region, fig):
     im = ax[0, 1].imshow(dbg, cmap='magma'); ax[0, 1].set_title('empty-scene disparity δ_bg (bright = near)')
     fig.colorbar(im, ax=ax[0, 1], fraction=0.035)
     ax[1, 0].imshow(dbg, cmap='magma'); ax[1, 0].contour(union, [0.5], colors='cyan', linewidths=0.5)
-    ax[1, 0].set_title('δ_bg + union of seg-4 pseudo-GT (cyan)')
+    ax[1, 0].set_title('δ_bg + union of seg-4 SAM2-ceiling (cyan)')
     im = ax[1, 1].imshow(np.where(b, change, np.nan), cmap='coolwarm', vmin=-np.nanpercentile(abs(change[b]), 99),
                          vmax=np.nanpercentile(abs(change[b]), 99))
     ax[1, 1].contour(g, [0.5], colors='k', linewidths=0.5); fig.colorbar(im, ax=ax[1, 1], fraction=0.035)
-    ax[1, 1].set_title(f'frame {k}: δ_t − δ_bg in hull (red = nearer now), black = pseudo-GT')
+    ax[1, 1].set_title(f'frame {k}: δ_t − δ_bg in hull (red = nearer now), black = SAM2-ceiling')
     for a_ in ax.flat:
         a_.axis('off')
     fig.tight_layout(); fig.savefig(f'{IMG}/seg4_depth_1036.png', dpi=80)

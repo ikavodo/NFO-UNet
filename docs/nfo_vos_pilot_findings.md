@@ -1,6 +1,11 @@
 # NFO VOS pilot: what worked (2026-10-05)
 
-Pilot: seq1 segments 4–5, 21 starts, 51-frame windows, pseudo-GT at 224 (spec
+> **Naming (2026-10-14):** "SAM2-ceiling" = the label formerly called pseudo-GT (gen_nfo_pseudo_masks.py: SAM2.1-L,
+> GT box + centre point at confirmed-clear checkpoints, propagated both ways, union, clipped to the GT box, thin
+> components removed; files `*_sammask*.png`). It is an oracle-prompted SAM2 reference, not ground truth.
+
+
+Pilot: seq1 segments 4–5, 21 starts, 51-frame windows, SAM2-ceiling at 224 (spec
 `docs/superpowers/specs/2026-10-02-nfo-vos-benchmark-pilot-design.md`, rev. 4). Two segments: all
 numbers descriptive.
 
@@ -128,7 +133,7 @@ numbers descriptive.
 - Reading: a better first mask is a real lever for the visible part, worth at most about +0.03
   overall and +0.08 to +0.10 on the hard starts. Even a perfect first mask leaves the hard starts
   below the rest (0.81 vs 0.85+), so propagation under heavy occlusion still loses some.
-- Upper bound only: the GT mask is the 224 pseudo-GT mapped to native.
+- Upper bound only: the GT mask is the 224 SAM2-ceiling mapped to native.
 
 ## Visible-mask decomposition at t₀ (extent ∩ background-difference) — 2026-10-08
 - On the 17 hard starts (B0 or T1 init failures), J vs the GT t₀ mask: T1's own t₀ mask 0.292,
@@ -143,7 +148,7 @@ numbers descriptive.
 ## Next (cheapest first)
 0. **Do not miss:** SAM-PT and SAM-PD are required baselines for T4-1n in the full run (spec §8).
 1. Decide the benchmark's question: modal VOS (B0 strong, integration does not help) vs amodal
-   person extent/localisation (integration helps; scored on human boxes, so no pseudo-GT bias;
+   person extent/localisation (integration helps; scored on human boxes, so no SAM2-ceiling bias;
    matches the original NFO-UNet localisation task).
 2. If amodal: proper amodal baselines (an amodal VOS / amodal completion method), not enlarged
    modal boxes; then the feature-fusion SAM2 variant targets amodal extent.
@@ -296,9 +301,9 @@ numbers descriptive.
 - **Data.** All 61 windows; frames t₀+6, +9, …, +36 (11 per window); T1 = cached cluster masks.
   Alignment = GT box centres (oracle; tracker alignment is a later arm).
 - **Candidates.** Pixels in a 10 px ring around T1's mask, inside the GT box at t (dilated 10 px).
-  Labels: pseudo-GT visible mask.
+  Labels: SAM2-ceiling visible mask.
 - **Composites.** raw recency; GT-free cleaned (each view weighted by sigmoid(z_pix − 3) against the
-  warm-up background); oracle-cleaned (pseudo-GT visibility).
+  warm-up background); oracle-cleaned (SAM2-ceiling visibility).
 - **Scores** (higher = add):
   - z16 (stride-16 empty-scene cue);
   - z4 (the same on SAM2 stride-4 features);
@@ -326,14 +331,14 @@ numbers descriptive.
   - Oracle cleaning moves the layered pixel score from 0.115 to 0.127, nowhere near the 0.30 bar.
   - Mask-level ΔJ on seq2–4: −0.0014 to 0.0000 for every arm. τ tuned on seq1 adds almost nothing.
 - **Why (measured, interpretation not verified):** missed GT pixels hug T1's boundary: 51% lie within
-  2 px of T1's mask, 66% within 4 px, 82% within 10 px. The pseudo-GT is 224 px upsampled, about
+  2 px of T1's mask, 66% within 4 px, 82% within 10 px. The SAM2-ceiling is 224 px upsampled, about
   3.6 native px per GT pixel. So most "missed visible pixels" are consistent with boundary
-  quantization between T1's native mask and the coarse pseudo-GT, not real uncovered body parts.
+  quantization between T1's native mask and the coarse SAM2-ceiling, not real uncovered body parts.
   Hand masks at native resolution (the earlier hand-annotation proposal) would settle it.
 - `diag_fine_add.py`.
 
-## Native-resolution pseudo-GT and scoring — 2026-10-12
-- **Pseudo-GT regenerated at native 800×600** (`gen_nfo_pseudo_masks --native-only`; 224 files kept).
+## Native-resolution SAM2-ceiling and scoring — 2026-10-12
+- **SAM2-ceiling regenerated at native 800×600** (`gen_nfo_pseudo_masks --native-only`; 224 files kept).
   Native vs upsampled 224: IoU median 0.95 (p10 0.91), same area. GT loaders now prefer the native
   files. **Scoring is native by default**; the old 224 scores are in `per_*_224.csv`.
 - **Native results** (61 starts):
@@ -367,11 +372,11 @@ one threshold on one static map: G = {x : Z_bg(x) > Z_p}. It is the label-free v
 in docs/hand_annotation_plan.md.
 - Depth: Depth Anything V2 (relative disparity δ = a/Z + b, affine unknown per image). Ordering survives,
   but δ from different images is not comparable: align each frame's δ_t to δ_bg by a least-squares
-  affine fit on pixels outside the GT box before comparing. δ_p = median δ_t over pseudo-GT pixels.
+  affine fit on pixels outside the GT box before comparing. δ_p = median δ_t over SAM2-ceiling pixels.
 - Per-frame variant (replaces unknown S_t): visible_t(x) = G(x) ∧ |δ_t(x) − δ_p| < ε.
 - The motion-aligned composite is not needed for δ_p (only a scalar is needed, and the composite is out of
   distribution for a depth net).
-- Kill test (seq1 seg 4, inside GT boxes, the 31 hand frames once they exist; pseudo-GT before that):
+- Kill test (seq1 seg 4, inside GT boxes, the 31 hand frames once they exist; SAM2-ceiling before that):
   pixel AUC of δ_bg for visible vs not-visible. Continue only if AUC ≥ 0.85 AND it adds to the
   empty-scene z (logistic on z alone vs z + δ_bg, leave-frames-out, ΔAUC ≥ 0.02).
 - Rhyme: a z AUC of 0.94 did not turn into J gains when gating T1 (−0.007 on seq2–4). Use depth for
@@ -390,37 +395,37 @@ Robustness test for every static-scene cue (empty-scene z, gap map, depth gap).
 - Arms: raw jitter, and jitter + stabilisation (registration to the warm-up frames) as the do-nothing
   compensator. Expected: B0/T1 roughly unchanged; static cues degrade unless stabilised.
 
-## First hand masks (seq1 seg 4, 20 frames, semi-modal) vs pseudo-GT — 2026-10-13
+## First hand masks (seq1 seg 4, 20 frames, semi-modal) vs SAM2-ceiling — 2026-10-13
 
 - 20 frames annotated in CVAT (16 drawn without prefill, 4 edited from the prefill: +438..826 / −185..1073 px).
   The annotator ignored thin branches over the body, so the masks are **semi-modal**.
-- Pseudo-GT vs hand (mean over frames): J 0.527 / P 0.744 / R 0.652 on frames < 1230; J 0.693 / P 0.783 /
+- SAM2-ceiling vs hand (mean over frames): J 0.527 / P 0.744 / R 0.652 on frames < 1230; J 0.693 / P 0.783 /
   R 0.855 on frames ≥ 1230.
-- Disagreement goes both ways: 14.4k px only in hand, 20.7k px only in pseudo-GT. Of each, ~11% is in the feet
-  band (bottom 1/6 of the box), ~36–41% within 3 px of the pseudo-GT edge, ~48–53% farther.
+- Disagreement goes both ways: 14.4k px only in hand, 20.7k px only in SAM2-ceiling. Of each, ~11% is in the feet
+  band (bottom 1/6 of the box), ~36–41% within 3 px of the SAM2-ceiling edge, ~48–53% farther.
   Figure: images/benchmark/rr_checks/hand/hand_vs_pseudo.png.
 - Not yet known: the annotator's own test–retest agreement (noise floor).
 
 ## Exemplar silhouettes as labels (exemplar_gt.py) — 2026-10-13, seq1 seg 4, NOT held out
 
-Retrieve clear-frame silhouettes of the same person by partial evidence (pseudo-GT = visible; far + unchanged
-= background through a gap), blend the top 3 by signed distance, remove near depth (> 0.2), union pseudo-GT.
-vs brush hand masks (20 fr): J 0.582 / P 0.644 / R 0.850 (pseudo-GT 0.618 / 0.766 / 0.764).
-vs polygon hand masks (3 fr): J 0.579 / P 0.759 / R 0.717 (pseudo-GT 0.500 / 0.852 / 0.555).
+Retrieve clear-frame silhouettes of the same person by partial evidence (SAM2-ceiling = visible; far + unchanged
+= background through a gap), blend the top 3 by signed distance, remove near depth (> 0.2), union SAM2-ceiling.
+vs brush hand masks (20 fr): J 0.582 / P 0.644 / R 0.850 (SAM2-ceiling 0.618 / 0.766 / 0.764).
+vs polygon hand masks (3 fr): J 0.579 / P 0.759 / R 0.717 (SAM2-ceiling 0.500 / 0.852 / 0.555).
 Caveat: the depth threshold (0.2 vs 0.3) was chosen on these same frames. A verdict needs held-out hand frames.
 Walker polygon (rolling_polygon.py) and mean template (template_gt.py) were worse: J 0.41 / 0.33 vs brush.
 v2 (head-complete exemplars, 4-band sideways alignment to evidence, positive evidence G = far-gap pixels changed
 > 25 grey levels vs the empty scene), fixed before running, same frames (not held out):
 | label | vs brush J / P / R (20 fr) | vs polygon J / P / R (3 fr) |
-| pseudo-GT P | 0.618 / 0.766 / 0.764 | 0.500 / 0.852 / 0.555 |
+| SAM2-ceiling P | 0.618 / 0.766 / 0.764 | 0.500 / 0.852 / 0.555 |
 | P u G | 0.636 / 0.744 / 0.814 | 0.551 / 0.845 / 0.623 |
 | v2 (S - depth>0.2) u P u G | 0.594 / 0.648 / 0.881 | 0.604 / 0.747 / 0.758 |
-30% of clear-frame pseudo-GT silhouettes lack the head (top 12% of box < 2% of mask). G alone: precision 0.87 vs
+30% of clear-frame SAM2-ceiling silhouettes lack the head (top 12% of box < 2% of mask). G alone: precision 0.87 vs
 brush, covers 0.47 of it. G is the pixel empty-scene cue, so labels containing it favour cue-based methods.
 
 ## PRE-REGISTERED (2026-10-13, written before running): automatic extent-leaning labels vs polygon hand labels
 
-Question: does a simple automatic label agree with the annotator's polygon labels better than the pseudo-GT, with
+Question: does a simple automatic label agree with the annotator's polygon labels better than the SAM2-ceiling, with
 recall prioritised?
 - Reference: polygon hand labels, drawn as convex hulls of clicked points (one hull per part: head+torso+arms,
   each leg; union). The 3 earlier free-hand polygons (1183, 1214, 1263) are a side check only.
@@ -428,17 +433,17 @@ recall prioritised?
 - Held-out frames, not inspected before the freeze: seg 5 (L walk) 1490, 1520, 1550, 1580, 1610; seg 0 (R walk)
   30, 70, 110.
 - Method (exemplar_gt.py v2 without G):
-  1. bank = pseudo-GT of seq1 frames with visibility v >= v_min and head present (top 12% of box >= 2% of mask),
+  1. bank = SAM2-ceiling of seq1 frames with visibility v >= v_min and head present (top 12% of box >= 2% of mask),
      cropped to the GT box, mirrored to one direction; excluded within ±10 frames of the target; hand masks never
      enter the bank;
-  2. retrieve the top 3 by |S n P| / |P| - |S n N| / |S| (P = pseudo-GT; N = disparity < 0.1 and
+  2. retrieve the top 3 by |S n P| / |P| - |S n N| / |S| (P = SAM2-ceiling; N = disparity < 0.1 and
      |frame - empty scene| < 8), aspect within 15%, shift ±10% of box width; blend by mean signed distance;
      4-band sideways alignment (±15%, bands with >= 20 evidence pixels only);
   3. remove pixels with empty-scene disparity > θ;
   4. label = cleaned silhouette ∪ P.
 - Tuned on the tuning frames only: θ ∈ {0.15, 0.2, 0.3, none}, v_min ∈ {0.6, 0.8, clear frames}; max F₂.
 - Primary criterion: F₂ (recall weighted 2×) vs the polygon labels, pooled mean over held-out frames.
-  PASS: F₂(label) ≥ F₂(pseudo-GT) + 0.05 AND precision ≥ 0.60. J, P, R also reported.
+  PASS: F₂(label) ≥ F₂(SAM2-ceiling) + 0.05 AND precision ≥ 0.60. J, P, R also reported.
 - Ablations on the held-out frames (one change each): no band alignment; no depth cleaning; v_min = clear frames.
 - Context: brush vs free-hand polygon J 0.58–0.69 on 3 frames = scale of the annotator's own variation.
 AMENDMENT (2026-10-13, before running): reference = free-hand polygon labels (CVAT, mask type; *_handpoly.png),
@@ -446,15 +451,15 @@ not point hulls (three hulls were 1.3–1.7× the polygon area on 3 frames). Emp
 segment's warm-up frames (seg 0/4: 946–1113, seg 5: 1349–1435). Code: benchmark/nfo_vos/extent_label_test.py.
 RESULT (2026-10-13): PASS by the pre-registered rule.
 - Tuning (seg 4, 9 frames) selected theta = none (no depth cleaning) and v_min = clear frames (122 head-complete
-  exemplars); F2 0.776 vs pseudo-GT 0.639.
-- Held-out (seg 5 + seg 0, 8 frames), mean: label F2 0.798 / J 0.615 / P 0.686 / R 0.835; pseudo-GT F2 0.706 /
+  exemplars); F2 0.776 vs SAM2-ceiling 0.639.
+- Held-out (seg 5 + seg 0, 8 frames), mean: label F2 0.798 / J 0.615 / P 0.686 / R 0.835; SAM2-ceiling F2 0.706 /
   J 0.641 / P 0.920 / R 0.682. ΔF2 +0.093, 95% bootstrap CI over frames [+0.012, +0.203]; precision 0.686 ≥ 0.60.
 - The gain sits in heavily occluded frames (1610: 0.658 vs 0.228; 30: 0.557 vs 0.421; 1520: 0.821 vs 0.677);
   easy frames tie. J is 0.026 lower: the label trades precision for recall, as intended.
 - Ablations on held-out: no band alignment F2 0.800; no depth cleaning and v_min = clear are identical to the
   frozen label (both were already its setting). Depth and band alignment contribute nothing measurable.
 - So the simplest version suffices: label = signed-distance blend of the 3 best head-complete clear-frame
-  silhouettes (retrieved by pseudo-GT coverage minus "background seen through a gap") ∪ pseudo-GT.
+  silhouettes (retrieved by SAM2-ceiling coverage minus "background seen through a gap") ∪ SAM2-ceiling.
 - Limits: 8 held-out frames (CI lower bound below the +0.05 margin), one annotator, one sequence.
   Figure: images/benchmark/rr_checks/hand/extent_label_heldout.png.
 
@@ -462,14 +467,14 @@ RESULT (2026-10-13): PASS by the pre-registered rule.
 
 Zhu, Tian, Metaxas & Dollár, "Semantic Amodal Segmentation", CVPR 2017 (arXiv 1509.01329): annotators asked
 to outline occluded objects draw amodal (full-extent) regions, with high agreement between annotators. This
-supports treating our polygon labels as near-amodal and SAM2 pseudo-GT as modal. Our annotator tried to stay
+supports treating our polygon labels as near-amodal and SAM2 SAM2-ceiling as modal. Our annotator tried to stay
 modal but still drew extent-leaning outlines (polygon ⊇ brush, 86–94% containment, 10–46% larger).
 
 ## Label robustness: do conclusions depend on the label? (label_robustness.py) — 2026-10-13, seq1 only
 
-Mean region J (native). Labels: pseudo-GT / silhouette label (L = (silhouette − disparity > 0.2) ∪ pseudo-GT),
+Mean region J (native). Labels: SAM2-ceiling / silhouette label (L = (silhouette − disparity > 0.2) ∪ SAM2-ceiling),
 over 15 seq1 windows; and on hand frames inside windows: polygons (n = 13) / brush (n = 14).
-| method | pseudo-GT | silhouette | polygon | brush |
+| method | SAM2-ceiling | silhouette | polygon | brush |
 | b0 | 0.681 | 0.593 | 0.528 | 0.511 |
 | t1 | 0.699 | 0.609 | 0.555 | 0.563 |
 | b0-om | 0.757 | 0.640 | 0.567 | 0.580 |
@@ -483,11 +488,11 @@ Differences (95% bootstrap CI over windows / frames; no twin clustering, indicat
 Reading: the sign of every main comparison is the same under all four labels (oracle init helps; T1 ≥ B0 by a
 small margin). Absolute J drops by ~0.1 under the silhouette label and ~0.15 under hand labels. Gaps shrink under
 the extent-leaning labels, and on 13–14 hand frames the oracle-init CIs include 0. Point vs box prompt is the one
-ordering that flips (pt below box on pseudo-GT/polygon, above B0 on brush): small n, not interpreted.
+ordering that flips (pt below box on SAM2-ceiling/polygon, above B0 on brush): small n, not interpreted.
 
 ### Where the gap to the hand labels sits: precision vs recall (2026-10-13, ad hoc, seq1 windows)
 
-Same frames as the robustness table. Mean per frame of J / P / R / area(pred)/area(hand); "pseudo" = the pseudo-GT
+Same frames as the robustness table. Mean per frame of J / P / R / area(pred)/area(hand); "pseudo" = the SAM2-ceiling
 itself scored against the hand label (= the label generator, non-causal multi-anchor SAM2).
 
 | vs polygon (n=13) | J | P | R | area ratio | vs brush (n=14) | J | P | R | area ratio |
@@ -502,14 +507,14 @@ itself scored against the hand label (= the label generator, non-causal multi-an
 
 Reading: box-init errors are mixed (leaks: P 0.72-0.75 at ~polygon-sized area). Oracle init removes the leaks
 (P -> 0.91) but does not raise recall (0.57-0.63 -> 0.60-0.62), hence the small J gain. Oracle-init methods sit within
-0.02 J of the pseudo-GT itself; the remaining gap to the polygon is recall (~0.35-0.40 of polygon area), i.e. the
+0.02 J of the SAM2-ceiling itself; the remaining gap to the polygon is recall (~0.35-0.40 of polygon area), i.e. the
 modal/near-amodal gap plus missed fragments (not separable without per-frame visibility). Area ratios are means of
 per-frame ratios (skewed by a few leaking frames). seq1 only, one annotator.
 
 ### PRE-REGISTERED: pixel-level background suppression of T1 (2026-10-13, written before running)
 
 T1 (SAMURAI, box start) masks with pixels where |frame - empty-scene median| < tau deleted. tau from {4, 8, 12, 16, 24}
-chosen on seq1 by window J vs pseudo-GT; applied unchanged to seq2-4. PASS: seq2-4 J gain > 0, 95% window-bootstrap CI
+chosen on seq1 by window J vs SAM2-ceiling; applied unchanged to seq2-4. PASS: seq2-4 J gain > 0, 95% window-bootstrap CI
 excluding 0. Reference: oracle-init gain. Script: benchmark/nfo_vos/bg_suppress.py.
 
 Decision (user, 2026-10-13): benchmark windows must not start on a confirmed-clear frame (11/61 currently do, grid
@@ -524,27 +529,27 @@ per-cell change detector (features carry texture, not just intensity), but the p
 Side result: on seq2-4, T1 - B0 = -0.003 [-0.008, +0.002] and oracle-init gain +0.015 [+0.003, +0.027]: much smaller
 than on seq1 (+0.018, +0.064). The baselines barely separate outside seq1.
 
-## Test (a), 2026-10-14: amodal video model (Diffusion-VAS) on pseudo-GT vs hand polygons — FAIL
+## Test (a), 2026-10-14: amodal video model (Diffusion-VAS) on SAM2-ceiling vs hand polygons — FAIL
 - **Pre-registered** (in `amodal_dvas.py` docstring, before running): Diffusion-VAS amodal stage (Chen, Ramanan &
   Khurana, CVPR 2025, arXiv 2412.04623; code @ bbea113, weights kaihuac/diffusion-vas-amodal-segmentation), input =
-  pseudo-GT modal masks + Depth Anything V2-L depth, 25-frame clips at stride 3 (25 fps footage, model trained at
-  8 fps). A = prediction ∪ pseudo-GT at native res. Pass: J(A) > J(pseudo-GT) vs polygons (paired CI > 0) and P ≥ 0.75.
+  SAM2-ceiling modal masks + Depth Anything V2-L depth, 25-frame clips at stride 3 (25 fps footage, model trained at
+  8 fps). A = prediction ∪ SAM2-ceiling at native res. Pass: J(A) > J(SAM2-ceiling) vs polygons (paired CI > 0) and P ≥ 0.75.
 - **Result** (17 seq1 polygon frames × 3 seeds):
 
   | | J | P | R |
   |---|---|---|---|
-  | pseudo-GT | 0.597 | 0.892 | 0.642 |
+  | SAM2-ceiling | 0.597 | 0.892 | 0.642 |
   | amodal A | 0.580 | 0.642 | 0.838 |
 
   ΔJ −0.017 [−0.061, +0.034], better on 6/17; seed spread 0.015 J. Only 32% of the added pixels lie inside the
-  polygon; added area 1.64× pseudo-GT. Demo-faithful low-res union: J 0.577 (deviation irrelevant).
-- Gain does not track how incomplete the pseudo-GT is (Spearman ρ = −0.22 between pseudo-GT recall and ΔJ, p = 0.41);
-  big gains only where pseudo-GT nearly vanished (1610: R 0.19 → J 0.19 → 0.43).
+  polygon; added area 1.64× SAM2-ceiling. Demo-faithful low-res union: J 0.577 (deviation irrelevant).
+- Gain does not track how incomplete the SAM2-ceiling is (Spearman ρ = −0.22 between SAM2-ceiling recall and ΔJ, p = 0.41);
+  big gains only where SAM2-ceiling nearly vanished (1610: R 0.19 → J 0.19 → 0.43).
 - Cost: 23–25 s per 25-frame clip (25 denoising steps × CFG), 6.2 GiB peak.
 - Fourth mask-widening approach with the same signature (recall up, precision down more). Visual: 
   `images/benchmark/rr_checks/amodal/dvas_vs_polygon.png`.
 
-## Gap granulometry, 2026-10-14: is polygon ∖ pseudo-GT made of thin structures?
+## Gap granulometry, 2026-10-14: is polygon ∖ SAM2-ceiling made of thin structures?
 - Hypothesis (user): P ≈ S ∧ ¬γ_r(O), M ≈ S ∧ ¬O, so G = P ∖ M ≈ thin occluders (void candidates).
   Pattern spectrum f(r) = 1 − |γ_r(G)|/|G| (Maragos, TPAMI 1989). Pre-registered bar: f(3) ≥ 0.5.
 - Result (17 seq1 polygon frames, 24 114 gap px): f(3) = **0.491**, just under the bar (not supported as stated).
@@ -558,15 +563,15 @@ than on seq1 (+0.018, +0.064). The baselines barely separate outside seq1.
 
 - Reading: the enclosed gap is thin (consistent with the hypothesis); most of the gap is outside the person's hull,
   thinner slivers there are consistent with polygon-outline imprecision, and thick outside chunks (1164: f(3) 0.11;
-  1610: 0.06) are whole parts the pseudo-GT missed. Not checked: whether enclosed thin gaps are branches or
-  background between limbs; the pseudo-GT min-width filter (H2) also creates thin gaps from deleted thin person parts.
+  1610: 0.06) are whole parts the SAM2-ceiling missed. Not checked: whether enclosed thin gaps are branches or
+  background between limbs; the SAM2-ceiling min-width filter (H2) also creates thin gaps from deleted thin person parts.
 - `gap_granulometry.py`; visual `images/benchmark/rr_checks/gap_granulometry/gap_by_thickness.png`.
 
 ## H2 RESULT, 2026-10-14: SAM2 itself drops sub-cell visible fragments; our 14 px filter is not the cause
 - Pre-registered in `label_generators_design.md:58-66`. Raw SAM2 union re-run on seq1 segs 0/4/5 with the
   thin-component filter off (`--min-width-scale 0 --native-tag sammask_nofilt_native`; production filter = bbox
   width < 14 native px). Filter effect isolated as U vs filter(U) from the same run (the re-run differs from the
-  stored pseudo-GT by SAM2 run-to-run variation: 9/428 frames identical, mean |xor| 76 px).
+  stored SAM2-ceiling by SAM2 run-to-run variation: 9/428 frames identical, mean |xor| 76 px).
 - Per brush (modal) component, seg4, 20 frames, 94 components (74 detached); 1 cell = 117 native px²:
 
   | area (cells) | n | recall, filter off | recall, filter on |
@@ -586,7 +591,7 @@ than on seq1 (+0.018, +0.064). The baselines barely separate outside seq1.
 - `h2_fragments.py`; visual `images/benchmark/rr_checks/h2/filter_removed.png`.
 
 ## Composite gating tests, 2026-10-14 (`composite_tests.py`, bars fixed in its docstring before running)
-- **Test 1 (fine evidence vs brush, 18 seg-4 frames; candidates = GT box ∖ pseudo-GT, 317 k px, 4.3% person,
+- **Test 1 (fine evidence vs brush, 18 seg-4 frames; candidates = GT box ∖ SAM2-ceiling, 317 k px, 4.3% person,
   411 px in sub-cell brush components): PASS.** AUC all / sub-cell:
 
   | score | all | sub-cell |
@@ -598,21 +603,21 @@ than on seq1 (+0.018, +0.064). The baselines barely separate outside seq1.
   | z16 | 0.800 | 0.723 |
   | corr4 (composite correspondence), any composite | 0.46–0.50 | 0.39–0.52 |
 
-  The same scores were killed on 2026-10-12 against the coarse pseudo-GT (precision 0.11–0.14 at 50% reach): consistent
+  The same scores were killed on 2026-10-12 against the coarse SAM2-ceiling (precision 0.11–0.14 at 50% reach): consistent
   with that kill being a label artefact. The composite adds nothing beyond the empty-scene cue (correspondence at
   chance; layered < pix_bg). Not measured: precision at useful recall (4% positives; AUC alone can hide low precision);
   sub-cell positives come from few components.
 - **Test 2 (SAM2 image predictor on the GT-free composite, box + centre point): FAIL.** vs polygons (17):
-  pseudo-GT J/P/R 0.597/0.892/0.642; M_C 0.485/0.527/0.872; M ∪ M_C 0.512 (ΔJ −0.085 [−0.151, −0.014]);
+  SAM2-ceiling J/P/R 0.597/0.892/0.642; M_C 0.485/0.527/0.872; M ∪ M_C 0.512 (ΔJ −0.085 [−0.151, −0.014]);
   S1 prompt candidate M_C ∧ changed cells 0.493. vs brush ΔJ −0.172. The composite mask leaks (precision 0.53):
   same signature as the amodal box prompt (T4c-1). S1 in this form is dead.
-- Implication: sub-cell evidence exists at pixel/stride-4 level from the empty scene alone; pseudo-GT-based scoring
-  cannot reward recovering it (the pseudo-GT lacks those pieces), so S3 must be evaluated on human labels.
+- Implication: sub-cell evidence exists at pixel/stride-4 level from the empty scene alone; SAM2-ceiling-based scoring
+  cannot reward recovering it (the SAM2-ceiling lacks those pieces), so S3 must be evaluated on human labels.
 - **Test 2b (composite mask as extent envelope + empty-scene depth filter, `composite_envelope.py`): FAIL.**
-  V̂ = (M_C ∧ disparity ≤ 0.2) ∪ M vs polygons (17): J/P/R 0.581/0.691/0.787 vs pseudo-GT 0.597/0.892/0.642,
+  V̂ = (M_C ∧ disparity ≤ 0.2) ∪ M vs polygons (17): J/P/R 0.581/0.691/0.787 vs SAM2-ceiling 0.597/0.892/0.642,
   ΔJ −0.016 [−0.070, +0.040] (7/17 better). vs brush (18): ΔJ −0.069 [−0.114, −0.022]. The depth filter raises
   M_C's precision 0.53 → 0.67 but cuts recall 0.87 → 0.64. Containment R(M_C, polygon) 0.87; ≥ 0.9 on 5/17 frames.
-- Pattern across today's and yesterday's labels vs polygons: pseudo-GT 0.597, Diffusion-VAS 0.580, V̂ 0.581,
+- Pattern across today's and yesterday's labels vs polygons: SAM2-ceiling 0.597, Diffusion-VAS 0.580, V̂ 0.581,
   exemplar silhouette v2 0.604 (3 fr), filter-off SAM2 0.608: all J ≈ 0.58–0.61 with different P/R. Consistent with an
   annotator-noise ceiling against a single annotator; the inter-annotator J would test this.
 - **λ₂ gate (frame-vs-composite match inside the envelope M_C, `composite_match.py`): FAIL.** 18 brush frames,
@@ -622,7 +627,7 @@ than on seq1 (+0.018, +0.064). The baselines barely separate outside seq1.
   from the empty scene" ≈ "visible person": the person is the only moving thing). Not excluded: SAM2's learned q·k
   projections in memory attention using the composite differently than backbone cosine; tracker (non-oracle) alignment.
 
-## V = S ∧ ¬O at pixel level, no learning: FIRST LABEL TO BEAT THE PSEUDO-GT vs POLYGONS — 2026-10-14
+## V = S ∧ ¬O at pixel level, no learning: FIRST LABEL TO BEAT THE SAM2-CEILING vs POLYGONS — 2026-10-14
 - `factorised_label.py` (fixed before running). S = M_C (SAM2 image predictor on the GT-free composite; oracle
   GT-box alignment and box prompt); ¬O = pixel change vs the empty scene (pix_bg = log 5×5 SSD), threshold τ chosen
   leave-one-frame-out on the brush frames (τ = 6.31 ≈ median of pix_bg inside M_C; LOFO range 6.31–6.99).
@@ -630,10 +635,10 @@ than on seq1 (+0.018, +0.064). The baselines barely separate outside seq1.
 
   | vs | label | J | P | R |
   |---|---|---|---|---|
-  | polygons (17) | pseudo-GT M | 0.597 | 0.892 | 0.642 |
+  | polygons (17) | SAM2-ceiling M | 0.597 | 0.892 | 0.642 |
   | | M_C ∧ change (prompt alone) | 0.568 | 0.860 | 0.624 |
   | | **V̂** | **0.680** | 0.835 | 0.778 |
-  | brush (18) | pseudo-GT M | 0.643 | 0.773 | 0.795 |
+  | brush (18) | SAM2-ceiling M | 0.643 | 0.773 | 0.795 |
   | | **V̂** | 0.665 | 0.734 | 0.874 |
 
   ΔJ vs polygons **+0.083 [+0.036, +0.135], 13/17 better: PASS**; vs brush +0.022 [−0.002, +0.052], 9/18.
@@ -641,6 +646,6 @@ than on seq1 (+0.018, +0.064). The baselines barely separate outside seq1.
 - Why it works where every widening failed: the envelope supplies extent (S), the empty-scene change carves the
   occluders (¬O) at pixel resolution; precision drops only 0.89 → 0.84 while recall rises 0.64 → 0.78.
 - Caveats: one sequence, one annotator; τ tuned on seg-4 brush frames (polygon frames in segs 0/5 are cross-segment,
-  not cross-sequence held out); composite alignment and SAM2 prompt use GT boxes (oracle); M is the pseudo-GT, not a
+  not cross-sequence held out); composite alignment and SAM2 prompt use GT boxes (oracle); M is the SAM2-ceiling, not a
   tracker's mask. Next: replace M by T1's own mask and GT alignment by tracker alignment.
 - Visual: `images/benchmark/rr_checks/composite_tests/factorised_added.png`.

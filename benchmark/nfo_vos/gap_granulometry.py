@@ -1,7 +1,7 @@
-"""Is the polygon-minus-pseudo-GT gap thin? Granulometry of G = P ∖ M on seq1 polygon frames (2026-10-14).
+"""Is the polygon-minus-SAM2-ceiling gap thin? Granulometry of G = P ∖ M on seq1 polygon frames (2026-10-14).
 
 Hypothesis (user): the human polygon P ≈ S ∧ ¬γ_r(O) (annotator removes thick occluders, draws through thin ones),
-SAM2 pseudo-GT M ≈ S ∧ ¬O, so G = P ∖ M ≈ S ∧ (O ∖ γ_r(O)) consists of thin structures (thin branches).
+SAM2 SAM2-ceiling M ≈ S ∧ ¬O, so G = P ∖ M ≈ S ∧ (O ∖ γ_r(O)) consists of thin structures (thin branches).
 γ_r = morphological opening with a disk of radius r. Pattern spectrum (Maragos, IEEE TPAMI 1989):
     f(r) = 1 − |γ_r(G)| / |G|      (fraction of the gap removed by an opening of radius r)
 Pre-registered: hypothesis supported if f(3) ≥ 0.5 (structures ≤ ~7 px wide, < half a stride-16 cell).
@@ -80,7 +80,7 @@ def main():
         a_.set_title(str(k), fontsize=8); a_.axis('off')
     for a_ in ax.ravel()[len(ks):]:
         a_.axis('off')
-    fig.suptitle('gap = polygon minus pseudo-GT (green outline). red: thin (removed by opening r<=3), '
+    fig.suptitle('gap = polygon minus SAM2-ceiling (green outline). red: thin (removed by opening r<=3), '
                  'yellow: r 4-8, blue: thick (survives r=8)', fontsize=9)
     fig.tight_layout(); fig.savefig(f'{IMG}/gap_by_thickness.png', dpi=75)
 

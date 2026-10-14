@@ -2,13 +2,13 @@
 Written before running; pass bars fixed here.
 
 Test 1 (fine evidence, gates S3): on the 20 seq1 seg-4 brush frames, candidates = GT box (dilated 10 px) minus the
-  pseudo-GT M; positive = brush person pixel (void 2 excluded), negative = the rest. Scores as in diag_fine_add.py
-  (2026-10-12, then scored against the coarse pseudo-GT): empty-scene cues z16, z4, pix_bg and layered / correspondence
+  SAM2-ceiling M; positive = brush person pixel (void 2 excluded), negative = the rest. Scores as in diag_fine_add.py
+  (2026-10-12, then scored against the coarse SAM2-ceiling): empty-scene cues z16, z4, pix_bg and layered / correspondence
   scores against the raw, GT-free and oracle composites at pixels and stride-4 features. Report AUC pooled, and on the
   H2 class (positives in brush components < 1 stride-16 cell, i.e. sub-cell pieces, vs all negatives).
   PASS: best GT-free score AUC ≥ 0.80 on the sub-cell class.
 Test 2 (extent, gates S1/S2): SAM2 image predictor (sam2.1 b+) on the GT-free composite C of frame k (history
-  k-6..k-1, aligned onto k by GT box centres = oracle alignment), prompted like the pseudo-GT generator (GT box +
+  k-6..k-1, aligned onto k by GT box centres = oracle alignment), prompted like the SAM2-ceiling generator (GT box +
   its centre point), single-mask output → M_C. Scored vs polygons (17) and brush (20): M_C, M ∪ M_C, and the S1 prompt
   candidate M_C ∧ changed cells (stride-16 static z ≥ 2, descriptive, untuned).
   PASS: mean J(M ∪ M_C) > mean J(M) vs polygons with paired bootstrap CI > 0.
@@ -106,7 +106,7 @@ def main():
                 S1[k] = dict(y=(Bm == 1)[sl][c_], sub=small[sl][c_], **{a: v[c_] for a, v in Sc.items()})
             print(f'{k} done', flush=True)
 
-    print('\nTEST 1: AUC, candidates = GT box minus pseudo-GT; pos = brush person (20 seg-4 frames)')
+    print('\nTEST 1: AUC, candidates = GT box minus SAM2-ceiling; pos = brush person (20 seg-4 frames)')
     arms = [a for a in next(iter(S1.values())) if a not in ('y', 'sub')]
     y = np.concatenate([d['y'] for d in S1.values()]); sub = np.concatenate([d['sub'] for d in S1.values()])
     print(f'  {len(y)} candidates, {y.sum()} positive, {(y & sub).sum()} in sub-cell components')
@@ -146,7 +146,7 @@ def main():
             for mm, col in ((h, 'cyan'), (M, 'lime'), (MC, 'magenta')):
                 ax[i, j].contour(mm[y0:y1, x0:x1].astype(np.uint8), [0.5], colors=col, linewidths=0.6)
             ax[i, j].set_title(ttl, fontsize=7); ax[i, j].axis('off')
-    fig.suptitle('top: frame k, bottom: GT-free composite C. cyan = polygon, green = pseudo-GT, magenta = SAM2 on C',
+    fig.suptitle('top: frame k, bottom: GT-free composite C. cyan = polygon, green = SAM2-ceiling, magenta = SAM2 on C',
                  fontsize=9)
     fig.tight_layout(); fig.savefig(f'{IMG}/composite_extent.png', dpi=75)
 

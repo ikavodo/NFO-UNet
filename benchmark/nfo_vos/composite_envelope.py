@@ -2,7 +2,7 @@
 occluders removed by the empty-scene depth filter of the silhouette label (exemplar_gt.py:141: keep disparity ≤ 0.2).
 Corrects test 2 (composite_tests.py), which scored M_C as if it were a modal mask.
 
-References: hand polygons (17) and brush masks (18) only. Pseudo-GT M is a competitor row, not a reference.
+References: hand polygons (17) and brush masks (18) only. SAM2-ceiling M is a competitor row, not a reference.
   containment: R(M_C, hand) and share of frames with R ≥ 0.9
   V̂ = (M_C ∧ d ≤ 0.2) ∪ M          (same form as silhouette label v1/v2)
 PASS (gate for S2): mean J(V̂) > mean J(M) vs polygons, paired bootstrap CI > 0.
@@ -73,7 +73,7 @@ def main():
     # side-by-side filled masks for frames with both polygon and brush
     import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt
     ks = [k for k in tag('handpoly') if k in tag('handmask_raw')][:4]
-    cols = ['frame', 'polygon', 'brush', 'pseudo-GT M', 'M_C (composite extent)', '(M_C ∧ far) ∪ M']
+    cols = ['frame', 'polygon', 'brush', 'SAM2-ceiling M', 'M_C (composite extent)', '(M_C ∧ far) ∪ M']
     fig, ax = plt.subplots(len(ks), len(cols), figsize=(11, 2.6 * len(ks)))
     for i, k in enumerate(ks):
         P = cv2.imread(f'{GT}/{k:05d}_handpoly.png', 0) == 1

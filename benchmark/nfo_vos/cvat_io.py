@@ -14,9 +14,9 @@ Hull annotation (2026-10-13): a 'points' shape is turned into its convex hull; s
 (e.g. head+torso+arms, left leg, right leg) give the union of their hulls.
 
 export: all 155 native frames (annotate only the TARGETS; the rest are for flipping) and a CVAT-for-images 1.1
-annotation file pre-filling the TARGETS with the native pseudo-GT as one 'person' mask each.
+annotation file pre-filling the TARGETS with the native SAM2-ceiling as one 'person' mask each.
 import: rasterise 'person' (1) and 'void' (2, painted over person) masks and polygons to 0/1/2 PNGs at 800x600
-(tag 'handmask' by default, 'handmask_scratch' for the from-scratch task), then print pseudo-GT P/R vs hand.
+(tag 'handmask' by default, 'handmask_scratch' for the from-scratch task), then print SAM2-ceiling P/R vs hand.
 
 Mask RLE (CVAT XML <mask rle=... left top width height>): run lengths over the mask's bounding box,
 row-major, alternating background/foreground and starting with background (assumed from CVAT's
@@ -100,13 +100,13 @@ def import_(xml, tag='handmask'):
                     cv2.fillPoly(lab, [np.round(pts).astype(np.int32)], val)
         p, h = gt_mask_native(SEQ, k), lab == 1
         if p is not None and (lab == p.astype(np.uint8)).all():   # untouched prefill: not a hand label
-            print(f'{k}: identical to pseudo-GT, skipped (not annotated yet?)')
+            print(f'{k}: identical to SAM2-ceiling, skipped (not annotated yet?)')
             continue
         cv2.imwrite(f'{GT}/{k:05d}_{tag}.png', lab)
         print(f'{k}: {len(shapes)} shapes ({", ".join(sorted({m.tag for m in shapes}))}), {int((lab == 1).sum())} px')
         keep = lab != 2
         tp = (p & h & keep).sum()
-        print(f'{k}: pseudo-GT precision {tp / max((p & keep).sum(), 1):.2f} recall {tp / max(h.sum(), 1):.2f}'
+        print(f'{k}: SAM2-ceiling precision {tp / max((p & keep).sum(), 1):.2f} recall {tp / max(h.sum(), 1):.2f}'
               f'  void {(~keep).mean() * 100:.2f}% of frame')
 
 

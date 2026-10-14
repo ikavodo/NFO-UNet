@@ -2,15 +2,15 @@
 
 ## Why
 
-Every number on NFO is scored against SAM2-made pseudo-GT. Two open questions decide what the numbers
+Every number on NFO is scored against SAM2-made SAM2-ceiling. Two open questions decide what the numbers
 mean:
 
-1. **Does the pseudo-GT miss visible person (low recall)?** If it does, methods that add real person
+1. **Does the SAM2-ceiling miss visible person (low recall)?** If it does, methods that add real person
    pixels are penalised.
-2. **Is V̄ a better visible-part label?** V̄ is the motion-aligned average of the past 6 frames' pseudo-GT;
+2. **Is V̄ a better visible-part label?** V̄ is the motion-aligned average of the past 6 frames' SAM2-ceiling;
    it combines body parts seen in different frames, so it may be closer to extent than to "visible now".
 
-Hand masks at native resolution answer both: compare pseudo-GT and V̄ against them, then rescore
+Hand masks at native resolution answer both: compare SAM2-ceiling and V̄ against them, then rescore
 B0/T1.
 
 ## Segment
@@ -28,13 +28,13 @@ Auto-completion targets on the same scene and path:
   background.**
 - **Void (2):** a genuinely ambiguous pixel (leaf edge over the body, blur). Excluded from scoring;
   report the void fraction.
-- **Edits go both ways:** you may erase pseudo-GT pixels, not only add. Store additions and removals as
-  separate layers, so pseudo-GT precision = 1 − removed/pseudo and recall = kept/hand.
+- **Edits go both ways:** you may erase SAM2-ceiling pixels, not only add. Store additions and removals as
+  separate layers, so SAM2-ceiling precision = 1 − removed/pseudo and recall = kept/hand.
 - **Frames:** every 5th frame plus every t₀, 33 frames.
-- **Anchoring check:** annotate 3 frames **from scratch first**, before seeing their pseudo-GT, then the
-  same 3 starting from the pseudo-GT. Their disagreement is the anchoring bias.
+- **Anchoring check:** annotate 3 frames **from scratch first**, before seeing their SAM2-ceiling, then the
+  same 3 starting from the SAM2-ceiling. Their disagreement is the anchoring bias.
 - **Test–retest:** redo 3 frames on another day for your own agreement. That agreement is the noise floor.
-- **Tool:** CVAT, brush/eraser on the native frame. Import the native pseudo-GT as the starting mask
+- **Tool:** CVAT, brush/eraser on the native frame. Import the native SAM2-ceiling as the starting mask
   (e.g. CVAT's segmentation-mask import format), with a separate `void` label. Use neighbouring frames,
   since motion is how fragments are seen.
 - **SAM / SAM2 / SAM3 clicks: not for the evaluation segment.** Any assistant's biases enter the labels
@@ -42,7 +42,7 @@ Auto-completion targets on the same scene and path:
   - SAM clicks → SAM-like blobs, which favour B0/T1;
   - negative clicks placed from the background model → the empty-scene cue, which favours our own
     cue-based methods;
-  - positive clicks inside the pseudo-GT → the pseudo-GT itself.
+  - positive clicks inside the SAM2-ceiling → the SAM2-ceiling itself.
   Assisted labelling is fine for *auto-completion and training* labels, and only with its bias measured
   on the 3 from-scratch frames.
 - **Save:** `data/nfo_processed/seq1_gt/<idx>_handmask.png` (0/1/2 at 800×600). Data, not code:
@@ -50,9 +50,9 @@ Auto-completion targets on the same scene and path:
 
 ## What it produces
 
-- Pseudo-GT precision / recall / J vs hand, by visibility v and by distance to the edge.
+- SAM2-ceiling precision / recall / J vs hand, by visibility v and by distance to the edge.
 - **V̄ vs hand**, in the same terms: settles whether V̄ is a better label or extent in disguise.
-- B0, T1, T1-om rescored on segment 4 against hand vs pseudo-GT: does any difference or ranking
+- B0, T1, T1-om rescored on segment 4 against hand vs SAM2-ceiling: does any difference or ranking
   change?
 
 ## Auto-completing other segments (same scene, static camera)
@@ -76,14 +76,14 @@ static.
   The posterior also captures wind (foliage that is sometimes in front), and n_obs shows where we have
   any evidence at all: only where the person passed.
 - **Transfer.** For seg 5 / seg 0 frames: visible = Ŝ_t ∧ (P(O) < ½), restricted to pixels with evidence.
-  Elsewhere fall back to the pseudo-GT.
+  Elsewhere fall back to the SAM2-ceiling.
 - **The hard part is Ŝ_t.** It is the silhouette, not a box. Options:
   - SAM2 on the motion-aligned composite (the A/4 extent: +0.06–0.08 box IoU on NFO, amodal IoU ~0.75 on
     GPJATK; finally a use for it);
   - the hand-segment silhouettes shifted along the path, since the person walks at a similar height;
-  - the union of pseudo-GT over the window.
-- **Validation (cheap):** hand-annotate 5 frames of seg 5. Measure transfer vs pseudo-GT precision and
-  recall against them. Bar: recall up without precision falling below the pseudo-GT's.
+  - the union of SAM2-ceiling over the window.
+- **Validation (cheap):** hand-annotate 5 frames of seg 5. Measure transfer vs SAM2-ceiling precision and
+  recall against them. Bar: recall up without precision falling below the SAM2-ceiling's.
 
 ### Model 2 (if 1 is not enough): one-shot fine-tuning on the hand segment
 
@@ -111,7 +111,7 @@ target (visible now). Not recommended at this stage.
 ## Auto-completion strategy (revised 2026-10-12, measured path overlap)
 
 **Fact (measured):** every seq1 segment walks through the same pixels as segment 4. 91–99% of each
-segment's box-swept area lies inside segment 4's, and 99–100% of each segment's visible (pseudo-GT) pixels
+segment's box-swept area lies inside segment 4's, and 99–100% of each segment's visible (SAM2-ceiling) pixels
 do. So one hand-labelled segment observes the whole occluder in front of the path, for the whole
 sequence.
 
@@ -131,8 +131,8 @@ to gap pixels.
    - Then the gap map is defined everywhere, including pixels segment 4 never covered.
 2. **Per-pixel labeller**, trained on segment 4's hand frames:
    - logistic regression or a small gradient-boosted classifier;
-   - features: Ŵ(x), pixel z and feature z16 vs empty scene, the pseudo-GT, position in the GT box
-     (relative y), distance to the pseudo-GT;
+   - features: Ŵ(x), pixel z and feature z16 vs empty scene, the SAM2-ceiling, position in the GT box
+     (relative y), distance to the SAM2-ceiling;
    - target: hand mask (void excluded).
 
    Few parameters, interpretable, and it learns e.g. that new pixels at the box bottom are shadow.
@@ -141,8 +141,8 @@ to gap pixels.
 4. **Validate before trusting:**
    - Leave-frames-out within segment 4 (train on 2/3, test on 1/3) gives an immediate estimate.
    - Then hand-label 5 frames of segment 5 (opposite direction) and 3 of segment 6 (run).
-   - Bar: auto label J vs hand ≥ pseudo-GT J vs hand + 0.05, with precision no more than 0.02 below
-     the pseudo-GT's.
+   - Bar: auto label J vs hand ≥ SAM2-ceiling J vs hand + 0.05, with precision no more than 0.02 below
+     the SAM2-ceiling's.
 5. **Human in the loop:** import the auto labels into CVAT and correct only the errors, which is
    much faster than labelling. Log correction time per frame.
 

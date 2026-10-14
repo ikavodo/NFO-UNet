@@ -8,7 +8,7 @@ references, the empty scene (static background layer) and a person-aligned clean
     python -m benchmark.nfo_vos.diag_fine_add gallery   # visual trace of ring candidates and additions
 
 Per window, frames t0+6, +9, ..., +36; candidates = 10 px ring around T1's mask inside the GT box at t
-(dilated 10 px); label = pseudo-GT visible. Alignment = GT box centres (oracle).
+(dilated 10 px); label = SAM2-ceiling visible. Alignment = GT box centres (oracle).
 """
 import json
 import os
@@ -202,7 +202,7 @@ def gallery(ids=('seq2_s1_t315', 'seq4_s1_t313', 'seq3_s5_t1283', 'seq1_s4_t1194
     """Visual trace of the ring test (2026-10-12), one row per window at frame t0+rel. Tiles:
     frame + GT (green) + T1 edge (magenta) | ring candidates: yellow = missed visible (GT, not T1),
     red = ring not GT | additions at 50% reach by layer_pix_gtfree: green = correct, red = wrong |
-    GT-free cleaned composite | Vbar = aligned PSEUDO-GT history visibility (oracle input, not a cue)."""
+    GT-free cleaned composite | Vbar = aligned SAM2-CEILING history visibility (oracle input, not a cue)."""
     out = f'{TR.IMG}_checks/fine_add'; os.makedirs(out, exist_ok=True)
     T = {t['id']: t for t in json.load(open(TR.OUT)) if t['admissible']}
     rows = []
@@ -224,7 +224,7 @@ def gallery(ids=('seq2_s1_t315', 'seq4_s1_t313', 'seq3_s5_t1283', 'seq1_s4_t1194
         yr = G[ring]; sv = s[ring]; o = np.argsort(-sv); tp = np.cumsum(yr[o])
         k = min(np.searchsorted(tp / max(yr.sum(), 1), 0.5), len(o) - 1); thr = sv[o][k]
         add = ring & (s >= thr)
-        # Vbar from the aligned pseudo-GT history (as composites() oracle weights)
+        # Vbar from the aligned SAM2-ceiling history (as composites() oracle weights)
         H = list(range(f - a4.N + 1, f)); c0 = centre(seq, f)
         w = np.exp(-np.arange(len(H) - 1, -1, -1) / a4.TAU_AGE); w /= w.sum()
         vbar = sum(wi * shift(mask_native(seq, h)[0].astype(np.float32), c0[0] - centre(seq, h)[0], c0[1] - centre(seq, h)[1], cv2.INTER_NEAREST)
@@ -241,7 +241,7 @@ def gallery(ids=('seq2_s1_t315', 'seq4_s1_t313', 'seq3_s5_t1283', 'seq1_s4_t1194
         tiles = []
         for im, name in ((a, 'GT green, T1 magenta'), (b, 'ring: yellow missed, red not GT'),
                          (c, f'adds @50% reach: prec {(add & G).sum() / max(add.sum(), 1):.2f}'),
-                         (d, 'GT-free clean C'), (e, 'Vbar = PSEUDO-GT history')):
+                         (d, 'GT-free clean C'), (e, 'Vbar = SAM2-CEILING history')):
             im = cv2.resize(im[sl], (190, 300), interpolation=cv2.INTER_NEAREST)
             cv2.putText(im, name, (3, 12), cv2.FONT_HERSHEY_SIMPLEX, 0.33, (255, 255, 255), 1)
             tiles.append(im)

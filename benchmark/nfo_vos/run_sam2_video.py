@@ -35,7 +35,7 @@ def build_predictor(method):
 
 
 def gt_mask_native(seq, idx):
-    """Pseudo-GT at native 800x600. Prefers the native mask (*_sammask_native.png, written by
+    """SAM2-ceiling at native 800x600. Prefers the native mask (*_sammask_native.png, written by
     gen_nfo_pseudo_masks --native-only, 2026-10-12); otherwise upsamples the 224 mask by undoing the
     padded-square downscale (pad 600 -> 800 rows, then 800 -> 224): upscale to 800x800 and drop the
     100-row pads. Bilinear + threshold, cv2 only (importable in the SAMURAI env)."""

@@ -1,8 +1,8 @@
 """H2 (docs/label_generators_design.md:58-66, pre-registered 2026-10-13): does SAM2 drop sub-cell visible fragments,
-or does our pseudo-GT filter? 2026-10-14.
+or does our SAM2-ceiling filter? 2026-10-14.
 
 U = raw SAM2 union (box-clipped, thin-component filter OFF): *_sammask_nofilt_native.png
-M = filter(U): the same run with the 14 px width filter applied (isolates the filter; the stored pseudo-GT differs
+M = filter(U): the same run with the 14 px width filter applied (isolates the filter; the stored SAM2-ceiling differs
     from the re-run by SAM2 run-to-run variation, see check 0)
 0. Reproducibility: filter(U) == M (same code path, gen_nfo_pseudo_masks.py:277-281).
 1. H2 proper, vs brush (modal) masks, seq1 seg4: per brush connected component C (8-conn), recall |C ∧ X| / |C|
@@ -65,7 +65,7 @@ def main():
     print(f'\n1. H2 vs brush: {len(np.unique(R[:, 0]))} frames, {len(R)} components '
           f'({int(R[:, 2].sum())} detached)')
     bins = [(0, 0.5), (0.5, 1), (1, 4), (4, 1e9)]
-    print('   area (cells)   n    recall U (filter off)   recall M (pseudo-GT)   [detached only: n, U, M]')
+    print('   area (cells)   n    recall U (filter off)   recall M (SAM2-ceiling)   [detached only: n, U, M]')
     for lo, hi in bins:
         m = (R[:, 1] >= lo) & (R[:, 1] < hi); d = m & (R[:, 2] == 1)
         print(f'   [{lo:g}, {hi:g})'.ljust(16) + f'{m.sum():4d}    {R[m, 3].mean():.2f}                   {R[m, 4].mean():.2f}'
@@ -91,7 +91,7 @@ def main():
             continue
         M = width_filter(U)
         P_['U'].append(stats(U, P)); P_['M'].append(stats(M, P))
-        Ms = load(k, 'sammask_native')   # gap defined on the stored pseudo-GT, as in gap_granulometry.py
+        Ms = load(k, 'sammask_native')   # gap defined on the stored SAM2-ceiling, as in gap_granulometry.py
         thin = removed(P & ~Ms & hull(Ms), 3)
         tot[0] += (thin & U).sum(); tot[1] += thin.sum()
     for n in P_:
@@ -117,7 +117,7 @@ def main():
         a_.set_title(str(k), fontsize=8); a_.axis('off')
     for a_ in ax.ravel()[len(kp):]:
         a_.axis('off')
-    fig.suptitle('cyan = polygon, green = pseudo-GT (filter on), magenta = SAM2 pixels the 14 px width filter removed',
+    fig.suptitle('cyan = polygon, green = SAM2-ceiling (filter on), magenta = SAM2 pixels the 14 px width filter removed',
                  fontsize=9)
     fig.tight_layout(); fig.savefig(f'{IMG}/filter_removed.png', dpi=75)
 

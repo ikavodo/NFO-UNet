@@ -1,10 +1,10 @@
-"""Score every cached (method, trial) mask stack against the pseudo-GT (spec §5).
+"""Score every cached (method, trial) mask stack against the SAM2-ceiling (spec §5).
 
     python -m benchmark.nfo_vos.score                # NATIVE (default): per_frame.csv, per_trial.csv, montages
     python -m benchmark.nfo_vos.score --res 224      # legacy 224 scoring -> per_frame_224.csv, per_trial_224.csv
 
 Reads the mask cache only - never re-infers.
-- native (2026-10-12): native 800x600 stacks vs the native pseudo-GT (*_sammask_native.png, written by
+- native (2026-10-12): native 800x600 stacks vs the native SAM2-ceiling (*_sammask_native.png, written by
   gen_nfo_pseudo_masks --native-only, the same SAM2 masks before the 224 downscale). Removes the ~3.6 px
   staircase of the upsampled 224 GT. 224 stacks (T4 family) are skipped.
 - 224: native stacks are mapped to 224 with the GT's own downscale (metrics.native_to_224); 224 stacks

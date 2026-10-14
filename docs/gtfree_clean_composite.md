@@ -5,7 +5,7 @@ Code: `benchmark/nfo_vos/diag_composite_diff.py`, `gallery()` (lines 306–351) 
 recency weights from `benchmark/nfo_vos/a4.py`. Written 2026-10-12, documented 2026-10-14.
 
 **Caveat on the name.** Only the *cleaning weights* are GT-free. The *alignment* uses the human GT boxes
-(oracle), and the outline drawn on the first tile is the pseudo-GT (display only).
+(oracle), and the outline drawn on the first tile is the SAM2-ceiling (display only).
 
 ## 1. Setup
 
@@ -80,7 +80,7 @@ Raw composite (no cleaning):
 
 $$C_{\text{raw}}(x) = \sum_{k \in \mathcal{H}} w_k \, A_k(x)$$
 
-Oracle-cleaned composite: replace $g_k$ by the aligned pseudo-GT visibility mask $v_k(x) \in \{0, 1\}$,
+Oracle-cleaned composite: replace $g_k$ by the aligned SAM2-ceiling visibility mask $v_k(x) \in \{0, 1\}$,
 falling back to raw where no history frame saw the person:
 
 $$\bar{V}(x) = \sum_{k} w_k \, v_k(x), \qquad
@@ -102,7 +102,7 @@ Measured (2026-10-12, `docs/nfo_vos_pilot_findings.md`, pre-registered fine-addi
 - comparing frame $t$ against $C$ to decide which pixels to add: AUC 0.47–0.51 for raw, GT-free and oracle
   alike (chance);
 - 51% of the "missed" pixels lie within 2 px of T1's mask, 66% within 4 px: consistent with quantization of the
-  coarse pseudo-GT rather than missed body parts.
+  coarse SAM2-ceiling rather than missed body parts.
 
 ## 9. Known weakness
 

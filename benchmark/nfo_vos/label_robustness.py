@@ -1,5 +1,5 @@
-"""Do benchmark conclusions depend on the label?  B0/T1(/-om/-pt) scored on seq1 against (a) pseudo-GT, (b) the
-silhouette label L = (blended clear-frame silhouette minus empty-scene disparity > 0.2) u pseudo-GT
+"""Do benchmark conclusions depend on the label?  B0/T1(/-om/-pt) scored on seq1 against (a) SAM2-ceiling, (b) the
+silhouette label L = (blended clear-frame silhouette minus empty-scene disparity > 0.2) u SAM2-ceiling
 (extent_label_test.py, J-tuned setting), (c) hand frames (polygons, brush). 2026-10-13
 
     python -m benchmark.nfo_vos.label_robustness      # labels cached in results/benchmark/rr/labels_sil/
@@ -79,7 +79,7 @@ def main():
                         fr[m][tag].append(J(M[m][j], H[t['frames'][j]]))
         print(f"{i + 1}/{len(T)} {t['id']}", flush=True)
 
-    print(f'\nmean J over {len(T)} seq1 windows (pseudo-GT / silhouette label) and over hand frames '
+    print(f'\nmean J over {len(T)} seq1 windows (SAM2-ceiling / silhouette label) and over hand frames '
           f'(polygon n={nh["handpoly"]} / brush n={nh["handmask_raw"]})')
     for m in METHODS:
         print(f"  {m:6s}  {np.mean(win[m]['pseudo']):.3f} / {np.mean(win[m]['sil']):.3f}   |  "

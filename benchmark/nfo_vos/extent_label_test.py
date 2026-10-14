@@ -1,7 +1,7 @@
 """Pre-registered test (docs/nfo_vos_pilot_findings.md, 2026-10-13): automatic extent-leaning labels vs the
 annotator's polygon labels.        python -m benchmark.nfo_vos.extent_label_test
 
-Label = (blended exemplar silhouette minus empty-scene disparity > theta) u pseudo-GT; exemplar_gt.py v2 without G.
+Label = (blended exemplar silhouette minus empty-scene disparity > theta) u SAM2-ceiling; exemplar_gt.py v2 without G.
 Tune (theta, v_min) on seg 4 by mean F2; freeze; score held-out seg 5 + seg 0 once; ablations on held-out.
 """
 import json
@@ -84,20 +84,20 @@ def main():
             res[(th, v)] = np.mean([s['F2'] for s in sc])
             print(f'  theta {th}, v_min {v}: F2 {res[(th, v)]:.3f} [J {np.mean([s["J"] for s in sc]):.3f}]')
     th, v = max(res, key=res.get)
-    print(f'FROZEN: theta {th}, v_min {v}; pseudo-GT tuning F2 {np.mean([scores(gt_mask_native(SEQ, k), H[k])["F2"] for k in TUNE]):.3f}')
+    print(f'FROZEN: theta {th}, v_min {v}; SAM2-ceiling tuning F2 {np.mean([scores(gt_mask_native(SEQ, k), H[k])["F2"] for k in TUNE]):.3f}')
 
-    print('--- HELD-OUT (seg 5 + seg 0, 8 frames), per frame F2: label / pseudo-GT')
-    arms = {'label (frozen)': lambda k: lab(*get(k, v), th), 'pseudo-GT': lambda k: gt_mask_native(SEQ, k),
+    print('--- HELD-OUT (seg 5 + seg 0, 8 frames), per frame F2: label / SAM2-ceiling')
+    arms = {'label (frozen)': lambda k: lab(*get(k, v), th), 'SAM2-ceiling': lambda k: gt_mask_native(SEQ, k),
             'ablation: no band alignment': lambda k: lab(*get(k, v, False), th),
             'ablation: no depth cleaning': lambda k: lab(*get(k, v), None),
             'ablation: v_min = clear': lambda k: lab(*get(k, 'clear'), th)}
     S = {a: [scores(f(k), H[k]) for k in TEST] for a, f in arms.items()}
     for i, k in enumerate(TEST):
-        print(f'  {k}: {S["label (frozen)"][i]["F2"]:.3f} / {S["pseudo-GT"][i]["F2"]:.3f}')
+        print(f'  {k}: {S["label (frozen)"][i]["F2"]:.3f} / {S["SAM2-ceiling"][i]["F2"]:.3f}')
     for a, sc in S.items():
         print(f'  {a:30s} F2 {np.mean([s["F2"] for s in sc]):.3f}  J {np.mean([s["J"] for s in sc]):.3f}  '
               f'P {np.mean([s["P"] for s in sc]):.3f}  R {np.mean([s["R"] for s in sc]):.3f}')
-    dF = np.array([a['F2'] - b['F2'] for a, b in zip(S['label (frozen)'], S['pseudo-GT'])])
+    dF = np.array([a['F2'] - b['F2'] for a, b in zip(S['label (frozen)'], S['SAM2-ceiling'])])
     rng = np.random.default_rng(0)
     bs = [dF[rng.integers(0, len(dF), len(dF))].mean() for _ in range(10000)]
     prec = np.mean([s['P'] for s in S['label (frozen)']])

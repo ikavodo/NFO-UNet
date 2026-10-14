@@ -5,8 +5,8 @@ Cheap test of "static-background evidence removes leaks" before the feature-leve
 
 PRE-REGISTERED (written before running):
 - Empty scene = per-pixel median of the trial's warm-up frames (person-free), grayscale, native 800x600.
-- tau grid TAUS, chosen on seq1 by mean window J vs pseudo-GT. Applied unchanged to seq2-4.
-- PASS: on seq2-4, J(T1+bg) - J(T1) vs pseudo-GT > 0 with 95% window-bootstrap CI excluding 0.
+- tau grid TAUS, chosen on seq1 by mean window J vs SAM2-ceiling. Applied unchanged to seq2-4.
+- PASS: on seq2-4, J(T1+bg) - J(T1) vs SAM2-ceiling > 0 with 95% window-bootstrap CI excluding 0.
 - Reference points: t1-om (oracle-init) gain; seq1 hand frames (polygon/brush) reported descriptively (P/R).
 - Also reported: the same gains on windows that do NOT start on a confirmed-clear frame.
 """
@@ -75,14 +75,14 @@ def main():
         print(f'{i + 1}/{len(T)} {t["id"]}', flush=True)
 
     s1 = [x for x in rows if x['seq'] == 'seq1']
-    print('\nseq1 (tuning): mean window J vs pseudo-GT')
+    print('\nseq1 (tuning): mean window J vs SAM2-ceiling')
     for m in ('b0', 't1', 't1-om') + TAUS:
         print(f'  {"t1+bg tau=" + str(m) if m in TAUS else m:12s} {np.mean([x[str(m)] for x in s1]):.3f}')
     tau = max(TAUS, key=lambda tt: np.mean([x[str(tt)] for x in s1]))
     print(f'chosen tau = {tau}')
 
     def gains(sub, name):
-        print(f'\n{name} (n={len(sub)} windows): differences vs pseudo-GT, mean [95% CI]')
+        print(f'\n{name} (n={len(sub)} windows): differences vs SAM2-ceiling, mean [95% CI]')
         for a, b in ((str(tau), 't1'), ('t1-om', 't1'), ('t1', 'b0')):
             x = np.array([w[a] for w in sub]) - np.array([w[b] for w in sub])
             lo, hi = boot(x)

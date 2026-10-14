@@ -24,16 +24,16 @@ GT, never S itself.
 - **Pilot:** seq1, segment 4 = frames 1154–1308 and segment 5 = frames 1476–1621 (`find_segments`
   on `data/nfo_processed/seq1_gt/groundtruth.txt`). The two are consecutive, so they cover one
   crossing in each direction.
-- **GT:** `{idx:05d}_sammask.png` (224×224), the pseudo-GT from `gen_nfo_pseudo_masks.py`. For the
+- **GT:** `{idx:05d}_sammask.png` (224×224), the SAM2-ceiling from `gen_nfo_pseudo_masks.py`. For the
   pilot it is treated as ground truth, and the label bias is accepted. Edge-extension frames are
   excluded from the pilot (segments 4–5 use none). **Full run:** wherever an extension mask is
   loaded, use `{idx:05d}_sammask_extfix.png` when it exists (occluder pixels removed by
   `gen_data/nfo_pseudo_masks/fix_ext_occluder.py`), else `{idx:05d}_sammask_ext.png`, the same
   precedence `tracking/visualize/nfo_sammask_videos.py:42-43` uses.
-- **Resolution.** SAM2-large computed the pseudo-GT at native 800×600, but it is stored only at
+- **Resolution.** SAM2-large computed the SAM2-ceiling at native 800×600, but it is stored only at
   224×224, after `scale_and_pad_img_to_square` (`gen_nfo_pseudo_masks.py:346`). All methods are
   scored at 224. B0 and T1 run on the **native** frames (`data/nfo_final/nfo_final`, the frames the
-  pseudo-GT came from), never on the 224 frames. SAM2 resizes every input to 1024
+  SAM2-ceiling came from), never on the 224 frames. SAM2 resizes every input to 1024
   (`image_size: 1024` in `sam2.1_hiera_b+.yaml`), so a 224 input would be upsampled about 4.6×,
   which would handicap the baselines. Their native masks are mapped to 224 with the same
   `scale_and_pad_img_to_square` call as the GT. T4 works in 224 space and is scored there directly.
@@ -122,7 +122,7 @@ overlapping windows on one segment are unnecessary.
 
 All SAM2-family calls use **`sam2.1_hiera_base_plus.pt`**, the only SAM2.1 checkpoint present
 locally besides `small`. One backbone for all methods. It is also not the `large` model that
-generated the pseudo-GT, which slightly reduces the shared-model advantage.
+generated the SAM2-ceiling, which slightly reduces the shared-model advantage.
 
 | ID | Method | Environment | Prompt at t₀ |
 |---|---|---|---|
@@ -218,7 +218,7 @@ a new inference run.
 - **Localization against independent GT:** P_norm (LaSOT; Fan et al., arXiv 1809.07845) between
   the centroid of the predicted modal mask and the centre of the `groundtruth.txt` box. An empty P
   counts as a miss. These boxes are human-annotated, amodal, and independent of the SAM2-large
-  pseudo-GT, so this metric does not share the label bias of §2. It also links to the original
+  SAM2-ceiling, so this metric does not share the label bias of §2. It also links to the original
   paper's centre-distance localization (`eval/`, `max_dist_error`). The offset between a modal
   centroid and an amodal centre affects every method, so read P_norm as a comparison between
   methods. No box IoU or success AUC: AUC equals average overlap (Čehovin et al., arXiv 1502.05803),
@@ -278,7 +278,7 @@ a new inference run.
   where the per-frame prompt comes from). This tests our motion tracker's prompts against
   appearance-based prompt propagation, not integration.
 
-- Ablation ladder decomposing the pseudo-GT reference (re-prompting at clear frames → GT-box clip
+- Ablation ladder decomposing the SAM2-ceiling reference (re-prompting at clear frames → GT-box clip
   → backward pass), to explain why modal memory-based variants fail.
 - DAM4SAM (checkpoint already at `../DAM4SAM/checkpoints/`) and SAM2Long.
 - Manual audit (labelme or CVAT, from scratch, modal, AI assist off).
@@ -291,7 +291,7 @@ a new inference run.
   identical frames, and is worth running only if the natural-v analysis turns out too collinear.
 - **Move the whole benchmark to native 800×600 (planned, not optional).** 224 is an artefact of
   repurposing a bounding-box dataset, not a choice made for this benchmark. Native requires
-  (i) the native pseudo-GT stored, which the generator does not currently do
+  (i) the native SAM2-ceiling stored, which the generator does not currently do
   (`gen_nfo_pseudo_masks.py:346` writes only the 224 version), and (ii) T4's 224-calibrated
   parameters rescaled (most are already person-height-relative via `scale_relative_params`).
   Compute argument for staying at 224 is weak: SAM2 encodes every input at 1024×1024

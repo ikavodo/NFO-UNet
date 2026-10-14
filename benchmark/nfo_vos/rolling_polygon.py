@@ -4,7 +4,7 @@ segment 4. 2026-10-13      python -m benchmark.nfo_vos.rolling_polygon
 Articulated 2-D body ("cardboard people", Ju, Black & Yacoob, FG 1996), side view, in box units (H = box height):
 head ellipse, torso trapezoid (shoulders -> hips), two leg strips hip -> foot, two arm strips shoulder -> hand.
 Pose per frame from the box alone: feet at the box's left/right edges (the box widens with the stride), hands
-swing half as far. Proportions (torso width, hip height, limb thickness) are grid-fitted to the pseudo-GT of
+swing half as far. Proportions (torso width, hip height, limb thickness) are grid-fitted to the SAM2-ceiling of
 confirmed-clear frames of the OTHER seq1 segments (fully visible person). Visible = polygon AND disparity <= theta.
 """
 import glob
@@ -57,7 +57,7 @@ def fit_proportions():
         p = dict(zip(GRID, vals))
         j = np.mean([J(walker(box(k), 1 if d == 'R' else -1, **p), gt_mask_native(SEQ, k)) for k, d in F])
         best = max(best or (j, p), (j, p), key=lambda t: t[0])
-    print(f'proportions fitted on {len(F)} clear frames (other segments): {best[1]}, mean J vs pseudo-GT {best[0]:.3f}')
+    print(f'proportions fitted on {len(F)} clear frames (other segments): {best[1]}, mean J vs SAM2-ceiling {best[0]:.3f}')
     return best[1], F
 
 
@@ -70,7 +70,7 @@ def main():
     for name, tag in (('brush', '_handmask_raw'), ('polygon', '_handpoly')):
         H = {int(os.path.basename(f)[:5]): cv2.imread(f, 0) == 1 for f in sorted(glob.glob(f'data/nfo_processed/{SEQ}_gt/*{tag}.png'))}
         print(f'--- vs your {name} masks ({len(H)} frames): mean J / precision / recall')
-        cands = {'pseudo-GT': lambda k: gt_mask_native(SEQ, k), 'walker': W}
+        cands = {'SAM2-ceiling': lambda k: gt_mask_native(SEQ, k), 'walker': W}
         for th in (0.1, 0.2, 0.3):
             cands[f'walker - depth>{th}'] = lambda k, th=th: W(k) & (d <= th)
         for cn, f in cands.items():
@@ -95,7 +95,7 @@ def main():
             c(cv2.imread(poly, 0) == 1, 'cyan')
         c(W(k), 'yellow')(W(k) & (d <= 0.2), 'magenta')
         a_.set_title(str(k))
-    fig.suptitle('top: clear frames, red = pseudo-GT, yellow = walker | bottom: green = your brush, cyan = your polygon,\n'
+    fig.suptitle('top: clear frames, red = SAM2-ceiling, yellow = walker | bottom: green = your brush, cyan = your polygon,\n'
                  'yellow = walker polygon, magenta = walker minus depth>0.2', fontsize=10)
     fig.tight_layout(); fig.savefig(f'{IMG}/rolling_polygon.png', dpi=80)
     print(f'-> {IMG}/rolling_polygon.png')

@@ -87,7 +87,7 @@ def main():
                 a_.set_title(str(k), fontsize=8); a_.axis('off')
             for a_ in ax.ravel()[len(ks):]:
                 a_.axis('off')
-            fig.suptitle('cyan = polygon, green = pseudo-GT, magenta = added by (composite envelope ∧ changed vs empty '
+            fig.suptitle('cyan = polygon, green = SAM2-ceiling, magenta = added by (composite envelope ∧ changed vs empty '
                          'scene, pixel level)', fontsize=9)
             fig.tight_layout(); fig.savefig(f'{IMG}/factorised_added.png', dpi=75)
 
