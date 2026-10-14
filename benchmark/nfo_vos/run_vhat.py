@@ -2,9 +2,12 @@
 exist. Configuration fixed on seq1 (factorised_gtfree.py, factorised_extras.py) before any seq2–4 frame is scored:
 
   V̂_T1(k) = (M_C(k) ∧ z(pix_bg)(k) > 7.5) ∪ T1(k)       for local index j ≥ 6, else T1(k)
-  composite: history k-6..k-1, GT-free cleaning, aligned by a Theil–Sen fit of T1 mask centroids over local [j-12, j]
-  M_C: SAM2 image predictor (sam2.1 b+) on the composite, prompt = blob tracker's merged box at k + its centre,
-       else its merged centre point only
+  composite: history k-6..k-1, GT-free cleaning, aligned by a Theil–Sen fit (x only, dy = 0) of the independent blob
+       tracker's chain over local [j-12, j]
+  M_C: SAM2 image predictor (sam2.1 b+) on the composite, prompt = the blob tracker's merged centre at k (point only;
+       anchor = chain position, or the tracker's own prediction on a chain gap)
+  Re-frozen 2026-10-14 after fixing a NaN-anchor bug in factorised_gtfree.py; chosen on seq1 brush frames
+  (blob alignment + blob point: +0.042 [+0.018, +0.068] vs polygons; robust z τ 7.5 equivalent to raw, 0.007 J).
   z(pix_bg): per-frame robust z (median, 1.4826 MAD) of log(1 + 5×5 mean (R_k − B)²), B = warm-up median
 
 Writes results/benchmark/rr/masks/t1-vhat/<trial>.npz ('masks', same layout as masks/t1) and a per-window summary.
@@ -19,7 +22,7 @@ import torch
 
 from benchmark.nfo_vos import run_t4 as R, trials as TR, velocity as V
 from benchmark.nfo_vos.factorised_extras import pixz
-from benchmark.nfo_vos.factorised_gtfree import composite, interior_point, theil_at
+from benchmark.nfo_vos.factorised_gtfree import composite, theil_at
 from tracking.core.blob_tracker import merged_center
 
 TZ = 7.5
@@ -43,21 +46,15 @@ def main():
         added = []
         for j in range(6, len(t['frames'])):
             k = t['frames'][j]
-            span = range(max(0, j - 12), j + 1)
-            cm = [(l, *np.argwhere(M1[l])[:, ::-1].mean(0)) for l in span if M1[l].any()]
-            if len(cm) < 2:
+            cs = [l for l in range(max(0, j - 12), j + 1) if l in Tk['chain']]
+            if len(cs) < 2:
                 continue
-            ev = [j] + list(range(j - 6, j))
-            fx = theil_at([c[0] for c in cm], [c[1] for c in cm], ev)
-            fy = theil_at([c[0] for c in cm], [c[2] for c in cm], ev)
-            sh = {t['frames'][l]: (fx[j] - fx[l], fy[j] - fy[l]) for l in range(j - 6, j)}
+            fx = theil_at(cs, [TR.to_native(*Tk['chain'][l])[0] for l in cs], [j] + list(range(j - 6, j)))
+            sh = {t['frames'][l]: (fx[j] - fx[l], 0.0) for l in range(j - 6, j)}
             C = composite(seq, k, sh, bg)
-            anchor = Tk['chain'].get(j)
-            if anchor is None:
-                continue
-            cx, cy, bb = merged_center(Tk['dets'][j], *anchor, Tk['kw']['merge_radius'], return_box=True)
-            pt = TR.to_native(cx, cy)
-            bx = None if bb is None else np.array([*TR.to_native(bb[0], bb[1]), *TR.to_native(bb[2], bb[3])], np.float32)
+            anchor = Tk['chain'].get(j) or tuple(R.readout_line(Tk['chain'], j)[:2])   # gap: tracker's own prediction
+            cx, cy = merged_center(Tk['dets'][j], *anchor, Tk['kw']['merge_radius'])
+            pt, bx = TR.to_native(cx, cy), None
             with torch.inference_mode():
                 pred.set_image(np.stack([np.clip(C, 0, 255).astype(np.uint8)] * 3, -1))
                 m, _, _ = pred.predict(point_coords=np.array([pt]), point_labels=np.array([1]), box=bx, multimask_output=False)

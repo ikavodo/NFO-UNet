@@ -667,6 +667,9 @@ than on seq1 (+0.018, +0.064). The baselines barely separate outside seq1.
   Recall +0.16 for −0.02 precision. Still oracle: composite alignment and the SAM2 prompt on C use GT boxes.
   A SAM2-ceiling-scored benchmark would count these additions as false positives (the ceiling lacks them):
   evaluation of this method needs human labels on seq2–4.
+- **CORRECTION (same day):** the GT-free table below was contaminated: on 7/19 frames the blob tracker's chain had a gap,
+  giving a NaN anchor (no blob box, NaN blob point). Fixed (tracker's own prediction on gaps); corrected numbers in the
+  next bullet. The T1-alignment/GT-box/T1-prompt rows were unaffected.
 - **GT-free V̂_T1 (`factorised_gtfree.py`, `factorised_extras.py`): PASS.** Alignment of the composite from (a) the
   independent blob tracker (Theil–Sen on its chain, x-only; median |dx| error vs GT shifts 8.2 px) or (b) T1 mask
   centroids (4.6 px). Prompt on the composite: box or point from the blob tracker or T1. ΔJ(V̂_T1 − T1) vs polygons,
@@ -689,3 +692,9 @@ than on seq1 (+0.018, +0.064). The baselines barely separate outside seq1.
   J 0.554 vs 0.556 with raw τ = 6.31 (vs polygons, 12 frames): equivalent; z is used for other sequences.
 - `run_vhat.py`: GT-free V̂_T1 masks for all 61 windows (masks/t1-vhat/), configuration frozen before any seq2–4
   frame is scored.
+- **Corrected GT-free results** (NaN-anchor fix), ΔJ(V̂_T1 − T1) vs polygons (12 frames): blob/blob point **+0.042
+  [+0.018, +0.068], 9/12 (chosen on brush, +0.016 vs brush)**; blob/blob box +0.037; T1/blob box +0.039; T1/blob point
+  +0.032; blob/GT box +0.044; T1/GT box +0.050; GT/GT box (oracle) +0.062. Strata (pooled): bad T1 init +0.052, good
+  +0.021 for the chosen arm. Robust-z threshold for the chosen arm: τ_z = 7.5, J 0.560 vs 0.567 raw (equivalent),
+  +0.035 [+0.012, +0.062] over T1. `run_vhat.py` re-frozen to blob alignment + blob point + τ_z 7.5 and re-run.
+  Open: with the robust z, seg-0 windows (empty scene from frames 946–1113, far in time) get no additions.

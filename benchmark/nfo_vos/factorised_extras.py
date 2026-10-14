@@ -39,6 +39,7 @@ def main():
         for a in ('t1', 'blob'):
             p = f'{OUT}/MC_{k:05d}_{a}_blob_box.npy'
             mc[a] = np.load(p) if os.path.exists(p) else np.load(f'{OUT}/MC_{k:05d}_{a}_blob_point.npy')
+        mc['blob_pt'] = np.load(f'{OUT}/MC_{k:05d}_blob_blob_point.npy')   # corrected chosen arm
         H = {s: cv2.imread(f'{GT}/{k:05d}_{s}.png', 0) == 1 for s in ('handpoly', 'handmask_raw')
              if os.path.exists(f'{GT}/{k:05d}_{s}.png')}
         D[k] = dict(pb=pb, z=pixz(pb), T1=T1, mc=mc, H=H)
@@ -58,20 +59,20 @@ def main():
             d = dJ(suf, a, 'pb', TAU); lo, hi = ci(d)
             print(f'  align {a:4s} vs {suf:12s} {d.mean():+.3f} [{lo:+.3f}, {hi:+.3f}], better on {(d > 0).sum()}/{len(d)}')
 
-    print('\n2. robust-z threshold (align t1, fallback prompt)')
+    print('\n2. robust-z threshold (chosen arm: blob alignment, blob_point prompt)')
     grid = np.arange(0.0, 12.01, 0.25)
     bk = [k for k in D if 'handmask_raw' in D[k]['H']]
-    tz_all = grid[np.argmax([dJ('handmask_raw', 't1', 'z', g).mean() for g in grid])]
+    tz_all = grid[np.argmax([dJ('handmask_raw', 'blob_pt', 'z', g).mean() for g in grid])]
     print(f'  τ_z chosen on all brush frames: {tz_all:.2f}; raw τ 6.31 corresponds to z of '
           f'{np.median([np.interp(TAU, np.sort(D[k]["pb"].ravel()), np.sort(D[k]["z"].ravel())) for k in D]):.2f} (median over frames)')
     out = []
     for k in D:
         if 'handpoly' not in D[k]['H']:
             continue
-        tz = tz_all if k not in bk else grid[np.argmax([dJ('handmask_raw', 't1', 'z', g, [x for x in bk if x != k]).mean() for g in grid])]
+        tz = tz_all if k not in bk else grid[np.argmax([dJ('handmask_raw', 'blob_pt', 'z', g, [x for x in bk if x != k]).mean() for g in grid])]
         h = D[k]['H']['handpoly']
-        out.append((stats((D[k]['mc']['t1'] & (D[k]['z'] > tz)) | D[k]['T1'], h)[0],
-                    stats((D[k]['mc']['t1'] & (D[k]['pb'] > TAU)) | D[k]['T1'], h)[0], stats(D[k]['T1'], h)[0]))
+        out.append((stats((D[k]['mc']['blob_pt'] & (D[k]['z'] > tz)) | D[k]['T1'], h)[0],
+                    stats((D[k]['mc']['blob_pt'] & (D[k]['pb'] > TAU)) | D[k]['T1'], h)[0], stats(D[k]['T1'], h)[0]))
     o = np.array(out)
     lo, hi = ci(o[:, 0] - o[:, 2])
     print(f'  vs polygons (n={len(o)}): J T1 {o[:, 2].mean():.3f}, raw τ {o[:, 1].mean():.3f}, robust z {o[:, 0].mean():.3f}; '

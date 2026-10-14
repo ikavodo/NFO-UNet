@@ -105,7 +105,8 @@ def main():
         for a in ('blob', 't1'):
             align_err[a].append(np.median([abs(sh[a][i][0] - sh['gt'][i][0]) for i in H]))
         # prompts at frame k (native)
-        cx, cy, bb = merged_center(Tk['dets'][j], *Tk['chain'].get(j, (np.nan, np.nan)), Tk['kw']['merge_radius'], return_box=True)
+        anchor = Tk['chain'].get(j) or tuple(R.readout_line(Tk['chain'], j)[:2])   # chain gap: tracker's own prediction
+        cx, cy, bb = merged_center(Tk['dets'][j], *anchor, Tk['kw']['merge_radius'], return_box=True)
         P = {'gt_box': (box(k), None)}
         if bb is not None:
             (bx0, by0), (bx1, by1) = TR.to_native(bb[0], bb[1]), TR.to_native(bb[2], bb[3])
