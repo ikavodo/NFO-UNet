@@ -667,3 +667,25 @@ than on seq1 (+0.018, +0.064). The baselines barely separate outside seq1.
   Recall +0.16 for −0.02 precision. Still oracle: composite alignment and the SAM2 prompt on C use GT boxes.
   A SAM2-ceiling-scored benchmark would count these additions as false positives (the ceiling lacks them):
   evaluation of this method needs human labels on seq2–4.
+- **GT-free V̂_T1 (`factorised_gtfree.py`, `factorised_extras.py`): PASS.** Alignment of the composite from (a) the
+  independent blob tracker (Theil–Sen on its chain, x-only; median |dx| error vs GT shifts 8.2 px) or (b) T1 mask
+  centroids (4.6 px). Prompt on the composite: box or point from the blob tracker or T1. ΔJ(V̂_T1 − T1) vs polygons,
+  12 frames with history inside the window (7 for blob_box, which exists on 9/12 frames):
+
+  | alignment / prompt | vs brush | vs polygons |
+  |---|---|---|
+  | GT / GT box (oracle ref) | +0.023 | +0.062 [+0.030, +0.098] |
+  | blob / GT box | +0.017 | +0.044 |
+  | T1 / GT box | +0.009 | +0.050 |
+  | **T1 / blob box (chosen on brush)** | +0.022 | **+0.053 [+0.025, +0.082]**, 7/7 |
+  | blob / blob point | +0.018 | +0.036 [+0.011, +0.064] |
+  | T1 / T1 box | +0.016 | +0.030 [+0.012, +0.050] |
+  | T1 / T1 point | +0.012 | +0.028 |
+
+  Fallback prompt (blob box, else blob point), all 12 frames: T1 alignment +0.031 [+0.011, +0.055] vs polygons,
+  +0.016 [+0.005, +0.030] vs brush. Strata (pooled polygon+brush, GT ref vs chosen arm): good T1 init +0.032 / +0.030;
+  bad T1 init +0.076 / +0.047 — larger gains where T1 starts badly.
+- **Transferable threshold:** per-frame robust z of pix_bg, τ_z = 7.5 (chosen on brush, interior of a 0–12 grid):
+  J 0.554 vs 0.556 with raw τ = 6.31 (vs polygons, 12 frames): equivalent; z is used for other sequences.
+- `run_vhat.py`: GT-free V̂_T1 masks for all 61 windows (masks/t1-vhat/), configuration frozen before any seq2–4
+  frame is scored.
