@@ -794,3 +794,15 @@ IJCV 2010 — from memory, unverified), seq2–4 T1 J / R:
 BSUV-Net 2.0 off the shelf: all four Google Drive weight links in `ozantezcan/BSUV-Net-inference@2dc3003`
 README return 404 (2026-10-14). Only the training code is released (GPL-3.0); running it needs retraining on
 CDnet-2014.
+
+### Diffusion-VAS amodal vs the seq2–4 labels (agreement check, 2026-10-14; `amodal_dvas.py` with DVAS_SEQ, 1 seed)
+Same setup as the seq1 test (a): SAM2-ceiling as the modal input, A = prediction ∪ modal. J / P / R against handA:
+- seq2: SAM2-ceiling 0.735 / 0.937 / 0.773; amodal 0.752 / 0.815 / 0.899.
+- seq3: SAM2-ceiling 0.705 / 0.870 / 0.777; amodal 0.698 / 0.779 / 0.871.
+- seq4: SAM2-ceiling 0.664 / 0.966 / 0.682; amodal 0.728 / 0.848 / 0.839. ΔJ +0.064 [+0.015, +0.107].
+
+The amodal additions are 40% / 39% / 59% inside the label. On seq1 polygons the same comparison gave ΔJ −0.017.
+
+Reading: the seq2–4 labels sit between modal and amodal. seq4 leans amodal; seq2 and seq3 do not, which is
+consistent with the annotator's own description ("depends on the frame"). This is a label-convention measurement,
+not a method result.

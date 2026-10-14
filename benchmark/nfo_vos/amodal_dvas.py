@@ -33,12 +33,14 @@ sys.path.append(os.path.abspath('../diffusion-vas'))
 from models.diffusion_vas.pipeline_diffusion_vas import DiffusionVASPipeline  # noqa: E402
 sys.path.pop()
 
-SEQ, GT = 'seq1', 'data/nfo_processed/seq1_gt'
+# 2026-10-14: DVAS_SEQ / DVAS_TAG / DVAS_SEEDS env overrides for the seq2-4 agreement check (handA labels)
+SEQ = os.environ.get('DVAS_SEQ', 'seq1'); GT = f'data/nfo_processed/{SEQ}_gt'
+TAG = os.environ.get('DVAS_TAG', 'handpoly')
 CKPT = os.path.expanduser('~/models/diffusion-vas/diffusion-vas-amodal-segmentation')
 DEPTH = 'depth-anything/Depth-Anything-V2-Large-hf'
 RES, NF, HALF, STRIDE = (256, 512), 25, 12, 3
-SEEDS = (23, 0, 1)
-OUT = 'results/benchmark/rr/amodal_dvas'
+SEEDS = tuple(int(x) for x in os.environ.get('DVAS_SEEDS', '23,0,1').split(','))
+OUT = 'results/benchmark/rr/amodal_dvas' + ('' if SEQ == 'seq1' else f'_{SEQ}')
 IMG = 'images/benchmark/rr_checks/amodal'
 
 
@@ -78,7 +80,7 @@ def stats(a, h):
 
 def main():
     from transformers import AutoImageProcessor, AutoModelForDepthEstimation
-    ks = sorted(int(f[:5]) for f in os.listdir(GT) if f.endswith('_handpoly.png'))
+    ks = sorted(int(f[:5]) for f in os.listdir(GT) if f.endswith(f'_{TAG}.png'))
     os.makedirs(OUT, exist_ok=True); os.makedirs(IMG, exist_ok=True)
     pipe = DiffusionVASPipeline.from_pretrained(CKPT, torch_dtype=torch.float16).to('cuda')
     pipe.enable_model_cpu_offload(); pipe.set_progress_bar_config(disable=True)
@@ -93,7 +95,7 @@ def main():
                           for m in M])[None]
         rgb = torch.stack([RGB_T(Image.fromarray(frame(i)).convert('RGB')) for i in idx])
         dp = depth_clip(rgb, proc, net)
-        h = cv2.imread(f'{GT}/{k:05d}_handpoly.png', 0) == 1
+        h = cv2.imread(f'{GT}/{k:05d}_{TAG}.png', 0) == 1
         low = (mp[0, c, 0].numpy() > 0).astype(np.uint8)
         preds = []
         for s in SEEDS:
@@ -132,7 +134,7 @@ def main():
     import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt
     fig, ax = plt.subplots(2, (len(ks) + 1) // 2, figsize=(12, 6))
     for a_, k in zip(ax.ravel(), ks):
-        A, m, h = np.load(f'{OUT}/{k:05d}.npz')['amodal'][0], modal(k), cv2.imread(f'{GT}/{k:05d}_handpoly.png', 0) == 1
+        A, m, h = np.load(f'{OUT}/{k:05d}.npz')['amodal'][0], modal(k), cv2.imread(f'{GT}/{k:05d}_{TAG}.png', 0) == 1
         ys, xs = np.nonzero(A | h | m)
         y0, y1, x0, x1 = max(0, ys.min() - 15), min(600, ys.max() + 15), max(0, xs.min() - 15), min(800, xs.max() + 15)
         a_.imshow(frame(k)[y0:y1, x0:x1], cmap='gray')
@@ -145,7 +147,7 @@ def main():
         a_.axis('off')
     fig.suptitle('cyan = your polygon, yellow = SAM2-ceiling (modal input), red fill = pixels Diffusion-VAS adds (seed 23)',
                  fontsize=9)
-    fig.tight_layout(); fig.savefig(f'{IMG}/dvas_vs_polygon.png', dpi=75)
+    fig.tight_layout(); fig.savefig(f'{IMG}/dvas_vs_polygon' + ('' if SEQ == 'seq1' else f'_{SEQ}') + '.png', dpi=75)
 
 
 if __name__ == '__main__':
