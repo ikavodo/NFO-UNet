@@ -649,3 +649,21 @@ than on seq1 (+0.018, +0.064). The baselines barely separate outside seq1.
   not cross-sequence held out); composite alignment and SAM2 prompt use GT boxes (oracle); M is the SAM2-ceiling, not a
   tracker's mask. Next: replace M by T1's own mask and GT alignment by tracker alignment.
 - Visual: `images/benchmark/rr_checks/composite_tests/factorised_added.png`.
+- **V̂ on top of the trackers (`factorised_t1.py`, τ = 6.31 fixed from above, not re-tuned): PASS.**
+  V̂_X = (M_C ∧ pix_bg > τ) ∪ X, seq1 hand frames inside trial windows:
+
+  | vs | method | J | P | R |
+  |---|---|---|---|---|
+  | polygons (14) | B0 | 0.516 | 0.711 | 0.568 |
+  | | V̂_B0 | 0.588 | 0.705 | 0.762 |
+  | | T1 | 0.542 | 0.741 | 0.621 |
+  | | **V̂_T1** | **0.602** | 0.720 | 0.779 |
+  | | SAM2-ceiling | 0.590 | 0.884 | 0.637 |
+  | brush (13) | T1 | 0.597 | 0.710 | 0.781 |
+  | | V̂_T1 | 0.619 | 0.675 | 0.880 |
+
+  ΔJ vs polygons: V̂_T1 − T1 **+0.060 [+0.031, +0.091], 12/14**; V̂_B0 − B0 +0.071 [+0.037, +0.107].
+  vs brush: V̂_T1 − T1 +0.022 [+0.002, +0.044]; V̂_B0 − B0 +0.042 [+0.009, +0.080].
+  Recall +0.16 for −0.02 precision. Still oracle: composite alignment and the SAM2 prompt on C use GT boxes.
+  A SAM2-ceiling-scored benchmark would count these additions as false positives (the ceiling lacks them):
+  evaluation of this method needs human labels on seq2–4.
