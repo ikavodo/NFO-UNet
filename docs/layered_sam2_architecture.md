@@ -1,5 +1,81 @@
 # Learned layered refinement for SAM2 under fragmented occlusion — architecture draft (2026-10-14)
 
+## v2 (2026-10-14 evening): "Layer-SAM2" — the version to build first on GPJATK
+
+Supersedes §3 below for phase 1. Written after the modal seq2–4 scoring (`score_void.py`):
+- post-hoc V̂ = T1 on modal labels;
+- T1's remaining headroom is mostly its outline (+0.099 J if missed pixels ≤ 3 px were added), then false
+  positives (+0.069), with sub-cell fragments last (+0.017).
+
+### Target: what a human means by "modal"
+On GPJATK the layers give, per pixel:
+- V = m(1 − a), the visible person;
+- S = m, the amodal person.
+
+Humans label something in between: they bridge small gaps between visible pieces and stay inside the body.
+Parametrised target:
+
+$$T_r = V \cup \big(\varphi_r(V) \wedge S\big), \qquad \varphi_r = \text{morphological closing, disk radius } r$$
+
+- r = 0 is strict modal (SAM2's behaviour); r → ∞ is amodal S.
+- r is measured from real human labels, not chosen.
+- First estimate (seq1, n = 5 frames with both labels): closing the brush mask toward the polygon peaks at r ≈ 8 px,
+  but only reaches J 0.64. So closing explains part of the annotator convention, not all of it. Re-estimate on
+  GPJATK-vs-human once synthetic frames are labelled by a human.
+
+### Inputs per frame t (all GT-free at test time)
+- R_t: the frame.
+- B̂: the empty scene, median of the warm-up frames.
+- C_t: the person composite, past frames t−6..t−1 shifted onto t by the blob tracker's velocity (as now).
+
+All three go through SAM2's frozen image encoder. The B̂ encoding is computed once per window. Each gives features at
+strides 16 / 8 / 4 (image_embed, feat_s1, feat_s0).
+
+### Three added pieces, each zero-initialised (at start the model is exactly SAM2 / SAMURAI)
+
+| piece | input | where it enters SAM2 | code location | what it should buy |
+|---|---|---|---|---|
+| **B: background comparison** | [F(R), F(B̂), F(R) − F(B̂)] at s = 16, 8, 4 → small conv → D^s | D^16: added to the dense prompt embedding (same path as a mask prompt). D^8, D^4: zero-init 1×1 residual on feat_s1, feat_s0 | `mask_decoder.py:205` (`src + dense_prompt_embeddings`), `:224-225` | Precision: drop foliage false positives (+0.069 headroom). Recall where the person is visibly different |
+| **A: composite** | F(C_t) at s = 16, 8, 4 | Same two paths as B (separate convs) | same | Extent S: where gaps may be bridged, and where not |
+| **H: human-modal output token** | one new learned token, like SAM-HQ's HQ token (Ke et al., NeurIPS 2023, arXiv 2306.01567) | Appended to `mask_tokens`; its mask is the output. SAM2's own tokens stay untouched as the fallback | `mask_decoder.py:58, 185` | Learns the bridging convention T_r. The outline (+0.099 headroom) is trained against human-style targets |
+
+Memory and prompting stay unchanged in phase 1: the S1 test showed injected masks snap back. H's mask can be written
+to memory in phase 2.
+
+### Loss (GPJATK)
+
+$$\mathcal L = \mathcal L_{BCE+Dice}(\hat T, T_{r^*}) + \lambda_V\,\mathcal L(\hat V, V) + \lambda_S\,\mathcal L(\hat S, S)$$
+
+V̂ and Ŝ are 1×1 auxiliary heads on the stride-4 features. They force B to carry visibility and A to carry extent,
+so each piece's job is inspectable.
+
+### Ablation table (one variable per row, same data, same trainable-parameter budget)
+
+| row | B | A | H target | question it answers |
+|---|---|---|---|---|
+| 0 | – | – | – | SAM2 / SAMURAI zero-shot |
+| 1 | – | – | T_{r*} | "more data + a new token" baseline (what a reviewer demands) |
+| 2 | ✓ | – | T_{r*} | does the empty scene add beyond row 1? |
+| 3 | – | ✓ | T_{r*} | does the composite add beyond row 1? |
+| 4 | ✓ | ✓ | T_{r*} | together |
+| 5 | ✓ | ✓ | V (r = 0) | is the gain from the target convention or from the layers? |
+
+Evaluation:
+- GPJATK held-out: J vs T_{r*}, and recall binned by fragment size.
+- NFO seq1 (brush + polygon) and seq2–4 tier A (void), for development.
+- seq2–4 tier B, labelled with void, as the final test.
+- Bar: row 4 > row 1 on NFO, CI above 0. The human noise floor (inter-annotator J) is reported beside it.
+
+### Step 1 before any training (no learning, ~half a day)
+Build ~200 GPJATK composites:
+- GPJATK walker × real NFO foliage layer × real NFO empty scene;
+- fragment sizes spanning sub-cell to multi-cell.
+
+Run T1 and B0, and compute the same breakdown as on NFO: recall by fragment size, missed area at the outline vs
+inside vs outside, false-positive share, and the dilation test. Synthetic is a valid proxy only if the profiles
+match NFO's within reason. Otherwise fix the compositing first (matte edges, foliage statistics, blur, noise).
+
+
 Status: design only, nothing built. Motivation: the training-free V̂ = (M_C ∧ change) ∪ T1 beats T1 on seq1 (+0.042 J vs
 polygons, GT-free) but every hand-set parameter failed to transfer: a fixed threshold adds nothing on seq2–4 (0/46
 windows), Otsu leaks (4.8× T1 area) and loses to T1 vs brush. Goal: learn every such parameter from layered
