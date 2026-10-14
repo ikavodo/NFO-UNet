@@ -850,3 +850,40 @@ too-tight bias.
 
 Open question: how much of the boundary band is annotator noise. This needs inter-annotator J on the same frames,
 from the colleague's labels.
+
+## V̂ on all 15 seq1 windows vs the automatic silhouette label, 2026-10-14 (`vhat_vs_silhouette.py`)
+
+**Label:** the frozen F2-PASS label of 2026-10-13: exemplar silhouettes blended by signed distance, ∪ SAM2-ceiling;
+θ = none. 487 frames (local index 6..W−2). Closest prior work, both verified by search:
+- mask transfer from retrieved exemplars: Küttel & Ferrari, CVPR 2012, "Figure-Ground Segmentation by Transferring
+  Window Masks";
+- signed-distance shape blending: Leventon, Grimson & Faugeras, CVPR 2000.
+
+**Results, mean over windows, J / P / R / F2:**
+
+| arm | J | P | R | F2 |
+|---|---|---|---|---|
+| T1 | 0.488 | 0.829 | 0.514 | 0.547 |
+| B0 | 0.478 | 0.800 | 0.507 | 0.538 |
+| V̂_z (frozen robust-z rule) | 0.522 | 0.817 | 0.566 | 0.593 |
+| V̂_anch (u* = 0.85) | 0.522 | 0.814 | 0.581 | 0.597 |
+| SAM2-ceiling (contained in the label) | 0.587 | 1.000 | 0.587 | 0.628 |
+
+**Differences, V̂_anch − T1, window bootstrap:**
+- ΔJ +0.034 [+0.018, +0.052], better in 14/15 windows;
+- ΔR +0.067 [+0.039, +0.106], better in 15/15;
+- ΔF2 +0.050 [+0.025, +0.081].
+
+B0 − T1: ΔJ −0.010 [−0.026, +0.003].
+
+**Reading:**
+- Against the extent-leaning label (the one validated against the polygons), V̂ improves recall in every seq1 window.
+- Against modal void-labelled seq2–4 it does not (ΔJ −0.001).
+- So V̂ moves T1 toward the generous annotator convention, not toward strict visibility.
+
+**Caveats:**
+- Partial circularity: the label's retrieval uses "background seen through a gap" (|frame − empty| < 8), which is
+  the same empty-scene cue V̂ gates on.
+- The label contains the SAM2-ceiling.
+- The label was validated on only 8 held-out polygon frames.
+- seq1 only (15 windows).
