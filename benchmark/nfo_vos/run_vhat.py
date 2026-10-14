@@ -26,7 +26,8 @@ from benchmark.nfo_vos.factorised_gtfree import composite, theil_at
 from tracking.core.blob_tracker import merged_center
 
 TZ = 7.5
-OUT = f'{TR.RES}/masks/t1-vhat'
+THRESH = os.environ.get('VHAT_THRESH', 'z')   # 'z' (frozen 2026-10-14) or 'otsu' (per-frame, inside M_C)
+OUT = f'{TR.RES}/masks/t1-vhat' + ('' if THRESH == 'z' else '-otsu')
 
 
 def main():
@@ -59,7 +60,16 @@ def main():
                 pred.set_image(np.stack([np.clip(C, 0, 255).astype(np.uint8)] * 3, -1))
                 m, _, _ = pred.predict(point_coords=np.array([pt]), point_labels=np.array([1]), box=bx, multimask_output=False)
             pb = np.log(cv2.boxFilter((V.native(k, seq).astype(np.float32) - bg) ** 2, -1, (5, 5)) + 1)
-            add = (m[0] > 0) & (pixz(pb) > TZ) & ~M1[j]
+            if THRESH == 'otsu':
+                v = pb[m[0] > 0]
+                if v.size < 50:
+                    continue
+                lo, hi = v.min(), v.max()
+                u8 = np.clip((pb - lo) / max(hi - lo, 1e-6) * 255, 0, 255).astype(np.uint8)
+                th, _ = cv2.threshold(u8[m[0] > 0][None], 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                add = (m[0] > 0) & (u8 > th) & ~M1[j]
+            else:
+                add = (m[0] > 0) & (pixz(pb) > TZ) & ~M1[j]
             out[j] |= add
             added.append(add.sum() / max(M1[j].sum(), 1))
         np.savez_compressed(path, masks=out)
