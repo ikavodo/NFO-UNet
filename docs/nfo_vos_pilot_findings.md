@@ -543,3 +543,21 @@ than on seq1 (+0.018, +0.064). The baselines barely separate outside seq1.
 - Cost: 23–25 s per 25-frame clip (25 denoising steps × CFG), 6.2 GiB peak.
 - Fourth mask-widening approach with the same signature (recall up, precision down more). Visual: 
   `images/benchmark/rr_checks/amodal/dvas_vs_polygon.png`.
+
+## Gap granulometry, 2026-10-14: is polygon ∖ pseudo-GT made of thin structures?
+- Hypothesis (user): P ≈ S ∧ ¬γ_r(O), M ≈ S ∧ ¬O, so G = P ∖ M ≈ thin occluders (void candidates).
+  Pattern spectrum f(r) = 1 − |γ_r(G)|/|G| (Maragos, TPAMI 1989). Pre-registered bar: f(3) ≥ 0.5.
+- Result (17 seq1 polygon frames, 24 114 gap px): f(3) = **0.491**, just under the bar (not supported as stated).
+  Split by the convex hull of M:
+
+  | region | share of gap | f(1) | f(3) | f(6) |
+  |---|---|---|---|---|
+  | inside hull(M) (enclosed by the person) | 40% | 0.29 | 0.70 | 0.96 |
+  | outside hull(M) (outline overshoot / missed parts) | 60% | 0.11 | 0.45 | 0.69 |
+  | reference: M itself | | 0.00 | 0.02 | 0.11 |
+
+- Reading: the enclosed gap is thin (consistent with the hypothesis); most of the gap is outside the person's hull,
+  thinner slivers there are consistent with polygon-outline imprecision, and thick outside chunks (1164: f(3) 0.11;
+  1610: 0.06) are whole parts the pseudo-GT missed. Not checked: whether enclosed thin gaps are branches or
+  background between limbs; the pseudo-GT min-width filter (H2) also creates thin gaps from deleted thin person parts.
+- `gap_granulometry.py`; visual `images/benchmark/rr_checks/gap_granulometry/gap_by_thickness.png`.
