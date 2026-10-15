@@ -59,6 +59,15 @@ def binned(M, h, cell, out):
         out[[lo <= z < hi for lo, hi in BINS].index(True)].append((M & (L == c)).sum() / cs[c, 4])
 
 
+def bin_ids(v, cell=CELL_SYN):
+    """Per-pixel fragment-size bin (index into BINS) of v's 8-connected components; −1 outside v."""
+    n, Lab, cs, _ = cv2.connectedComponentsWithStats(v.astype(np.uint8), connectivity=8)
+    binid = np.full(v.shape, -1)
+    for c in range(1, n):
+        binid[Lab == c] = [lo <= cs[c, 4] / cell < hi for lo, hi in BINS].index(True)
+    return binid
+
+
 def main():
     rng = np.random.default_rng(0)
     pred = R.image_predictor()
@@ -79,10 +88,7 @@ def main():
                 Ft = feats(pred, cv2.imread(f'{cd}/frames/{t:05d}.jpg', 0).astype(np.float32))
                 Fo = feats(pred, mf * I[t] + (1 - mf) * B)
                 occl = S[t] & ~V[t]
-                n, Lab, cs, _ = cv2.connectedComponentsWithStats(V[t].astype(np.uint8), connectivity=8)
-                binid = np.full(V[t].shape, -1)
-                for c in range(1, n):
-                    binid[Lab == c] = [lo <= cs[c, 4] / CELL_SYN < hi for lo, hi in BINS].index(True)
+                binid = bin_ids(V[t])
                 for L in range(3):
                     co, cb = up(cosmap(Ft[L], Fo[L])), up(cosmap(Ft[L], Fb[L]))
                     s = co - cb

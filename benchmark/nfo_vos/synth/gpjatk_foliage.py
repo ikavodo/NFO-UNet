@@ -133,7 +133,9 @@ _TPL = {}
 def template():
     if not _TPL:
         t = cv2.imread(TEMPLATE, 0)
-        _TPL['g'], _TPL['d'] = t[:int(0.6 * t.shape[0])].astype(np.float32), np.load(DISP).astype(np.float32)
+        _TPL['g'] = t[:int(0.6 * t.shape[0])].astype(np.float32)
+        # disparity is only used by modes 'depth' / 'stack'; zeros keep 'perlin' runnable without the DA-V2 file
+        _TPL['d'] = np.load(DISP).astype(np.float32) if os.path.exists(DISP) else np.zeros_like(_TPL['g'])
     return _TPL['g'], _TPL['d']
 
 
@@ -176,7 +178,7 @@ def labels(S, occ, open_px=7, zone_px=15):
 
 
 def make_layered_clip(seq, cam, rho, seed, mode, out, n=40, K=3, clump=24, blur=0.7, twigs=0, twig_gain=0.6,
-                      save=True):
+                      save=True, sway=None, layers=False):
     """mode 'perlin': B = one photo crop, mask = occ_perlin(density rho, clump) (baseline, fill='back').
     mode 'depth':  B = one photo crop, mask = [disp_B > q_{1−rho}(disp_B over the person's trajectory box)]:
                    the person stands at the depth where a fraction rho of the trajectory's scene is nearer.
@@ -187,16 +189,24 @@ def make_layered_clip(seq, cam, rho, seed, mode, out, n=40, K=3, clump=24, blur=
     twigs > 0: a twig layer drawn into the scene in front of the person: occ_branch lines (1–2 px, master_thesis
                    src/occluders.py:231, mask only), intensity = twig_gain × an independent photo crop (assumed
                    darker than leaves; not calibrated).
-    In all modes occluded person pixels show B itself (MovingMNIST-OcclusionBench occluders.py:450), static scene."""
+    In all modes occluded person pixels show B itself (MovingMNIST-OcclusionBench occluders.py:450), static scene.
+    sway: optional per-frame displacements, each (dx, dy) px (noise.sway_offsets) or a flutter field (noise.displace): B and the matte translate together, the person
+    does not; V follows the swayed matte (labels H / void still from frame 0). layers=True (with save=False) also
+    returns dict(X, clean = person on unswayed B, B, a, S, V, I, mf)."""
     rng = np.random.default_rng(seed)
     I, m, s0 = load_person(seq, cam, n)
     ys, xs = np.nonzero(m.any(0))
     R = np.zeros((H, W), bool); R[max(0, ys.min() - 10):ys.max() + 11, max(0, xs.min() - 10):xs.max() + 11] = True
     G, D, crop = foliage_pair(rng); crops = [crop]
     if mode == 'perlin':
-        _, o = occ_perlin(torch.zeros(1, 1, H, W), density=rho, noise_h=clump, noise_w=clump, movement_x=0,
-                          movement_y=0, light_movement_x=0, light_movement_y=0, seed=int(seed), return_mask=True)
-        a_bin, B = o[0].numpy().astype(bool), G
+        cl = clump if isinstance(clump, (tuple, list)) else (clump,)      # tuple: union of independent scales,
+        rk = 1 - (1 - rho) ** (1 / len(cl))                                  # each at density ρ_k so the union ≈ ρ
+        a_bin = np.zeros((H, W), bool)
+        for k, c in enumerate(cl):
+            _, o = occ_perlin(torch.zeros(1, 1, H, W), density=rk, noise_h=c, noise_w=c, movement_x=0, movement_y=0,
+                              light_movement_x=0, light_movement_y=0, seed=int(seed) + k, return_mask=True)
+            a_bin |= o[0].numpy().astype(bool)
+        B = G
     elif mode == 'depth':
         a_bin, B = D > np.quantile(D[R], 1 - rho), G
     elif mode == 'stack':
@@ -218,12 +228,20 @@ def make_layered_clip(seq, cam, rho, seed, mode, out, n=40, K=3, clump=24, blur=
         B = B.copy(); B[tw] = twig_gain * Gt[tw]; a_bin = a_bin | tw
     a = cv2.GaussianBlur(a_bin.astype(np.float32), (0, 0), blur)
     mf = np.stack([cv2.GaussianBlur(x.astype(np.float32), (0, 0), 1.0) for x in m])
-    X = a * B + (1 - a) * (mf * I + (1 - mf) * B)
-    occ = np.repeat((a >= 0.5)[None], len(I), 0)
+    if sway is None:
+        Bs, As = B[None], a[None]
+    else:
+        from benchmark.nfo_vos.synth.noise import displace
+        Bs, As = np.stack([displace(B, d) for d in sway]), np.stack([displace(a, d) for d in sway])
+    X = As * Bs + (1 - As) * (mf * I + (1 - mf) * Bs)
+    occ = np.broadcast_to(As >= 0.5, X.shape).copy()
     S = m; V = S & ~occ
     Hl, void = labels(S, occ)
-    cid = f'{seq}_{cam}_{mode}_r{int(round(rho * 100))}_t{int(twigs)}_s{seed}'
+    cid = f'{seq}_{cam}_{mode}_r{int(round(rho * 100))}_t{int(twigs)}_s{seed}' + \
+        (f"_c{'-'.join(map(str, clump))}" if isinstance(clump, (tuple, list)) else '')
     if not save:
+        if layers:
+            return cid, X, V, S, Hl, void, dict(X=X, clean=mf * I + (1 - mf) * B, B=B, a=a, S=S, V=V, I=I, mf=mf)
         return cid, X, V, S, Hl, void
     cd = f'{out}/{cid}'
     os.makedirs(f'{cd}/frames', exist_ok=True)

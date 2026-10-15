@@ -55,13 +55,18 @@ def interior_point(m):
 def composite(seq, k, shifts, bg):
     """GT-free cleaned composite of k-6..k-1 onto k (diag_fine_add.composites, 'gtfree' arm) with given shifts."""
     H = list(range(k - a4.N + 1, k))
-    w = np.exp(-np.arange(len(H) - 1, -1, -1) / a4.TAU_AGE); w = (w / w.sum())[:, None, None]
-    A, G = [], []
-    for i in H:
-        dx, dy = shifts[i]
-        img = V.native(i, seq).astype(np.float32)
-        A.append(shift(img, dx, dy)); G.append(shift(1 / (1 + np.exp(-(zpix(img, bg) - 3))), dx, dy))
-    A, G = np.stack(A), np.stack(G)
+    return composite_frames([V.native(i, seq).astype(np.float32) for i in H],
+                            [np.float32([[1, 0, shifts[i][0]], [0, 1, shifts[i][1]]]) for i in H], bg)
+
+
+def composite_frames(imgs, Ms, bg):
+    """The same composite for given history frames (oldest first) and 2×3 affines Ms onto the target frame
+    (translation-only Ms reproduce `composite`; the layers baselines pass box similarity transforms)."""
+    w = np.exp(-np.arange(len(imgs) - 1, -1, -1) / a4.TAU_AGE); w = (w / w.sum())[:, None, None]
+    wa = lambda x, M: cv2.warpAffine(x.astype(np.float32), M, (x.shape[1], x.shape[0]), flags=cv2.INTER_LINEAR,
+                                     borderMode=cv2.BORDER_REPLICATE)
+    A = np.stack([wa(img, M) for img, M in zip(imgs, Ms)])
+    G = np.stack([wa(1 / (1 + np.exp(-(zpix(img, bg) - 3))), M) for img, M in zip(imgs, Ms)])
     raw = (w * A).sum(0)
     return np.where((w * G).sum(0) > 1e-6, (w * G * A).sum(0) / np.maximum((w * G).sum(0), 1e-6), raw)
 

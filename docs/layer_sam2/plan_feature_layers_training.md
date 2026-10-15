@@ -226,3 +226,40 @@ tokens). That is the next plan, after G1 passes.
 - Calibrated language (measured / derived / assumed). One variable per comparison. Paired bootstrap CIs.
 - On first mention in a message to the user, re-explain each label (B0, T1, F_bg, F_obj, s, G1, …).
 - No weekend work. Nag after 19:00.
+
+## 9. Steps 1–3 results (2026-10-15)
+
+**Step 1, nuisance model** (`synth/noise.py`; montage `images/benchmark/gpjatk_foliage/noise.png`, passed by the user).
+- Calibration on NFO warm-ups (`noise.calibrate`, measured): flat-region σ 1.5 / 4.8 / 3.2 / 0.3 (seq1–4); lag-1
+  temporal correlation of the residual 0.83–0.91. The residual is mostly slow, correlated scene change, not white
+  noise; the linear rigid-sway model (Var r = σ_n² + σ_u²|∇B|²) does not fit (intercepts 2.8–10.6 ≫ flat σ).
+- **Change vs §2 (accepted by the user):** white noise σ ∈ U[1, 5] instead of U[3, 12]. Rigid sway ≤ 1 px, gain ±1 %,
+  JPEG 70–95 as planned. Sway moves B and the matte; V follows; the clean target uses the unswayed B.
+
+**Step 2, dataset** (`layers/dataset.py`). Val = 30 sequences × 4 cameras = 120 clips. Unit check on 10 clips:
+O_t ⊇ V_t and O_t ⊆ S_t hold on all 120 targets; mean |V|/|S| 0.59, |O|/|S| 0.82.
+
+**Step 3, G1 baselines before training** (`layers/g1_baselines.py`, val, σ_a = 3 px, measured). s4 sub-cell AUC:
+none 0.872 [0.860, 0.884] · hand 0.724 · warp 0.821 · warp without t 0.743 · noisy oracle 0.962 [0.956, 0.966] ·
+oracle without photometric noise 0.966. Every non-learned F_obj is *below* the do-nothing control (hand −0.148,
+warp −0.051, paired CIs exclude 0). Full table: `results/benchmark/rr/layers_g1/g1_table.txt`.
+- Mechanism (derived, small-deviation expansion of the cosines): with F_t = F_bg + Δ_t, F_obj = F_bg + Δ_p,
+  s ≈ (⟨Δ_t, Δ_p⟩ − ½‖Δ_p‖²)/‖F‖². B-none is an energy detector (s = ½‖Δ_t‖²); a template is a matched filter that
+  rejects non-person change ε on occluded pixels but costs ½‖e‖² (template error: gait blur, jitter) on every visible
+  pixel. It helps only when ‖ε‖² > ‖e‖². The synthetic clips have small ε, so B-none wins. Camouflaged pixels
+  (Δ_p ≈ 0) are out of reach for every arm.
+- **Proposed amendment to G1 (pending the user):** drop the absolute ≥ 0.80 clause, which B-none already passes; the
+  bar is learned > B-none (0.872) with a paired CI excluding 0; headroom to the noisy oracle ≈ 0.09.
+
+**Nuisance arms, pre-registered before running** (one variable each vs the step-3 'base', same 120 clip specs):
+- `flutter`: non-rigid displacement field on B and matte (`noise.flutter_fields`, Gaussian σ 12 px, AR(1) ρ 0.97, RMS
+  2.1 px). Calibrated to seq2's residual std (synthetic 11.5 vs 11.96); lag-1 reaches only 0.76 vs 0.87 (saturates
+  ≈ 0.79 for any ρ at matching std: the textured photo responds nonlinearly to 1–2 px displacements).
+  Prediction (derived): B-none drops; the noisy oracle drops less; the oracle − none gap widens. If B-none does not
+  drop, the composite has no job even under NFO-like nuisance: reconsider the learned-F_obj route before training.
+- `chunks`: occluder = perlin clump 12 ∪ 24 (each at density 1 − √(1 − ρ)). Prediction: all arms drop together
+  (smaller fragments shrink ‖Δ_t‖² for every arm); the oracle − none gap roughly unchanged.
+- Smoke test (1 clip, not evidence): base none/oracle 0.81/0.93; flutter 0.68/0.78; chunks 0.75/0.84. The clean
+  target uses the unswayed B, so under flutter the oracle's context is ≈ 2 px off as well. Check whether the full
+  run's oracle drop is mostly that.
+- Run: `sbatch benchmark/nfo_vos/layers/g1_baselines.sbatch` (array 0 = flutter, 1 = chunks).
