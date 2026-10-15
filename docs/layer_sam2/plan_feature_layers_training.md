@@ -263,3 +263,10 @@ warp −0.051, paired CIs exclude 0). Full table: `results/benchmark/rr/layers_g
   target uses the unswayed B, so under flutter the oracle's context is ≈ 2 px off as well. Check whether the full
   run's oracle drop is mostly that.
 - Run: `sbatch benchmark/nfo_vos/layers/g1_baselines.sbatch` (array 0 = flutter, 1 = chunks).
+- **Arm results (measured, 2026-10-15, local).** s4 sub-cell AUC, none / warp / hand / noisy oracle, and oracle − none:
+  base 0.872 / 0.821 / 0.724 / 0.962 (+0.090); flutter 0.654 / 0.641 / 0.594 / 0.820 (+0.166 [+0.156, +0.177]);
+  chunks 0.787 / 0.756 / 0.687 / 0.924 (+0.137 [+0.120, +0.152]). Tables: `results/benchmark/rr/layers_g1_{flutter,chunks}/`.
+  Flutter prediction holds (none −0.218, oracle −0.142, gap widens). Chunks prediction fails: the gap widens too —
+  consistent with weak-signal detection theory (energy-detector statistic ∝ ‖Δ_t‖², matched filter ∝ ⟨Δ_t, Δ_p⟩,
+  so shrinking fragments hurt B-none quadratically, the template linearly). No non-learned template beats B-none in
+  any arm (best: warp under flutter, −0.012 [−0.016, −0.009]). The headroom exists only for a near-exact F_obj.
