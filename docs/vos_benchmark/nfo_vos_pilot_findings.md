@@ -189,7 +189,7 @@ numbers descriptive.
     did not predict this.
 
 ## Layered-memory option C on NFO: the static layer carries the visibility signal — 2026-10-12
-- Plan: `docs/Layered Memory for SAM2 Test Plan.md`, option C step 1. Score inside the GT box at t₀,
+- Plan: `docs/layer_sam2/Layered Memory for SAM2 Test Plan.md`, option C step 1. Score inside the GT box at t₀,
   14 hard starts. Features are frozen SAM2 stride-16 backbone features of t₀−6…t₀−1, aligned by the
   GT shift. Motion over the history is 1.5–5.4 cells. AUC, visible vs not:
 
@@ -369,7 +369,7 @@ Z-buffer model, static camera, static occluder: x shows the person at t iff S_t(
 where S_t = full silhouette (extent), Z_bg = depth of the empty scene, Z_p = person depth. Motion is
 almost purely horizontal (fronto-parallel), so Z_p(t) ≈ Z_p per segment, and the visible-capable region is
 one threshold on one static map: G = {x : Z_bg(x) > Z_p}. It is the label-free version of the gap map Ŵ
-in docs/hand_annotation_plan.md.
+in docs/vos_benchmark/hand_annotation_plan.md.
 - Depth: Depth Anything V2 (relative disparity δ = a/Z + b, affine unknown per image). Ordering survives,
   but δ from different images is not comparable: align each frame's δ_t to δ_bg by a least-squares
   affine fit on pixels outside the GT box before comparing. δ_p = median δ_t over SAM2-ceiling pixels.
@@ -730,7 +730,7 @@ Upload folders: `data/cvat/upload/<seq>_poly_<tier>/images` (file name = real fr
 
 Second annotator: the same tier-A frames, imported with tag `handpoly2`. Polygon protocol as for seq1.
 Import: `python -m benchmark.nfo_vos.cvat_io import data/cvat/exports/<task>/annotations.xml handpoly <seq>`.
-Related work for the method: `docs/related_work_layered_sam2.md`.
+Related work for the method: `docs/layer_sam2/related_work_layered_sam2.md`.
 
 ## First seq2–4 human labels (tier A, 23 frames) and a learned change threshold, 2026-10-14 (`learned_thresh.py`)
 Labels: user's brush masks, tier-A frames above, tag `handA` (exports `data/cvat/exports/seq{2,3,4}_poly_A_annot`).

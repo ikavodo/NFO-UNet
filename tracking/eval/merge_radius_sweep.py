@@ -1,5 +1,5 @@
 """Sweep MERGE_RADIUS on real NFO, settling the open finding F7 in
-docs/scale_generalization_plan.md: NFO's value of 100px (= measured person height / 2) looked
+docs/blob_tracker/scale_generalization_plan.md: NFO's value of 100px (= measured person height / 2) looked
 too large, because seq2's wrongly-small measured person height produced a smaller radius and
 made that sequence better (0.1095 -> 0.0783 mean residual).
 

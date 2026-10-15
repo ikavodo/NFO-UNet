@@ -48,7 +48,7 @@
 
 **Tech Stack:** Python 3, NumPy, OpenCV, SciPy. No new dependencies. Detector is OpenCV's built-in HOG people detector, which needs no model download and returns confidences directly.
 
-**Spec:** `docs/streaming_minimal_start.md` (the dependency closure and the three things needed), `docs/scale_generalization_plan.md` (evidence behind every constant).
+**Spec:** `docs/blob_tracker/streaming_minimal_start.md` (the dependency closure and the three things needed), `docs/blob_tracker/scale_generalization_plan.md` (evidence behind every constant).
 
 > **ALIGNMENT BUG FOUND AND FIXED 2026-08-31 — the integration results quoted below were
 > computed on a DE-ALIGNED stack and must not be reused.** `align_frames` cropped each frame
@@ -174,7 +174,7 @@ Consequences for this plan, already applied below:
 
    So the sequence is: this project measured 0.000 confidence and worked around it; I then
    rediscovered the same 0.000 with Faster R-CNN and YOLOv8n; and my own recommendation to add a
-   `cv2.dnn` detector has been withdrawn on measurement. A fourth attempt will find the same thing. Corroborating from a different direction, `docs/training_failure_hypotheses.md`
+   `cv2.dnn` detector has been withdrawn on measurement. A fourth attempt will find the same thing. Corroborating from a different direction, `docs/unet/training_failure_hypotheses.md`
    records that feeding a 2x-upscaled NFO frame lifted precision 0.52 -> 0.98, which is the same 2x
    factor as HOG firing on 0% of windows at 1x and ~30% at 2x - person scale, not detector choice,
    is what governs whether anything fires on this footage.

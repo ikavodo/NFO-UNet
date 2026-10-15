@@ -1,7 +1,7 @@
 """Stage 2: can a learned ranker over dimensionless track features beat score_and_fit's
 hand-picked formula at picking the right candidate track?
 
-Runs on REAL NFO, not synthetic KTH, for a measured reason (docs/scale_generalization_plan.md,
+Runs on REAL NFO, not synthetic KTH, for a measured reason (docs/blob_tracker/scale_generalization_plan.md,
 Stage 1 result): with the occluder calibrated to NFO and a distractor injected, only 3-14% of
 KTH's candidate detections are non-person - its background is clean, so it contains almost no
 negatives and cannot pose the "which object is the person" question at all. NFO is full of real

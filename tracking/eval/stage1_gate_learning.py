@@ -3,7 +3,7 @@ across person scale better than the best non-learned dimensionless rule?
 
 Deliberately offline and local - no tracker changes, no training pipeline, no new data. It
 targets the association gate because that is where 70-78% of the measured scale sensitivity
-lives (docs/scale_generalization_plan.md, F2), and because the gate's failure mode is fatal
+lives (docs/blob_tracker/scale_generalization_plan.md, F2), and because the gate's failure mode is fatal
 rather than degrading (F1): too tight and no tracks form at all.
 
 The decision in isolation: given a detection in frame t and a detection in frame t+stride,

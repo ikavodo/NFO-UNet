@@ -1,9 +1,9 @@
 # Implementation plan: GPJATK + foliage testbed for Layer-SAM2 (written 2026-10-14 for a fresh session)
 
 Read first:
-- `docs/layered_sam2_architecture.md`, section "v2": the architecture and its ablation table.
-- `docs/nfo_vos_pilot_findings.md`, last three sections: the NFO numbers this testbed must reproduce.
-- `docs/nfo_failure_log.md`: what not to retry.
+- `docs/layer_sam2/layered_sam2_architecture.md`, section "v2": the architecture and its ablation table.
+- `docs/vos_benchmark/nfo_vos_pilot_findings.md`, last three sections: the NFO numbers this testbed must reproduce.
+- `docs/vos_benchmark/nfo_failure_log.md`: what not to retry.
 
 ## 0. Why this exists (context in five lines)
 - **Goal:** beat SAM2.1 (B0) and SAMURAI (T1) on modal person segmentation under fragmented foliage occlusion (NFO
@@ -130,7 +130,7 @@ Record each fix as one line in the failure log.
 - Ask before dispatching subagents. Minimise turns and batch tool calls.
 - Every image goes into the repo (`images/...`). The user judges visual checks; never claim one "looks right".
 - Calibrated language (measured / derived / assumed). Paired bootstrap CIs. One variable per comparison.
-- Two docs: a one-line entry in `docs/nfo_failure_log.md` per dead end; constructive results in
-  `docs/nfo_vos_pilot_findings.md`.
+- Two docs: a one-line entry in `docs/vos_benchmark/nfo_failure_log.md` per dead end; constructive results in
+  `docs/vos_benchmark/nfo_vos_pilot_findings.md`.
 - On first mention in any message to the user, re-explain each label (B0, T1, V, S, T_r, …) in one clause.
 - No work on weekends. After 19:00, nag the user to stop.

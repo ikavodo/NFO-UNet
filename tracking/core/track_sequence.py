@@ -9,7 +9,7 @@ from tracking.core.track_window import _result_from_detections
 # once, on multi-scale KTH, and intended to be reused at any scale - that is the whole
 # point. Measured effect: worst-bucket accuracy across a 4x range of person sizes went from
 # 5.9% (one dataset's absolute constants, reused everywhere) to 75.0%, and the spread
-# across scales from 74pp to 18pp. See docs/deepsort_blob_scoring_compatibility.md.
+# across scales from 74pp to 18pp. See docs/blob_tracker/deepsort_blob_scoring_compatibility.md.
 #
 # ALPHA_MAX_DIST is the association gate. Ground-truth motion is only ~0.10-0.13 of a body
 # height per step, but blob centroids also jump between fragments of the same person, so the

@@ -98,7 +98,7 @@ $$R_{t_0} = v P + (1 - v) O, \qquad C = \bar{V} P + (1 - \bar{V}) \bar{O}$$
 The raw composite should separate person from occluder only where $\bar{V}$ is high; a clean composite
 ($\bar{V} \to 1$ on the person) should separate everywhere.
 
-Measured (2026-10-12, `docs/nfo_vos_pilot_findings.md`, pre-registered fine-addition test, KILL):
+Measured (2026-10-12, `docs/vos_benchmark/nfo_vos_pilot_findings.md`, pre-registered fine-addition test, KILL):
 - comparing frame $t$ against $C$ to decide which pixels to add: AUC 0.47–0.51 for raw, GT-free and oracle
   alike (chance);
 - 51% of the "missed" pixels lie within 2 px of T1's mask, 66% within 4 px: consistent with quantization of the

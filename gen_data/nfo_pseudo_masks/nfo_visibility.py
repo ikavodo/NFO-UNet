@@ -31,7 +31,7 @@ BG_SAMPLES = 40  # no-person frames to median-combine into the background image
 # (Briefly widened seq1 to 4 regions to fix large unlabeled tails, but that traded coverage for
 # more chances of an individual checkpoint's tracker getting stuck near an occluder with nothing
 # to catch it pre-union - reverted once GT box+point prompting alone closed most of the coverage
-# gap; see docs/nfo_pseudo_segmentation_approach.md for the tradeoff discussion.) seq2: original
+# gap; see docs/vos_benchmark/nfo_pseudo_segmentation_approach.md for the tradeoff discussion.) seq2: original
 # column-mean result plus a manually-confirmed third corridor at ~73% horizontal (a real gap
 # next to a diagonal branch against the background wall, missed by every automated width
 # threshold tried). seq3: original column-mean result, unchanged throughout.

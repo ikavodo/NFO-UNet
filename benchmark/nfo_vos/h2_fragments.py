@@ -1,4 +1,4 @@
-"""H2 (docs/label_generators_design.md:58-66, pre-registered 2026-10-13): does SAM2 drop sub-cell visible fragments,
+"""H2 (docs/vos_benchmark/label_generators_design.md:58-66, pre-registered 2026-10-13): does SAM2 drop sub-cell visible fragments,
 or does our SAM2-ceiling filter? 2026-10-14.
 
 U = raw SAM2 union (box-clipped, thin-component filter OFF): *_sammask_nofilt_native.png

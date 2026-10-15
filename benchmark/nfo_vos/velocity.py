@@ -1,6 +1,6 @@
 """GT-free person velocity from the causal blob tracker, used to align the frames of A/4 composites
 (a4_build.py). Was composite.py (composite-prepend, removed 2026-10-07: did not replicate on the
-round-robin pilot; see docs/nfo_failure_log.md and git history).
+round-robin pilot; see docs/vos_benchmark/nfo_failure_log.md and git history).
 
 Estimator 'hybrid_x' (chosen on the old pilot: median 7.7 native px vs GT shifts, against 9.4 for
 the chain alone): x-only constant velocity; the selected track's own OLS velocity when it has

@@ -1,4 +1,4 @@
-"""Kill test for the scale-robustness claim in docs/deepsort_blob_scoring_compatibility.md.
+"""Kill test for the scale-robustness claim in docs/blob_tracker/deepsort_blob_scoring_compatibility.md.
 
 Runs the EXISTING blob tracker (`track_blobs`/`score_and_fit`, logic untouched - only the
 already-hardcoded Kalman variances were exposed as `_Track.P_VAR/Q_VAR/R_VAR`, same

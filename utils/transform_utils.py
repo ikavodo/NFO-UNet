@@ -142,7 +142,7 @@ def rand_zoom_out(min_scale: float, max_scale: float) -> Transform:
 
     KTH persons are 71-144px tall at 224px (median 109); NFO persons are 45-64px (median 54)
     - the two scale distributions do not overlap at all, and that alone costs ~0.46 precision
-    (see docs/training_failure_hypotheses.md). This puts KTH persons into NFO's range during
+    (see docs/unet/training_failure_hypotheses.md). This puts KTH persons into NFO's range during
     training. min_scale=0.4 maps the KTH median to ~44px, max_scale=1.0 keeps the original.
     """
     def t(imgs, hm, bbs):

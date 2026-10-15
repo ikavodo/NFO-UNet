@@ -85,7 +85,7 @@ kth_train = {
     # rand_zoom_out: KTH persons are 71-144px tall at 224px (median 109), NFO's are 45-64px
     # (median 54) - disjoint distributions. Feeding the trained net a 2x-upscaled NFO frame
     # lifts precision 0.52 -> 0.98, so this scale gap *is* the KTH->NFO gap (see
-    # docs/training_failure_hypotheses.md). Zooming out during training covers NFO's range.
+    # docs/unet/training_failure_hypotheses.md). Zooming out during training covers NFO's range.
     'train_transforms': [rand_h_flip(), rand_v_flip(), rand_rot_90(), rand_zoom_out(0.4, 1.0),
                          reduce_colors(4), rand_color_swap()],
     # validate on the same distribution we train on, so the two losses are comparable and

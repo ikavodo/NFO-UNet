@@ -90,7 +90,7 @@ def estimate_person_height(frames: np.ndarray, bg_frames: int = 30, var_threshol
     area, morphology kernels, Kalman covariances) can be expressed as a multiple of this,
     instead of being measured once on one dataset at one resolution and then silently
     wrong anywhere people appear at a different size. See
-    docs/deepsort_blob_scoring_compatibility.md, "Step 1b".
+    docs/blob_tracker/deepsort_blob_scoring_compatibility.md, "Step 1b".
 
     Why it is not just "the tallest foreground blob": under fragmented occlusion a person
     is broken into pieces, so raw connected-component heights badly underestimate - and,

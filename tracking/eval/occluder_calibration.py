@@ -1,7 +1,7 @@
 """Measure how fragmented a person's foreground mask really is on NFO, and tune the synthetic
 occluder generator to match it.
 
-Why: docs/scale_generalization_plan.md, finding F6 - the synthetic occluders demonstrably do
+Why: docs/blob_tracker/scale_generalization_plan.md, finding F6 - the synthetic occluders demonstrably do
 not reproduce NFO's failure mode (on NFO the shape term is worth a 2.7x error reduction and
 its job is picking the right *fragment* of a heavily-broken person; on synthetic KTH the same
 term is worth 2-3pp and two distractor designs measured nothing). Training anything on

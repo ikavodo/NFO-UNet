@@ -43,13 +43,13 @@ SPAN = MARGIN * NTH_FRAME
 # - MERGE_RADIUS was measured person height / 2 = 100px until it was swept directly
 #   (tracking/eval/merge_radius_sweep.py): 0.625 x height = 122px is better, and 100px was
 #   slightly too TIGHT, not too loose as had been assumed. Baseline numbers quoted in docs
-#   from before 2026-08-28 used 100px; see docs/scale_generalization_plan.md for both.
+#   from before 2026-08-28 used 100px; see docs/blob_tracker/scale_generalization_plan.md for both.
 # These are ABSOLUTE PIXEL constants, valid only at this dataset's resolution and camera
 # distance. Reusing them on footage where people appear at a different pixel size fails
 # badly (measured: accuracy 91% -> 6% over a 2x change in person size). The
 # scale_relative=True path below replaces all of them with multiples of a person height
 # measured from the footage itself, and needs no ground truth to do it - see
-# docs/deepsort_blob_scoring_compatibility.md, "Step 1b".
+# docs/blob_tracker/deepsort_blob_scoring_compatibility.md, "Step 1b".
 MAX_DIST = 25.0
 MERGE_RADIUS = 122.0  # = 0.625 * EXPECTED_HEIGHT, matching ALPHA_MERGE in track_sequence.py
 EXPECTED_HEIGHT = 195.0  # measured mean NFO person height at native 800x600 resolution

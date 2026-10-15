@@ -1,4 +1,4 @@
-"""CVAT round trip for hand masks on seq1 segment 4 (docs/hand_annotation_plan.md). 2026-10-13
+"""CVAT round trip for hand masks on seq1 segment 4 (docs/vos_benchmark/hand_annotation_plan.md). 2026-10-13
 
     python -m benchmark.nfo_vos.cvat_io export            # -> data/cvat/upload/seq1_seg4/{images/, prefill.xml}
     python -m benchmark.nfo_vos.cvat_io import <xml> [tag] [seq]  # CVAT-for-images-1.1 export -> <seq>_gt/<idx>_<tag>.png
@@ -35,7 +35,7 @@ from benchmark.nfo_vos.run_sam2_video import gt_mask_native
 SEQ, A, B = 'seq1', 1154, 1308
 TARGETS = list(range(A, B + 1, 5))          # every 5th frame; includes the t0s 1154, 1194, 1234
 SCRATCH = [1164, 1214, 1264]
-# pre-registered hull-annotation frames (docs/nfo_vos_pilot_findings.md, 2026-10-13): tuning seg 4, held-out seg 5 / 0.
+# pre-registered hull-annotation frames (docs/vos_benchmark/nfo_vos_pilot_findings.md, 2026-10-13): tuning seg 4, held-out seg 5 / 0.
 # Imports with tag 'handhull' keep only these, so interpolated track frames never become labels.
 HULL_FRAMES = [1164, 1183, 1194, 1214, 1224, 1244, 1263, 1274, 1294, 1490, 1520, 1550, 1580, 1610, 30, 70, 110]                # annotated from scratch first (anchoring check)
 OUT = 'data/cvat/upload/seq1_seg4'

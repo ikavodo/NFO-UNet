@@ -350,7 +350,7 @@ depends on:
 | instrument | measurement |
 |---|---|
 | HOG detectability (this doc) | fires on 0% of NFO windows at 1x, ~30% at 2x upscale |
-| `docs/training_failure_hypotheses.md` | feeding a 2x-upscaled NFO frame lifted precision 0.52 -> 0.98 |
+| `docs/unet/training_failure_hypotheses.md` | feeding a 2x-upscaled NFO frame lifted precision 0.52 -> 0.98 |
 | SAM2 mask 2nd moments (parallel session) | KTH major-axis sd 37.0px vs NFO 10.8px on a shared 224 canvas |
 
 All three point at person size as the dominant variable, which is exactly why F1/F3's

@@ -154,7 +154,7 @@ rather than to minimise the file count of the repository.
 
 **The plan:** `docs/superpowers/plans/2026-08-28-streaming-realtime-tracker.md` - 4 tasks over
 3 days, with a working demo at the end of Day 1.
-**The evidence behind every constant:** `docs/scale_generalization_plan.md`.
+**The evidence behind every constant:** `docs/blob_tracker/scale_generalization_plan.md`.
 
 **The one ordering decision that makes 3 days feasible:** the demo does *not* need the streaming
 core. The existing per-window code already runs at ~12 fps, and it is already known-correct. So

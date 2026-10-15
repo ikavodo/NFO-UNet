@@ -7,7 +7,7 @@ At t0 the prompt is the shared GT box + p* (spec §3). After t0 it is GT-free: t
 (distance-transform maximum) of the tracker's person blobs at t and their merged box, mapped from
 224 to native through the padded square. Strictly causal: frame t uses frames t0..t only.
 The 224-input T4 family, its blob controls and the box variants were removed (2026-10-07,
-dead ends; see docs/nfo_failure_log.md and git history).
+dead ends; see docs/vos_benchmark/nfo_failure_log.md and git history).
 
 Reused unchanged: foreground_mask/refine_mask/filter_by_shape (tracking/core/preprocess.py),
 detect_blobs/track_blobs/merged_center (tracking/core/blob_tracker.py), scale_relative_params

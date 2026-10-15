@@ -7,8 +7,8 @@ advance. Start at §8.
 
 ## 0. Why (what the NFO pilot established, 2 segments, descriptive)
 
-Source: `NFO-UNet` branch `vos-benchmark-pilot`, `docs/nfo_vos_pilot_findings.md`,
-`docs/nfo_failure_log.md`.
+Source: `NFO-UNet` branch `vos-benchmark-pilot`, `docs/vos_benchmark/nfo_vos_pilot_findings.md`,
+`docs/vos_benchmark/nfo_failure_log.md`.
 - SAM2 (Hiera-B+) under fragmented occlusion fails mainly at **initialisation**. SAMURAI's
   motion-aware memory alone does not fix it (J&F 0.779 / 0.773).
 - **Pixel-level integration** (align past frames by a constant-velocity model, per-pixel median)
@@ -165,7 +165,7 @@ Decision rules:
 
 ## 8. Start here (for the executing session)
 
-1. Read this whole file, then `NFO-UNet/docs/nfo_vos_pilot_findings.md` (context only; nothing
+1. Read this whole file, then `NFO-UNet/docs/vos_benchmark/nfo_vos_pilot_findings.md` (context only; nothing
    from NFO is reused).
 2. `cd /home/akovi/PycharmProjects/master_thesis && git checkout -b gpjatk-fusion-location`.
    Read its `CLAUDE.md` and `experiments/prototypes/README.md` (the `REPO_ROOT` depth convention).

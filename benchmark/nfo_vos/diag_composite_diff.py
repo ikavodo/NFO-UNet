@@ -195,7 +195,7 @@ def static_z(F, Sbg):
 
 
 def layered_memory_check():
-    """Layered-memory plan (docs/Layered Memory for SAM2 Test Plan.md), option C, step 1 on NFO hard
+    """Layered-memory plan (docs/layer_sam2/Layered Memory for SAM2 Test Plan.md), option C, step 1 on NFO hard
     starts, frozen SAM2 stride-16 backbone features of the history t0-6..t0-1, GT-shift alignment:
       D       mean of the history features warped onto t0 (the plan's dynamic layer)
       S       mean of the unwarped history features (the plan's static layer)

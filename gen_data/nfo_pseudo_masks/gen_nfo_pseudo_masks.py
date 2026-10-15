@@ -47,7 +47,7 @@ NATIVE_ONLY = False
 MIN_WIDTH_224 = 4   # --min-width-scale; 0 disables the thin-component filter (H2, 2026-10-14)
 MAX_CONSECUTIVE_EMPTY = 5  # early-stop a direction once it's clearly dead, don't burn compute
 # STATIC_THRESHOLD_PX was 2.0 - measured against real GT centroid displacement (see
-# docs/nfo_pseudo_segmentation_approach.md review) that turned out to be ABOVE median real
+# docs/vos_benchmark/nfo_pseudo_segmentation_approach.md review) that turned out to be ABOVE median real
 # motion (1.4-1.7px/frame across seq1-4), meaning the check would trigger on the actual,
 # correctly-moving person for runs up to 159 consecutive frames. 0.5px sits comfortably below
 # all measured real motion while still catching genuinely-frozen masks, which repeat the

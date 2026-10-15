@@ -95,7 +95,7 @@ def generate_occlusion_branch(shape: Tuple[int, int], density: float = 0.3, tol:
     this function previously ported directly (indirect num_branches x thickness density
     control, no bbox restriction, global np.random.seed reuse). Drops that version's
     sinusoidal sway entirely: NFO's occluder geometry is treated as fixed per sequence in this
-    project's own model (docs/nfo_pseudo_segmentation_approach.md's "Key constraint" - only
+    project's own model (docs/vos_benchmark/nfo_pseudo_segmentation_approach.md's "Key constraint" - only
     the person moves), so animated sway was over-modeling motion this project doesn't assume
     exists. Single static mask now, matching generate_occlusion_morph's signature.
     """
