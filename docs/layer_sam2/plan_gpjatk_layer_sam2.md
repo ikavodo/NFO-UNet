@@ -35,9 +35,10 @@ grayscale, and colour would let the model separate person from foliage trivially
 Per clip (one GPJATK sequence × camera × a contiguous walking window of N = 40 frames):
 
 1. **Person + background layers.** The GPJATK frame I^g_t already equals m_t·P_t + (1 − m_t)·B, with m_t =
-   silhouette > 0.5. Use the frame as is; do not cut the person out. B̂ = median of `Background/c{n}.avi` (the
-   real empty scene, as in NFO's warm-up median). Trim to the walking interval exactly as the existing testbed
-   does.
+   silhouette > 0.5. Use the frame as is; do not cut the person out. B̂ = a·O + (1 − a)·median(`Background/c{n}.avi`):
+   the empty scene *with the foliage in front*, as NFO's warm-up median also contains the foliage. Trim to the walking
+   interval by silhouette differencing, with a relative threshold (0.5 × the clip's 90th percentile; the testbed's
+   absolute 0.12 finds no walking frames on cameras c2/c4).
 2. **Foliage texture O.**
    - Grayscale the template, keep rows 0 … 0.6·H_img.
    - Take a random crop with aspect 16:9, resized to 960×540.
