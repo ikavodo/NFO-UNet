@@ -1,5 +1,78 @@
 # Learned layered refinement for SAM2 under fragmented occlusion — architecture draft (2026-10-14)
 
+## v3 (2026-10-15): layers in feature space — the general strategy (user's direction)
+
+**Data.** GPJATK walkers with occluder ≡ background, as in MovingMNIST-OcclusionBench. Settings:
+- perlin mask, clump 24 px, density ≈ 0.45;
+- background = random crops of the foliage photo (scale 960–2667 px, h-flip);
+- `gpjatk_foliage.make_layered_clip(mode='perlin')`.
+
+This is the closest arm in the layered experiment. It fails only R (0.911 vs ≤ 0.89) and the void share. More
+foliage photos are deferred (candidate source: PercepTreeV1, norlab-ulaval) until training shows overfitting to one
+photo.
+
+**One operation, two layers.** Background and composite are the same thing: an aligned, weighted temporal
+aggregation of SAM2 encoder features, under different motions.
+
+  F_L(x) = Σ_i w_{L,i}(x) · F_i(x + Δ_{L,i}),   Σ_i w_{L,i}(x) = 1,   L ∈ {bg, obj}
+
+- F_i: SAM2 image-encoder features of past frame i (`backbone_fpn`, strides 4 / 8 / 16; `sam2_base.py:606-620`).
+- Δ_bg = 0, since the camera is static.
+- Δ_obj,i = object displacement from i to t.
+  - Training: GT, from the silhouette bbox or the MoCap pelvis (master_thesis `src/registration.py`), with
+    jitter added.
+  - Test: the tracker's displacement.
+- w: predicted by one small shared network from (F_i, F_t, layer embedding). It learns *which past frames to trust
+  at each location*. This is the learned replacement for the hand-made gate G and the age weights in
+  `factorised_gtfree.composite`.
+- Ancestor: Flow-Guided Feature Aggregation (Zhu et al., ICCV 2017, arXiv 1703.10025): neighbour features warped
+  by flow, adaptively weighted, trained end to end. Our differences:
+  - warps come from the tracker's displacement, not optical flow (flow is unreliable through foliage);
+  - two layers instead of one;
+  - the output is used for a visibility comparison, not for detection.
+- **One shared network with a layer embedding**, not two networks. The two tasks differ only in Δ and in which
+  frames to trust. A second network is the ablation.
+- Pyramid: one aggregation per FPN level, shared weights across levels plus a level embedding.
+  - Start at stride 16, where H2 bites and memory attention operates.
+  - Add strides 8 and 4 only if the oracle test below shows that stride 16 cannot resolve sub-cell visibility.
+
+**Targets** (loss only where noted):
+- **Background.** Input: N noisy frames (sensor noise, flicker, JPEG, small sway; the person may pass). Target:
+  Enc(B_clean). Loss over the whole frame.
+  - Note: with a static camera, the pixel median of noisy empty frames is already ≈ clean. A *learned* background
+    only pays off with illumination change, sway, or a person present during the estimate.
+  - So the first baseline is Enc(pixel median), no learning.
+- **Composite.** Target: Enc(clean frame t). The clean frame is I^g_t, the person on the background with no
+  occluder. Loss only on dilate(S_t) ∧ O_t, where O_t = pixels visible in at least one aligned input frame (or in
+  frame t).
+  - Restricting to O_t matters: a body part hidden in every input frame has an unobservable current pose. Asking
+    for it teaches hallucination.
+  - The current frame t is an input, so visible parts are copied, not predicted.
+  - Rejected alternative: "clean features blurred by GT motion". It would make the target the blurred average of
+    the hand composite, which bakes in gait blur. The sharp current-pose target is better as long as the
+    observability mask is used.
+
+**Use inside SAM2** (after the features exist; order of trial):
+1. Visibility score s(x) = cos(F_t, F_obj) − cos(F_t, F_bg).
+   - Low s means the frame matches the background: penalise mask logits there (bad initialisations, leaks).
+   - High s means the frame matches the object better: add evidence.
+   - First as a fixed logit bias, then as a learned dense prompt (mask_decoder.py:205).
+2. F_obj and F_bg as extra memory tokens in memory attention, or as an attention bias −λ·(1 − p_vis).
+
+**Rhyme with documented failures.**
+- Amodal completion alone lost on modal labels: Diffusion-VAS −0.057 J; post-hoc V̂ ±0.
+- Any gain must come from the *comparison* s(x), not from F_obj itself.
+- Do not evaluate F_obj by how amodal it is.
+
+**Cheapest kill test (no training).** Oracle features on the synthetic clips:
+- F_obj = Enc(clean frame t), F_bg = Enc(B).
+- Compute s(x) at stride 16 (bilinearly upsampled) and at strides 8 / 4.
+- Measure the AUC of s for visible person (V) vs occluded person (S ∖ V), per fragment-size bin.
+- Pre-registered:
+  - if the stride-16 oracle AUC on sub-cell fragments is < 0.7, stride 16 cannot carry the fix, so go to the
+    high-res levels;
+  - if all levels are < 0.7, feature-space layers cannot fix H2 even with perfect inputs, so stop.
+
 ## v2 (2026-10-14 evening): "Layer-SAM2" — the version to build first on GPJATK
 
 Supersedes §3 below for phase 1. Written after the modal seq2–4 scoring (`score_void.py`):
