@@ -42,6 +42,11 @@ HELD = [(f'p{i}s1', CAMS[(i - 1) % 4]) for i in range(7, 19)]
 ARMS = {'perlin': ('perlin', False), 'depth': ('depth', False), 'depth+twigs': ('depth', True),
         'stack+twigs': ('stack', True)}
 RHOS, TWIGS = (0.35, 0.45, 0.55, 0.65), (50, 100, 200, 400)
+# Follow-up arm (declared 2026-10-15 after the first run, before its own result; same bands): perlin + twigs, finer
+# twig grid around the void target (100 twigs gave void ≈ 0.34–0.37, 200 gave ≈ 0.65 in the first run).
+if os.environ.get('ARMSET') == 'followup':
+    ARMS = {'perlin+twigs': ('perlin', True)}
+    RHOS, TWIGS = (0.35, 0.45, 0.55), (125, 150, 175)
 
 
 def bin_of(z):
@@ -173,7 +178,7 @@ def main():
         montage(dirs, f'images/benchmark/gpjatk_foliage/layered_{arm.replace("+", "_")}.png')
         print(f'{arm}: T1 J/P/R {r["t1"]["JPR"]}  bins {r["t1"]["bins"]} (n {r["t1"]["bin_n"]})  loss {r["t1"]["loss"]}; '
               f'B0 J/P/R {r["b0"]["JPR"]}\n   checks {checks}\n   PASS = {ok}', flush=True)
-        json.dump(out, open(f'{RES}/layered_experiment.json', 'w'), indent=1)
+        json.dump(out, open(f'{RES}/layered_experiment' + ('_followup' if os.environ.get('ARMSET') == 'followup' else '') + '.json', 'w'), indent=1)
     print('\nNFO reference: T1 J/P/R 0.750 / 0.887 / 0.819; bins 0.13 / 0.39 / 0.67 / 0.84; B0 − T1 +0.005')
 
 

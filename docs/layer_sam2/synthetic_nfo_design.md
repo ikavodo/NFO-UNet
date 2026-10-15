@@ -238,3 +238,38 @@ iff the person is in front of whatever is first visible there in the empty scene
 - The fine structure must come from elsewhere:
   - a depth-consistent mask taken from the photo itself (z-test against a monocular depth map);
   - or an added twig layer.
+
+## Layered experiment result (measured 2026-10-15, `synth/layered_experiment.py`; JSON in results/benchmark/synth/)
+
+**Protocol.**
+- Calibration on subjects p1–p6, input statistics only, no tracker.
+- Held out: p7–p18, 24 clips per arm.
+- Scoring: T1, against H with void ignored.
+- Bands as pre-registered.
+- **No arm passes.**
+
+| arm (chosen ρ, twigs) | fit: shares / void | T1 J / P / R | T1 size-binned recall | failed checks |
+|---|---|---|---|---|
+| perlin c24, photo B (0.45, 0) | 0.008/0.015/0.096/0.881 / 0.004 | 0.769 / 0.834 / 0.911 | 0.10 / 0.32 / 0.69 / 0.92 | R (+0.02), void |
+| depth (0.65, 0) | 0.006/0.007/0.050/0.936 / 0.020 | 0.528 / 0.555 / 0.718 | 0.26 / 0.47 / 0.69 / 0.80 | P, R, bin0, shares, void |
+| depth+twigs (0.45, 100) | 0.030/0.015/0.090/0.866 / 0.370 | 0.626 / 0.654 / 0.816 | 0.34 / 0.60 / 0.80 / 0.85 | P, bin0, bin1, void |
+| stack+twigs (0.35, 100) | 0.020/0.019/0.084/0.876 / 0.344 | 0.795 / 0.842 / 0.931 | 0.29 / 0.58 / 0.85 / 0.96 | R, bin0–2, void |
+| perlin+twigs (0.35, 125; follow-up arm, declared before its run) | 0.041/0.048/0.172/0.739 / 0.380 | 0.645 / 0.704 / 0.885 | 0.39 / 0.62 / 0.83 / 0.96 | P, bin0–2, shares |
+| NFO | 0.013/0.009/0.108/0.870 / 0.476 | 0.750 / 0.887 / 0.819 | 0.13 / 0.39 / 0.67 / 0.84 | — |
+
+B0 ≈ T1 in every arm (|ΔJ| ≤ 0.009), as on NFO.
+
+**Reading.**
+- **Closest arm: perlin clump 24 with occluder ≡ photo background.** On held-out subjects all four size-binned
+  recalls fall in the NFO bands, and P is in its band. Only R (0.911 vs ≤ 0.89) and void fail.
+- **The depth-test mask from the photo is worse** (P 0.555). Depth Anything's smooth near-blobs are bridged by SAM2.
+  "Real leaf edges help" is not supported for a single-photo depth map.
+- **Twigs reach the void target, but break the size profile.** 1–2 px lines slice H into many sub-cell pieces
+  (n ≈ 6–13 k) that SAM2 bridges: sub-cell recall 0.29–0.39 against ≤ 0.25.
+- The void-zone definition (closing 15 px ∪ 1-px dilation) is a guess. Thin-foliage modelling is the open piece.
+
+**Next, cheapest first** (not started):
+1. Measure NFO's void geometry on handAv: void component sizes and widths in cells, and where void sits relative to
+   the label. This replaces the guessed void zone with a measured one.
+2. Add sensor noise and JPEG to the perlin arm, calibrated to NFO warm-up residuals. One variable; same bands.
+   Hypothesis: clean synthetic frames make T1 too good (R 0.91 vs 0.82).
