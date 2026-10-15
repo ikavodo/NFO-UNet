@@ -121,3 +121,124 @@ def montage(clips, path):
         rows.append(cv2.resize(r, (960, 270)))
     os.makedirs(os.path.dirname(path), exist_ok=True)
     cv2.imwrite(path, np.concatenate(rows, 0))
+
+
+# ----------------------------------------------------------------------------------------------------------------
+# Layered clips (2026-10-15): occluder ≡ background, depth-consistent masks from the photo itself.
+# ----------------------------------------------------------------------------------------------------------------
+DISP = 'data/synthetic/foliage_depth/veronica_disp.npy'     # photo_depth.py (Depth Anything V2 L; larger = nearer)
+_TPL = {}
+
+
+def template():
+    if not _TPL:
+        t = cv2.imread(TEMPLATE, 0)
+        _TPL['g'], _TPL['d'] = t[:int(0.6 * t.shape[0])].astype(np.float32), np.load(DISP).astype(np.float32)
+    return _TPL['g'], _TPL['d']
+
+
+def foliage_pair(rng):
+    """Random 16:9 crop (width 960…2667 px of the template = leaf scale), random h-flip: grayscale + disparity."""
+    g, d = template()
+    cw = int(rng.uniform(960, min(2667, g.shape[1], g.shape[0] * 16 / 9))); ch = int(cw * 9 / 16)
+    x, y = rng.integers(0, g.shape[1] - cw + 1), rng.integers(0, g.shape[0] - ch + 1)
+    G = cv2.resize(g[y:y + ch, x:x + cw], (W, H), interpolation=cv2.INTER_AREA)
+    D = cv2.resize(d[y:y + ch, x:x + cw], (W, H), interpolation=cv2.INTER_AREA)
+    if rng.random() < 0.5:
+        G, D = G[:, ::-1].copy(), D[:, ::-1].copy()
+    return G, D, [int(x), int(y), cw, ch]
+
+
+def load_person(seq, cam, n):
+    d = f'{GP}/{seq}'
+    I = read_avi_gray(glob.glob(f'{d}/Images/{cam}_*.avi')[0]).astype(np.float32)
+    sil = np.stack([cv2.imread(p, 0) > 127 for p in sorted(glob.glob(f'{d}/Silhouettes/{cam}/*.png'))])
+    assert len(sil) == len(I), (seq, cam, len(sil), len(I))
+    s0, s1 = walking(sil)
+    s0 = min(s0, max(0, s1 - n + 1))
+    return I[s0:s0 + n], sil[s0:s0 + n], s0
+
+
+def labels(S, occ, open_px=7, zone_px=15):
+    """Human-convention label (user's void definition, fixed 2026-10-15 before any scoring):
+    coarse = opening(occ, open_px disk): occluder parts wider than ≈ half a 15-px cell (annotator removes them);
+    fine = occ ∧ ¬coarse (thin foliage); zone = closing(fine, zone_px disk) ∪ dilate(fine, 3×3): where thin foliage
+    is dense or adjacent, the annotator cannot tell (handAv marks such regions void, incl. visible pixels in them).
+    H = S ∧ ¬coarse ∧ ¬zone, void = S ∧ ¬coarse ∧ zone (ignored when scoring)."""
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (open_px, open_px))
+    kz = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (zone_px, zone_px))
+    o = occ[0].astype(np.uint8)                                     # static scene: one mask for all frames
+    coarse = cv2.morphologyEx(o, cv2.MORPH_OPEN, k).astype(bool)
+    fine = (o > 0) & ~coarse
+    zone = cv2.morphologyEx(fine.astype(np.uint8), cv2.MORPH_CLOSE, kz).astype(bool) | \
+        cv2.dilate(fine.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
+    return S & ~coarse & ~zone, S & ~coarse & zone
+
+
+def make_layered_clip(seq, cam, rho, seed, mode, out, n=40, K=3, clump=24, blur=0.7, twigs=0, twig_gain=0.6,
+                      save=True):
+    """mode 'perlin': B = one photo crop, mask = occ_perlin(density rho, clump) (baseline, fill='back').
+    mode 'depth':  B = one photo crop, mask = [disp_B > q_{1−rho}(disp_B over the person's trajectory box)]:
+                   the person stands at the depth where a fraction rho of the trajectory's scene is nearer.
+    mode 'stack':  dead-leaves stacking (Lee, Mumford & Huang, IJCV 2001): layer 0 = full crop (far), layers 1…K =
+                   independent crops cut to their own nearest foliage, mask_k = [disp_k > q_{1−ρ_k}], ρ_k =
+                   1 − (1 − rho)^{1/K} so that the union covers ≈ rho; B = painter's composite; person between layer 0
+                   and layer 1, so a = ∪_k mask_k.
+    twigs > 0: a twig layer drawn into the scene in front of the person: occ_branch lines (1–2 px, master_thesis
+                   src/occluders.py:231, mask only), intensity = twig_gain × an independent photo crop (assumed
+                   darker than leaves; not calibrated).
+    In all modes occluded person pixels show B itself (MovingMNIST-OcclusionBench occluders.py:450), static scene."""
+    rng = np.random.default_rng(seed)
+    I, m, s0 = load_person(seq, cam, n)
+    ys, xs = np.nonzero(m.any(0))
+    R = np.zeros((H, W), bool); R[max(0, ys.min() - 10):ys.max() + 11, max(0, xs.min() - 10):xs.max() + 11] = True
+    G, D, crop = foliage_pair(rng); crops = [crop]
+    if mode == 'perlin':
+        _, o = occ_perlin(torch.zeros(1, 1, H, W), density=rho, noise_h=clump, noise_w=clump, movement_x=0,
+                          movement_y=0, light_movement_x=0, light_movement_y=0, seed=int(seed), return_mask=True)
+        a_bin, B = o[0].numpy().astype(bool), G
+    elif mode == 'depth':
+        a_bin, B = D > np.quantile(D[R], 1 - rho), G
+    elif mode == 'stack':
+        B, a_bin, rk = G.copy(), np.zeros((H, W), bool), 1 - (1 - rho) ** (1 / K)
+        for _ in range(K):
+            Gk, Dk, ck = foliage_pair(rng); crops.append(ck)
+            mk = Dk > np.quantile(Dk[R], 1 - rk)
+            B[mk] = Gk[mk]; a_bin |= mk
+    else:
+        raise ValueError(mode)
+    if twigs:
+        if MT not in sys.path:
+            sys.path.insert(0, MT)
+        from src.occluders import occ_branch
+        _, ob = occ_branch(torch.zeros(1, 1, H, W), num_branches=int(twigs), thickness=2, movement_x=0,
+                           light_movement_x=0, light_movement_y=0, seed=int(seed) + 7, return_mask=True)
+        tw = ob[0].numpy().astype(bool)
+        Gt, _, ct = foliage_pair(rng); crops.append(ct)
+        B = B.copy(); B[tw] = twig_gain * Gt[tw]; a_bin = a_bin | tw
+    a = cv2.GaussianBlur(a_bin.astype(np.float32), (0, 0), blur)
+    mf = np.stack([cv2.GaussianBlur(x.astype(np.float32), (0, 0), 1.0) for x in m])
+    X = a * B + (1 - a) * (mf * I + (1 - mf) * B)
+    occ = np.repeat((a >= 0.5)[None], len(I), 0)
+    S = m; V = S & ~occ
+    Hl, void = labels(S, occ)
+    cid = f'{seq}_{cam}_{mode}_r{int(round(rho * 100))}_t{int(twigs)}_s{seed}'
+    if not save:
+        return cid, X, V, S, Hl, void
+    cd = f'{out}/{cid}'
+    os.makedirs(f'{cd}/frames', exist_ok=True)
+    for t, x in enumerate(X):
+        cv2.imwrite(f'{cd}/frames/{t:05d}.jpg', np.stack([np.clip(x, 0, 255).astype(np.uint8)] * 3, -1),
+                    [cv2.IMWRITE_JPEG_QUALITY, 95])
+    for k, v in (('V', V), ('S', S), ('occ', occ), ('H', Hl), ('void', void)):
+        np.save(f'{cd}/{k}.npy', v)
+    cv2.imwrite(f'{cd}/bg.png', np.clip(B, 0, 255).astype(np.uint8))
+    yy, xx = np.nonzero(S[0])
+    dt = cv2.distanceTransform(V[0].astype(np.uint8), cv2.DIST_L2, 5)
+    py, px = np.unravel_index(np.argmax(dt), dt.shape)
+    meta = dict(seq=seq, cam=cam, frames=[s0, s0 + n - 1], mode=mode, rho=rho, K=K, twigs=int(twigs), twig_gain=twig_gain, clump=clump, blur=blur,
+                seed=int(seed), crops=crops, coverage_person=float(1 - V.sum() / max(S.sum(), 1)),
+                split='holdout' if seq.split('s')[0] in HOLDOUT else 'train',
+                box=[int(xx.min()), int(yy.min()), int(xx.max()), int(yy.max())], point=[int(px), int(py)])
+    json.dump(meta, open(f'{cd}/meta.json', 'w'), indent=1)
+    return cid, X, V, S, Hl, void
