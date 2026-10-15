@@ -73,6 +73,43 @@ aggregation of SAM2 encoder features, under different motions.
     high-res levels;
   - if all levels are < 0.7, feature-space layers cannot fix H2 even with perfect inputs, so stop.
 
+**Oracle kill test, result** (measured 2026-10-15, `synth/oracle_visibility.py`):
+- Setup: 24 held-out perlin clips, every 3rd frame, true anisotropic SAM2 cells.
+- AUC of s for visible (V, binned by fragment size) vs occluded person pixels:
+
+| level | all | [0,.5) | [.5,1) | [1,4) | [4,∞) cells |
+|---|---|---|---|---|---|
+| stride 16 (256 ch) | 0.959 | **0.612** | 0.716 | 0.854 | 0.965 |
+| stride 8 (64 ch) | 0.989 | 0.939 | 0.973 | 0.979 | 0.990 |
+| stride 4 (32 ch) | 0.990 | 0.969 | 0.981 | 0.985 | 0.990 |
+
+- At stride 16 alone: the obj term gives 0.941, the bg term 0.896.
+- **Verdict (pre-registered):**
+  - stride 16 fails on sub-cell fragments (0.612 < 0.7), so it cannot carry the fix;
+  - strides 8 / 4 pass, so feature-space layers go to the high-res levels.
+  - This matches the v2 injection site on feat_s0 / feat_s1 (mask_decoder.py:224-225).
+- **Upper bound only:** B is exact and noise-free here.
+
+**Loss weighting for the composite target.** SAM2 tokens have large receptive fields, so a person token also
+encodes its surrounding background. "Background doesn't matter" can only hold approximately. Two measures:
+- Weight each token by the person fraction of its cell, inside dilate(S_t) ∧ O_t; weight 0 elsewhere.
+- Give the composite head F_bg as an input, so it can copy the background context instead of predicting it.
+
+**Cell-size correction.** SAM2 resizes to 1024×1024 without keeping the aspect ratio
+(sam2/utils/transforms.py:32). A 16-px cell is therefore (W/64)×(H/64) native px: 15 × 8.44 on GPJATK, 12.5 × 9.38 on
+NFO. Earlier fragment bins used 15² and 12.5².
+
+Re-binned T1 recall with true cells:
+
+| | [0,.5) | [.5,1) | [1,4) | [4,∞) cells |
+|---|---|---|---|---|
+| NFO seq2–4 handAv | 0.13 (n 122) | 0.44 (n 8) | 0.59 (n 22) | 0.82 (n 42) |
+| synthetic perlin held-out | 0.08 | 0.17 | 0.52 | 0.89 |
+
+NFO label area shares with true cells: 0.010 / 0.008 / 0.065 / 0.916. The layered-experiment bands were set
+with the old cells. The qualitative pattern stands; the bands are not re-fitted (dataset choice closed by the
+user, 2026-10-15).
+
 ## v2 (2026-10-14 evening): "Layer-SAM2" — the version to build first on GPJATK
 
 Supersedes §3 below for phase 1. Written after the modal seq2–4 scoring (`score_void.py`):
