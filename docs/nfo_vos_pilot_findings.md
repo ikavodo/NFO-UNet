@@ -887,3 +887,52 @@ B0 − T1: ΔJ −0.010 [−0.026, +0.003].
 - The label contains the SAM2-ceiling.
 - The label was validated on only 8 held-out polygon frames.
 - seq1 only (15 windows).
+
+## Keyframed composite mask with motion warp (2026-10-15, `benchmark/nfo_vos/keyframe_composite.py`)
+
+**Question.** The composite C (weighted average of the 6 previous frames, each shifted onto frame k) changes slowly.
+Can its SAM2 mask M_C be computed only on keyframes and shifted in between?
+
+**Cost per frame** (measured, RTX GPU in this machine, seq1 frame 800×600):
+- composite: 0.081 s;
+- SAM2 image encoder on C: 0.074 s;
+- decoder (one point prompt): 0.047 s.
+
+The total is about 0.2 s per frame. The 23 s per frame quoted earlier is Diffusion-VAS, not the composite.
+
+**Construction.**
+- On non-key frames: M_C(j) ≈ shift_x(M_C(key), fx(j) − fx(key)).
+- fx is the causal Theil–Sen fit of the blob tracker's chain, the same motion model that aligns the composite.
+- A new keyframe starts once j − key ≥ K.
+- pb and T1 stay per frame.
+- The rule is the anchored V̂, u* = 0.85.
+- Label: the frozen silhouette label, all 15 seq1 windows.
+- Pre-registered pass: ΔJ ≥ −0.005 with the CI upper end ≥ 0.
+
+**Result** (measured; ΔJ vs per-frame K = 1, J = 0.522, which reproduces the earlier V̂_anch value):
+
+| K | warp | ΔJ | 95% CI |
+|---|---|---|---|
+| 2 | yes | −0.001 | [−0.003, +0.001] |
+| 4 | yes | −0.004 | [−0.007, −0.001] |
+| 8 | yes | −0.009 | [−0.015, −0.005] |
+| 16 | yes | −0.017 | [−0.032, −0.007] |
+| 4 | no | −0.007 | [−0.010, −0.004] |
+| 8 | no | −0.016 | [−0.025, −0.009] |
+| 16 | no | −0.027 | [−0.042, −0.015] |
+
+**Reading.**
+- Only K = 2 passes.
+- The loss grows roughly linearly, about −0.001 J per frame of staleness.
+- The rigid warp removes roughly half of the loss. The rest is consistent with shape change (gait) that a pure x-shift cannot model.
+- So the composite *image* is slow, but the mask that must match the current pose is not.
+
+**Consequence for Layer-SAM2.** Feed the composite every frame, as a recursively updated memory. Do not use a stale keyframe.
+
+With exponential age weights w ∝ exp(−age/τ), the numerator N = Σ w·G·A and the denominator D = Σ w·G satisfy
+
+  N_{k+1} = shift(e^{−1/τ}·N_k + G_k·I_k)
+
+and the same for D. That is O(1) per frame instead of 6 shifts. This holds only if:
+- the motion fit is fixed rather than refit each frame;
+- the 6-frame truncation is dropped (it changes C, so it needs revalidation).

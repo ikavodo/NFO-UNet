@@ -35,3 +35,4 @@ One line per dead end: what was tried, why it failed.
 - 2026-10-14 · BSUV-Net (1.0, 2.0, Fast 2.0) pretrained weights: all Google Drive links 404; no off-the-shelf baseline without retraining on CDnet-2014.
 - 2026-10-14 · Sub-cell fragment recovery as the route to J on seq2–4: sub-cell label components hold ≤ 0.5% of label area under the user's tier-A labels; a perfect fix gives ≤ +0.005 J.
 - 2026-10-14 · Post-hoc V̂ (change-gated composite additions) on modal seq2–4 labels (void ignored): ΔJ −0.001 [−0.009, +0.008] vs T1. The seq1 gain does not replicate: only 22% of T1's missed area shows change against the empty scene (seq1 54%). Dilating T1 is no fix either (+1 px: +0.007 J, P/R trade).
+- 2026-10-15 keyframed M_C (SAM2 mask of the composite) every K ≥ 4 frames + tracker x-warp: ΔJ −0.004 (K4) … −0.017 (K16) vs per-frame on seq1 silhouette label; only K = 2 passes; composite costs 0.08 s/frame, not a bottleneck.
