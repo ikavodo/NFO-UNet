@@ -61,7 +61,7 @@ def foliage(rng):
         dict(crop=[int(x), int(y), cw, ch])
 
 
-def make_clip(seq, cam, density, seed, n=40, clump=12, blur=1.0, out=OUT, back='lab'):
+def make_clip(seq, cam, density, seed, n=40, clump=12, blur=1.0, out=OUT, back='lab', fill='photo'):
     """back='lab': GPJATK frame as is. back='photo': person cut out (silhouette feathered by σ = 1) and planted in
     front of a second, independent crop of the foliage photo (one-variable change vs 'lab')."""
     rng = np.random.default_rng(seed)
@@ -84,7 +84,9 @@ def make_clip(seq, cam, density, seed, n=40, clump=12, blur=1.0, out=OUT, back='
                         movement_x=0, movement_y=0, light_movement_x=0, light_movement_y=0,
                         seed=int(seed), return_mask=True)
     a = np.stack([cv2.GaussianBlur(o.numpy().astype(np.float32), (0, 0), blur) for o in occ])
-    X = a * O + (1 - a) * I
+    # fill='photo': occluder shows a separate foliage texture O. fill='back': occluder = the scene background itself
+    # (MovingMNIST-OcclusionBench occluders.py:450 rule): occluded person pixels show B, so occluder ≡ background.
+    X = a * O + (1 - a) * I if fill == 'photo' else a * B + (1 - a) * I
     V, S = m & (a < 0.5), m
     cid = f'{seq}_{cam}_d{int(round(density * 100))}_s{seed}'
     cd = f'{out}/{cid}'
@@ -97,7 +99,7 @@ def make_clip(seq, cam, density, seed, n=40, clump=12, blur=1.0, out=OUT, back='
     ys, xs = np.nonzero(S[0])
     dt = cv2.distanceTransform(V[0].astype(np.uint8), cv2.DIST_L2, 5)
     py, px = np.unravel_index(np.argmax(dt), dt.shape)
-    meta = dict(seq=seq, cam=cam, frames=[s0, s0 + n - 1], density=density, clump=clump, blur=blur, seed=int(seed), back=back,
+    meta = dict(seq=seq, cam=cam, frames=[s0, s0 + n - 1], density=density, clump=clump, blur=blur, seed=int(seed), back=back, fill=fill,
                 occluder='occ_perlin', coverage_person=float(1 - V.sum() / max(S.sum(), 1)),
                 coverage_frame=float((a >= 0.5).mean()), split='holdout' if seq.split('s')[0] in HOLDOUT else 'train',
                 box=[int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())], point=[int(px), int(py)], **fmeta)

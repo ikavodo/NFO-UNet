@@ -209,3 +209,32 @@ a cell" boundary *before* fitting, and only its count is fitted.
 
 An idea-critic pass could plausibly catch a missing ancestor in synthetic-occlusion datasets for VOS (e.g. Kubric
 / MOVi, synthetic amodal sets). Ask before dispatching.
+
+## Occluder ≡ background (user proposal, 2026-10-15; rule of MovingMNIST-OcclusionBench `occluders.py:450`)
+
+**Model.** Occluded person pixels show the scene background itself: I = a·B + (1 − a)·I_person.
+
+**Derived.** For a static camera and static foliage, this is the exact image formation. A pixel shows the person
+iff the person is in front of whatever is first visible there in the empty scene. So:
+- B̂ = B, as with NFO's warm-up median;
+- occlusion outside the person's trajectory changes no pixel. Restricting it to the trajectory matters only for
+  bookkeeping the coverage.
+
+**Measured** (T1, d45, 6 clips):
+
+| background B | clump | J / P / R vs V | size-binned recall |
+|---|---|---|---|
+| lab | 12 | 0.756 / 0.786 / 0.957 | 0.29 / 0.88 / 0.94 / 0.98 |
+| lab | 24 | 0.856 / 0.900 / 0.948 | 0.20 / 0.85 / 0.86 / 0.94 |
+| photo (person planted) | 12 | 0.563 / 0.620 / 0.865 | 0.17 / 0.37 / 0.70 / 0.94 |
+| photo (person planted) | 24 | 0.672 / 0.740 / 0.890 | 0.16 / 0.48 / 0.58 / 0.91 |
+| NFO | — | 0.750 / 0.887 / 0.819 | 0.13 / 0.39 / 0.67 / 0.84 |
+
+**Reading.**
+- A plain lab wall in the holes makes the task too easy: mid-size recall is 0.85–0.88 against NFO's 0.39–0.67.
+- The photo background gives an NFO-like size profile, but precision is still 0.74.
+- Voiding thin occluders (opening with a 7-px disk) changes nothing: perlin blobs have almost no thin parts
+  (void share 0.1–0.9% against NFO's 47.6%).
+- The fine structure must come from elsewhere:
+  - a depth-consistent mask taken from the photo itself (z-test against a monocular depth map);
+  - or an added twig layer.

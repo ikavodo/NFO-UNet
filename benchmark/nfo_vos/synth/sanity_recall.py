@@ -27,7 +27,8 @@ from benchmark.nfo_vos.synth.gpjatk_foliage import OUT, make_clip, montage
 
 BACK = os.environ.get('BACK', 'lab')
 CLUMP = int(os.environ.get('CLUMP', 12))
-SAN = f'{OUT}/sanity' + ('' if BACK == 'lab' else f'_{BACK}') + ('' if CLUMP == 12 else f'_c{CLUMP}')
+FILL = os.environ.get('FILL', 'photo')
+SAN = f'{OUT}/sanity' + ('' if BACK == 'lab' else f'_{BACK}') + ('' if CLUMP == 12 else f'_c{CLUMP}') + ('' if FILL == 'photo' else f'_f{FILL}')
 SEQS = [('p1s1', 'c1'), ('p2s1', 'c2'), ('p3s1', 'c3'), ('p4s1', 'c4'), ('p5s1', 'c1'), ('p6s1', 'c2')]
 DENS = tuple(float(x) for x in os.environ.get('DENS', '0.60,0.75,0.85').split(','))
 CELL = 16 * 960 / 1024
@@ -40,8 +41,8 @@ def clips():
 
 def gen():
     for dens in DENS:
-        made = [make_clip(s, c, dens, seed=i, out=SAN, back=BACK, clump=CLUMP) for i, (s, c) in enumerate(SEQS)]
-        montage(made, f'images/benchmark/gpjatk_foliage/sanity{"" if BACK == "lab" else "_" + BACK}{"" if CLUMP == 12 else f"_c{CLUMP}"}_d{int(dens * 100)}.png')
+        made = [make_clip(s, c, dens, seed=i, out=SAN, back=BACK, clump=CLUMP, fill=FILL) for i, (s, c) in enumerate(SEQS)]
+        montage(made, f'images/benchmark/gpjatk_foliage/sanity{"" if BACK == "lab" else "_" + BACK}{"" if CLUMP == 12 else f"_c{CLUMP}"}{"" if FILL == "photo" else "_f" + FILL}_d{int(dens * 100)}.png')
         for cid, *_ in made:
             m = json.load(open(f'{SAN}/{cid}/meta.json'))
             print(f"{cid}: person coverage {m['coverage_person']:.2f}, frame coverage {m['coverage_frame']:.2f}")
