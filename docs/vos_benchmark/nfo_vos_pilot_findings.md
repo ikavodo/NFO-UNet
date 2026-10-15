@@ -936,3 +936,34 @@ With exponential age weights w ∝ exp(−age/τ), the numerator N = Σ w·G·A 
 and the same for D. That is O(1) per frame instead of 6 shifts. This holds only if:
 - the motion fit is fixed rather than refit each frame;
 - the 6-frame truncation is dropped (it changes C, so it needs revalidation).
+
+## GPJATK + foliage sanity check: is SAM2 recall-limited on synthetic foliage? (2026-10-15, `benchmark/nfo_vos/synth/`)
+
+**Setup.**
+- Clips: 6 GPJATK clips (subjects p1–p6, cameras c1–c4 in turn), 40 walking frames each.
+- Occluder: occ_perlin matte (clump size 12 px), static, blurred with σ = 1. The matte selects where the grayscale foliage photo shows: I = a·O + (1 − a)·I^g.
+- Prompt: box + point at t0, as on NFO.
+- Scored on frames 1–39 against V (exact visible person) and T_8 (generous label).
+- Pre-registered pass at density 0.85: T1 R ≤ 0.85 with P ≥ 0.85, and sub-cell recall ≤ 0.25.
+
+**Result: FAIL** (measured; B0 ≈ T1 throughout, T1 shown; "person cov." = realised share of the person occluded):
+
+| density | person cov. | T1 vs V: J / P / R | vs T_8: P / R | comp. recall [0,.5) / [.5,1) / [1,4) / [4,∞) |
+|---|---|---|---|---|
+| 0.30 | 0.14–0.33 | 0.711 / 0.747 / 0.938 | 0.887 / 0.931 | 0.23 / 0.70 / 0.75 / 0.94 |
+| 0.45 | 0.29–0.57 | 0.534 / 0.588 / 0.852 | 0.720 / 0.841 | 0.25 / 0.48 / 0.68 / 0.92 |
+| 0.60 | 0.53–0.74 | 0.287 / 0.323 / 0.746 | 0.394 / 0.740 | 0.33 / 0.45 / 0.73 / 0.88 |
+| 0.75 | 0.76–0.87 | 0.107 / 0.126 / 0.422 | 0.140 / 0.414 | 0.27 / 0.41 / 0.48 / 0.62 |
+| 0.85 | 0.90–0.94 | 0.050 / 0.054 / 0.414 | 0.055 / 0.413 | 0.30 / 0.39 / 0.57 / n/a |
+
+**Reading.**
+- At high density SAM2 is not recall-limited. It is **precision-limited**: the mask stays person-sized (|M|/|S| = 1.0–1.27) but drifts onto the foliage (P vs S 0.37 at 0.85).
+- On NFO it is the opposite (P 0.887, R 0.819).
+- The box prompt drives this. With a point-only prompt (T1pt) precision rises (0.70–0.79 at ≤ 0.6) and recall collapses. At 0.60 the size pattern becomes NFO-like (0.02 / 0.03 / 0.24 / 0.69), but 35/234 frames are lost.
+- The closest match to NFO is density 0.30–0.45 with the box prompt, scored against T_8.
+
+**Untested hypotheses for the mismatch:**
+- the lab person's contrast against the foliage photo;
+- a single foliage depth layer, while NFO shows foliage behind the gaps too.
+
+Masks: `images/benchmark/gpjatk_foliage/sanity_t1_masks.png`. Clips: `sanity_d{30,45,60,75,85}.png`.

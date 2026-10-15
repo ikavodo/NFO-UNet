@@ -44,7 +44,14 @@ Per clip (one GPJATK sequence × camera × a contiguous walking window of N = 40
    - The crop scale sets the leaf size. Sample the crop width from [960, 2667] px of the template; smaller crops
      give bigger leaves and larger fragments.
    - Fixed per clip, with a slow per-frame translation of ≤ 2 px (sway) and an optional small elastic warp.
-3. **Occluder matte a_t** (the user's choice: generated masks sample the template).
+3. **Occluder matte a_t** (the user's choice, 2026-10-15: the generated mask only *selects* where the grayscale
+   template shows; the occluder functions' own light-canvas intensities are not used).
+   - **Implemented** (`benchmark/nfo_vos/synth/gpjatk_foliage.py`): occ_perlin (thresholded bicubic-upsampled grid =
+     leaf clumps with gaps), clump 12 px, static. occ_branch / occ_worley are not used: Worley borders give large
+     visible cells (wrong regime), branches give anisotropic slivers.
+   - **Density (user, 2026-10-15: high).** The sanity check (findings, 2026-10-15) shows that at density ≥ 0.6 SAM2 is
+     precision-limited, not recall-limited, unlike NFO; the NFO-like regime is 0.30–0.45 with the box prompt, vs T_8.
+     Density range for step 1: **open, the user's decision**.
    - a_t = mask from `occ_branch` / `occ_worley` / `occ_perlin`, parameters drawn per clip.
    - Soften the edges: Gaussian blur σ ∈ [0.5, 1.5] px, so a is in [0, 1] and edges are not perfectly hard.
    - Coverage target per clip: uniform in [0.3, 0.7] of person pixels occluded. Calibrate num_branches /
