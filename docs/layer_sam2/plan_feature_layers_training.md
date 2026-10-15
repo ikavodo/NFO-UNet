@@ -214,9 +214,7 @@ tokens). That is the next plan, after G1 passes.
   ablation row 1 shows whether the warp matters.
 - **The clean-frame target encodes the background context** (large receptive fields). This is handled by F_bg as an
   input and by the w weighting.
-- **Novelty is not checked.** Tracker-guided deformable aggregation into static/dynamic feature layers for VOS under
-  occlusion has not been searched. Run a 15–30 min novelty pass (research-companion brainstormer) **before step 4**,
-  and ask the user before dispatching it.
+- **Novelty pass:** deferred by the user (2026-10-15); do not run it unprompted.
 
 ## 8. Working rules (the user's standing preferences)
 
