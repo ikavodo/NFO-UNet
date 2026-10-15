@@ -270,3 +270,11 @@ warp −0.051, paired CIs exclude 0). Full table: `results/benchmark/rr/layers_g
   consistent with weak-signal detection theory (energy-detector statistic ∝ ‖Δ_t‖², matched filter ∝ ⟨Δ_t, Δ_p⟩,
   so shrinking fragments hurt B-none quadratically, the template linearly). No non-learned template beats B-none in
   any arm (best: warp under flutter, −0.012 [−0.016, −0.009]). The headroom exists only for a near-exact F_obj.
+
+## 10. End-to-end oracle test inside SAMURAI (2026-10-15) — KILL under the pre-registered bar
+`layers/oracle_bias.py`: T1 logits + λ·s (s4, upsampled), 30 fixed flutter val clips (`clip_specs('val')[::4]`),
+λ fit on 10 / reported on 20, J vs V. Oracle (F_obj = Enc(clean_t)): ΔJ +0.017 [+0.009, +0.025] at λ 8 (T1 J
+0.510 → 0.527). Static background only (F_obj = F_t): best λ = 0, ΔJ 0. Pre-registered kill: ΔJ ≤ +0.02 → the
+training-free route stops; perfect features buy < 0.02 J through a logit bias. Not tested: a trained injection
+(dense prompt / high-res residual), which would need its own oracle-in-the-loop training run.
+Trace: `images/benchmark/gpjatk_foliage/oracle_bias.png` (TP green, FP red, FN blue).
