@@ -39,7 +39,7 @@ def main():
     T = [t for t in json.load(open(TR.OUT)) if t['admissible'] and t['seq'] == SEQ]
     os.makedirs(LDIR, exist_ok=True); os.makedirs(FDIR, exist_ok=True)
     d, E, pred = np.load(DEPTH), bank('clear'), None
-    W = {a: [] for a in ('T1', 'B0', 'V̂_z', 'V̂_anch', 'ceiling')}
+    W = {a: [] for a in ('T1', 'B0', 'V̂_z', 'V̂_anch', 'V̂_anch_B0', 'ceiling')}
     for t in T:
         n = len(t['frames'])
         js = [j for j in range(6, n - 1) if (P := gt_mask_native(SEQ, t['frames'][j])) is not None and P.any()]
@@ -74,7 +74,10 @@ def main():
             h = L[str(j)]
             dd = {'T1': M1[j], 'MC': MC[j], 'pb': PB[j], 'cand': MC[j] & ~M1[j]}
             dd['mb'], dd['sb'], dd['mp'] = anchors(MC[j], M1[j], PB[j])
+            db = {'T1': B0[j], 'MC': MC[j], 'pb': PB[j], 'cand': MC[j] & ~B0[j]}   # same rule on the B0 base (2026-10-16)
+            db['mb'], db['sb'], db['mp'] = anchors(MC[j], B0[j], PB[j])
             arms = {'T1': M1[j], 'B0': B0[j], 'V̂_z': VZ[j], 'V̂_anch': M1[j] | add_anchored(dd, U),
+                    'V̂_anch_B0': B0[j] | add_anchored(db, U),
                     'ceiling': gt_mask_native(SEQ, t['frames'][j])}
             for a, m in arms.items():
                 rows[a].append(st(m, h))
@@ -85,11 +88,11 @@ def main():
     print(f'\n{SEQ}, {len(T)} windows, vs frozen silhouette label: mean over windows J / P / R / F2')
     for a in W:
         print(f'  {a:8s} ' + ' / '.join(f'{v:.3f}' for v in np.mean(W[a], 0)))
-    for a in ('B0', 'V̂_z', 'V̂_anch'):
+    for a, base in (('B0', 'T1'), ('V̂_anch', 'T1'), ('V̂_anch_B0', 'B0'), ('V̂_anch_B0', 'T1')):
         for i, m in ((0, 'J'), (2, 'R'), (3, 'F2')):
-            dj = np.array(W[a])[:, i] - np.array(W['T1'])[:, i]
+            dj = np.array(W[a])[:, i] - np.array(W[base])[:, i]
             bs = [dj[rng.integers(0, len(dj), len(dj))].mean() for _ in range(5000)]
-            print(f'  Δ{m:2s} {a:8s}− T1 {dj.mean():+.3f} [{np.percentile(bs, 2.5):+.3f}, {np.percentile(bs, 97.5):+.3f}] '
+            print(f'  Δ{m:2s} {a:10s}− {base} {dj.mean():+.3f} [{np.percentile(bs, 2.5):+.3f}, {np.percentile(bs, 97.5):+.3f}] '
                   f'better {(dj > 0).sum()}/{len(dj)}')
 
 

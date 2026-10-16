@@ -214,5 +214,53 @@ def main():
         json.dump({f'{k}|{t}': v for (k, t), v in logs.items()}, open(f'{OUT}/lp_logs.json', 'w'), indent=0)
 
 
+def seq234():
+    """The same arms on seq2–4 vs the user's modal hand labels (handAv: 1 person, 2 void ignored), per-sequence bank and
+    depth (depth_seq.py). No parameter is changed; seq1's TUNE frames were the only ones ever used for fitting."""
+    from benchmark.nfo_vos import exemplar_gt as EG, extent_label_test as ELT
+    global SEQ
+    path, rng, res = f'{OUT}/labels_seq234.npz', np.random.default_rng(0), {}
+    if os.path.exists(path):
+        Z = np.load(path)
+        for key in Z.files:
+            sk, arm = key.split('|'); res.setdefault(sk, {})[arm] = Z[key]
+    for seq in ([] if res else ('seq2', 'seq3', 'seq4')):
+        SEQ = ELT.SEQ = EG.SEQ = seq
+        d, E = np.load(f'{TR.RES}/depth/{seq}_bg_disp_1036.npy'), bank('clear')
+        for f in sorted(glob.glob(f'data/nfo_processed/{seq}_gt/*_handAv.png')):
+            k = int(os.path.basename(f)[:5]); w0, w1 = seg_of(k)['warmup']
+            bg = np.median(np.stack([V.native(i, seq) for i in range(w0, w1 + 1)]), 0).astype(np.float32)
+            S, P = silhouette(k, E, bg, d, align=True)
+            arms = {'SAM2-ceiling': P, 'frozen': S | P}
+            for norm in (False, True):
+                L, lg, _, _ = label(k, E, bg, d, norm, rng)
+                tag = 'mean' if norm else 'sum'
+                arms[f'S2-top3 {tag}'], arms[f'S3-LP {tag}'] = L['top3'], L['lp']
+            res[f'{seq}:{k}'] = arms
+            print(seq, k, flush=True)
+        np.savez_compressed(path, **{f'{sk}|{a}': m for sk, arms in res.items() for a, m in arms.items()})
+    sc = {}
+    for sk, arms in sorted(res.items()):
+        seq, k = sk.split(':')
+        v = cv2.imread(f'data/nfo_processed/{seq}_gt/{int(k):05d}_handAv.png', 0); H, keep = v == 1, v != 2
+        for a, m in arms.items():
+            tp = (m & H & keep).sum(); p = tp / max((m & keep).sum(), 1); r = tp / max((H & keep).sum(), 1)
+            sc.setdefault(a, []).append([tp / max(((m | H) & keep).sum(), 1), p, r, 5 * p * r / max(4 * p + r, 1e-9),
+                                         f_measure(m & keep, H & keep)])
+    print(f'\nseq2–4 vs handAv (void ignored), n={len(res)}: J / P / R / F2 / boundary F')
+    for a, v in sc.items():
+        print(f'  {a:14s} ' + ' / '.join(f'{x:.3f}' for x in np.mean(v, 0)))
+    rng = np.random.default_rng(1)
+    for a in sc:
+        if a in ('frozen', 'SAM2-ceiling'):
+            continue
+        for i, mname in ((3, 'F2'), (0, 'J')):
+            dF = np.array(sc[a])[:, i] - np.array(sc['frozen'])[:, i]
+            bs = [dF[rng.integers(0, len(dF), len(dF))].mean() for _ in range(5000)]
+            print(f'    Δ{mname} {a} − frozen {dF.mean():+.3f} [{np.percentile(bs, 2.5):+.3f}, {np.percentile(bs, 97.5):+.3f}]'
+                  f' better {(dF > 0).sum()}/{len(dF)}')
+
+
 if __name__ == '__main__':
-    main()
+    import sys
+    seq234() if sys.argv[1:] == ['seq234'] else main()

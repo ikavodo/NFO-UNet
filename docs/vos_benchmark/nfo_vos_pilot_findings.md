@@ -995,3 +995,39 @@ extent counts as false positives; the label is weaker evidence on seq2–4 than 
 - B0 − T1 ≈ 0 (seq3 −0.012).
 - Caveats: same partial circularity as on seq1 (label retrieval and V̂ both use the empty-scene cue); cluster-env T1/B0
   masks; label below its seq1 validation bar here.
+
+## V̂_anch on the SAM2.1 base (B0) vs the silhouette label, seq1–4, 2026-10-16 (`vhat_vs_silhouette.py`, arm V̂_anch_B0)
+
+Same anchored rule (u* = 0.85) and the same cached M_C / pb (they do not depend on the base); only the base mask, its
+candidate set MC ∧ ¬B0 and its anchor μ_P are B0's. GT-free.
+
+| seq | windows | ΔR (V̂_B0 − B0) | ΔF2 (V̂_B0 − B0) | ΔJ (V̂_B0 − B0) |
+|---|---|---|---|---|
+| seq1 | 15 | +0.080 [+0.040, +0.136], 15/15 | +0.058 [+0.026, +0.096] | +0.036 [+0.018, +0.055] |
+| seq2 | 16 | +0.020 [+0.015, +0.028], 16/16 | +0.015 [+0.009, +0.023] | +0.008 [+0.001, +0.016] |
+| seq3 | 14 | +0.029 [+0.018, +0.041], 14/14 | +0.016 [+0.010, +0.023] | +0.005 [−0.004, +0.014] |
+| seq4 | 16 | +0.027 [+0.021, +0.035], 16/16 | +0.020 [+0.013, +0.028] | +0.010 [+0.001, +0.020] |
+
+- The recall gain transfers to the second PVS model: every window of every sequence, magnitudes matching T1's
+  (seq1 slightly larger, +0.080 vs +0.067). So "raises the recall of PVS models" holds for SAMURAI and SAM2.1.
+- Same caveats as the T1 table (partial circularity with the label's empty-scene cue; cluster-env base masks).
+
+## Energy-aligned / LP-blended silhouettes vs the frozen label on seq2–4, 2026-10-16 (`energy_blend.py seq234`)
+
+docs/gt_conditioned_blend_plan.md stages 1–3, plan defaults, G := P; scored vs handAv (modal, void ignored, 23 frames).
+
+| arm | J | P | R | F2 | boundary F |
+|---|---|---|---|---|---|
+| SAM2-ceiling | 0.716 | 0.883 | 0.783 | 0.795 | 0.888 |
+| frozen | 0.624 | 0.672 | 0.881 | 0.821 | 0.854 |
+| S2 top-3, sum | 0.645 | 0.702 | 0.883 | 0.828 | 0.872 |
+| S3 LP, sum | 0.644 | 0.699 | 0.879 | 0.827 | 0.863 |
+| S2 top-3, mean | 0.653 | 0.714 | 0.879 | 0.829 | 0.873 |
+| S3 LP, mean | 0.649 | 0.706 | 0.872 | 0.825 | 0.868 |
+
+- On modal labels the energy alignment keeps recall and gains precision: ΔJ vs frozen +0.020 … +0.029 (CIs > 0 for
+  three of four arms), ΔF2 +0.004 … +0.008 (CIs include 0).
+- On seq1 polygons (extent-leaning) the same arms lose recall: all-17 ΔF2 −0.012 … −0.036.
+- Reading: energy alignment moves the label toward the modal convention. Under the pre-registered metric (F2) no arm
+  beats the frozen label on either set, so the frozen label stays. S3 LP sum is the candidate if a modal-leaning label is
+  wanted (seq2–4 ΔJ +0.020 [+0.003, +0.041]; seq1 TEST-8 ΔF2 +0.005, all-17 −0.017 [−0.048, +0.006]).
