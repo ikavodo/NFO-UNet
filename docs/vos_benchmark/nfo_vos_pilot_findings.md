@@ -1138,3 +1138,39 @@ arm: 0.564.
   together by step 200: fewer FP and more FN caught, the intended use of the layer separation.
 - The step 100 → 200 change shows the run is still moving, so later checkpoints may differ.
 - seq1 is the selection sequence. The pre-registered seq2–4 test (once, end of run) decides.
+
+## Memory helps on top of tracker prompts; the adapter transfers into SAM2's video loop zero-shot, 2026-10-16 (`layers/video_check.py`)
+
+**Setup:** seq1, 15 windows, all frames with a pseudo-GT label, scored against the frozen silhouette pseudo-GT.
+- SAM2.1 b+ video, GT box + point at t0.
+- Hooks: per-frame prompts enter only the decoder; t0 is the sole conditioning frame.
+- SC1 exact: 0 pixels differ between hooks-inactive and plain SAM2.
+
+| arm | J | P | R | F2 |
+|---|---|---|---|---|
+| plain SAM2 video (prompt at t0 only) | 0.487 | 0.806 | 0.522 | 0.552 |
+| + kernel-f16 tracker box + point every frame (`prompts`) | 0.568 | 0.824 | 0.650 | 0.666 |
+| + adapter v3.4 step 200 residual after memory attention (`adapter`) | 0.588 | 0.805 | 0.689 | 0.696 |
+| + adapter residual before memory attention (`adapter-pre`) | 0.590 | 0.790 | 0.707 | 0.707 |
+| oracle: tracker prompts + pseudo-GT written into memory (`oracle-mem`) | 0.638 | 0.844 | 0.722 | 0.734 |
+
+**Window bootstrap:**
+- prompts − plain: ΔJ +0.082 [+0.043, +0.125], ΔR +0.128;
+- adapter − prompts: ΔJ +0.020 [+0.012, +0.027], ΔR +0.039;
+- adapter-pre − prompts: ΔJ +0.022 [+0.012, +0.031], ΔR +0.057 [+0.047, +0.068];
+- oracle-mem − prompts: ΔJ +0.069 [+0.058, +0.080].
+
+**Recall and precision, first → second half of the window:**
+- plain: R 0.59 → 0.47;
+- prompts: R 0.69 → 0.62;
+- adapter-pre: R 0.74 → 0.68;
+- oracle-mem: R 0.74 → 0.71;
+- precision is flat in all arms.
+
+**Reading:**
+- Memory plus tracker prompts beats plain SAM2 video by +0.08 J.
+- The per-frame-trained adapter transfers into the video loop zero-shot (+0.02 J, +0.04–0.06 R). Recall rises without
+  a precision collapse.
+- The memory oracle leaves about 0.05 J of headroom above adapter-pre, so training in video mode is justified.
+- Caveat: the memory-free reference (0.507 / 0.546) was scored on every 4th frame, not all frames, so it is not
+  frame-identical to this table.
