@@ -94,3 +94,22 @@ Effect: improved masks enter memory, so memory improves gradually.
 - How should the composite memory's temporal position be encoded?
 - Does adding R^16 after memory attention, when trained without memory, transfer zero-shot?
 - How to prevent error accumulation through memory, i.e. leaks feeding back?
+
+## 6. Next week: poster deadline (user, 2026-10-16). Organised results with the adapter on video
+
+**Must have:**
+1. **Second annotator** on a subset of the hand frames: inter-annotator agreement, the reference ceiling for J/R.
+2. **Larger benchmark** on the same windows and labels: B0, T1, the memory-free tracker-prompted SAM2, V̂, Diffusion-VAS,
+   adapter per-frame, adapter-in-video. seq1 for selection, seq2–4 handAv for the single test.
+3. **Video-mode training result**, worth a try even if worse. Stage 1 first: detached bank, gradient only into frame t.
+   Same data path as v3.4.
+4. **Understanding of our own method.** One-variable ablations on the video arm:
+   - −composite (adapter-noC);
+   - −tracker prompts;
+   - residual before vs after memory attention;
+   - simple loss vs layer-aware loss.
+
+**Loss question:** test whether a simpler loss (global focal α + Focal Tversky, without layer weights) matches the
+layer-aware one *in video mode*. Prefer the simpler one if it is within the CI.
+
+**Not now:** composite / background from buffered features.
