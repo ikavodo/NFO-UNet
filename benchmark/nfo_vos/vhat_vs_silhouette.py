@@ -16,13 +16,18 @@ import os
 import numpy as np
 
 from benchmark.nfo_vos import run_t4 as R, trials as TR, velocity as V
-from benchmark.nfo_vos.extent_label_test import DEPTH, SEQ, bank, silhouette
+from benchmark.nfo_vos import exemplar_gt as EG, extent_label_test as ELT
+from benchmark.nfo_vos.extent_label_test import bank, silhouette
 from benchmark.nfo_vos.learned_thresh import add_anchored, anchors, features
 from benchmark.nfo_vos.run_sam2_video import gt_mask_native
 
 LDIR = f'{TR.RES}/labels_sil_frozen'
 FDIR = f'{TR.RES}/vhat_sil_feats'
 U = 0.85
+# 2026-10-16: the same frozen rule on seq2–4 (NFO_SEQ=seq2 ...): the exemplar bank, evidence and depth are the
+# sequence's own (depth_seq.py); the label modules read SEQ as a module global, so it is set here.
+SEQ = ELT.SEQ = EG.SEQ = os.environ.get('NFO_SEQ', 'seq1')
+DEPTH = f'{TR.RES}/depth/{SEQ}_bg_disp_1036.npy'
 
 
 def st(a, h):
@@ -77,7 +82,7 @@ def main():
             W[a].append(np.mean(rows[a], 0))
         print(f"{t['id']}: {len(js)} frames; J T1 {W['T1'][-1][0]:.3f}  V̂_anch {W['V̂_anch'][-1][0]:.3f}", flush=True)
     rng = np.random.default_rng(0)
-    print(f'\nseq1, {len(T)} windows, vs frozen silhouette label: mean over windows J / P / R / F2')
+    print(f'\n{SEQ}, {len(T)} windows, vs frozen silhouette label: mean over windows J / P / R / F2')
     for a in W:
         print(f'  {a:8s} ' + ' / '.join(f'{v:.3f}' for v in np.mean(W[a], 0)))
     for a in ('B0', 'V̂_z', 'V̂_anch'):

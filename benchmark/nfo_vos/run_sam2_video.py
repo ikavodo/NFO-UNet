@@ -48,12 +48,12 @@ def gt_mask_native(seq, idx):
 
 
 def run_trial(predictor, trial, max_frames=None, schedule=None, comp_dir=None, init_mask=False, point_only=False,
-              save_logits=False):
+              save_logits=False, prepend=None, mask0=None):
     """One window. schedule (A/4, a4.py): times t at which composite C_t (comp_dir/<t>.jpg) is
     inserted just before raw frame R_t into the same memory bank; None or [] = plain run."""
     frames = trial['frames'][:max_frames] if max_frames else trial['frames']
     # staged sequence: (kind, t) per SAM2 frame; 'c' = composite C_t, 'r' = raw frame t
-    seq = []
+    seq = [('p', 0)] if prepend else []   # prepend: planted composite (cp_vbar.py) staged and prompted before t0
     for t in range(len(frames)):
         if schedule is not None and t in schedule:
             seq.append(('c', t))
@@ -61,7 +61,7 @@ def run_trial(predictor, trial, max_frames=None, schedule=None, comp_dir=None, i
     stage = tempfile.mkdtemp(prefix='nfo_vos_')
     try:
         for i, (kind, t) in enumerate(seq):         # SAM2's loader sorts by int(filename)
-            src = (f'{comp_dir}/{t:02d}.jpg' if kind == 'c'
+            src = (prepend if kind == 'p' else f'{comp_dir}/{t:02d}.jpg' if kind == 'c'
                    else f"{NATIVE_DIR}/{trial['seq']}/{frames[t]:05d}.jpg")
             os.symlink(os.path.abspath(src), os.path.join(stage, f'{i}.jpg'))
         torch.cuda.reset_peak_memory_stats()
@@ -84,7 +84,9 @@ def run_trial(predictor, trial, max_frames=None, schedule=None, comp_dir=None, i
             prompt_calls = {}
             for pi in prompt_idx:
                 n_before = len(calls)
-                if init_mask:   # ORACLE ceiling: the GT mask itself at t0 instead of box + p*
+                if mask0 is not None:   # composite mask inserted as t0 memory (cp_vbar.init_masks)
+                    predictor.add_new_mask(state, frame_idx=pi, obj_id=0, mask=mask0)
+                elif init_mask:   # ORACLE ceiling: the GT mask itself at t0 instead of box + p*
                     predictor.add_new_mask(state, frame_idx=pi, obj_id=0,
                                            mask=gt_mask_native(trial['seq'], trial['t0']))
                 else:
@@ -157,6 +159,8 @@ def main():
     p.add_argument('--init-mask', action='store_true', help='ORACLE: prompt t0 with the GT mask (-> <method>-om)')
     p.add_argument('--save-logits', action='store_true', help='also store mask logits at 300x400 (-> <method>-lg)')
     p.add_argument('--point-only', action='store_true', help='prompt t0 with p* alone, no box (-> <method>-pt)')
+    p.add_argument('--prepend-dir', default=None, help='planted composites <trial>.jpg (cp_vbar.py) -> <method>-cpv')
+    p.add_argument('--mask0', default=None, help='DIR:KEY, t0 mask prompt from DIR/m0_<trial>.npz[KEY] -> <method>-m0<KEY>')
     p.add_argument('--tau', type=float, default=0.6, help='gate: insert when baseline predicted IoU < tau')
     a = p.parse_args()
     trials = select_trials(json.load(open(TRIALS)), a.limit, a.trial_index)
@@ -164,6 +168,9 @@ def main():
     name += '-om' if a.init_mask else ''
     name += '-pt' if a.point_only else ''
     name += '-lg' if a.save_logits else ''
+    name += '-cpv' if a.prepend_dir else ''
+    name += f"-m0{a.mask0.split(':')[1]}" if a.mask0 else ''
+    name += os.environ.get('NFO_TAG', '')            # e.g. '-loc': local-env reruns beside cluster caches
     out_dir = os.path.join(CACHE, name)
     os.makedirs(out_dir, exist_ok=True)
     predictor = build_predictor(a.method)
@@ -176,7 +183,17 @@ def main():
             r = run_trial(predictor, t, schedule=sched, comp_dir=f"results/benchmark/{RUN}/composites_a4/{t['id']}",
                           init_mask=a.init_mask)
         else:
-            r = run_trial(predictor, t, init_mask=a.init_mask, point_only=a.point_only, save_logits=a.save_logits)
+            comp = os.path.join(a.prepend_dir, f"{t['id']}.jpg") if a.prepend_dir else None
+            m0 = None
+            if a.mask0:
+                d, key = a.mask0.split(':'); f0 = f"{d}/m0_{t['id']}.npz"
+                if not os.path.exists(f0):
+                    print(f"{name} {t['id']}: no t0 mask (gated out), skipped"); continue
+                m0 = np.load(f0)[key]
+            if comp and not os.path.exists(comp):
+                print(f"{name} {t['id']}: no prepend (gated out), skipped"); continue
+            r = run_trial(predictor, t, init_mask=a.init_mask, point_only=a.point_only, save_logits=a.save_logits,
+                          prepend=comp, mask0=m0)
         np.savez_compressed(path, **r)
         print(f"{name} {t['id']}: {r['sec_per_frame'] * 1000:.0f} ms/frame, "
               f"peak {r['peak_mem_gb']:.2f} GB, last-frame area {r['masks'][-1].sum()}")

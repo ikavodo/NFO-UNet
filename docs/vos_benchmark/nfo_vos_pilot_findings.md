@@ -967,3 +967,31 @@ and the same for D. That is O(1) per frame instead of 6 shifts. This holds only 
 - a single foliage depth layer, while NFO shows foliage behind the gaps too.
 
 Masks: `images/benchmark/gpjatk_foliage/sanity_t1_masks.png`. Clips: `sanity_d{30,45,60,75,85}.png`.
+
+## V̂ vs the automatic silhouette label on seq2–4, 2026-10-16 (`vhat_vs_silhouette.py`, `NFO_SEQ=seq2|3|4`)
+
+**Label:** the frozen F2-PASS rule unchanged; per-sequence exemplar bank and empty-scene disparity
+(`depth_seq.py`: Depth Anything V2 L, short side 1036, median of the sequence's longest warm-up, min–max normalised).
+Thresholds (disparity < 0.1, |frame − empty| < 8) kept from seq1, although the disparity distributions differ (median
+0.25–0.37 vs 0.21 on seq1).
+
+**Label check vs the user's modal hand labels (handAv, void ignored, 23 frames):** label P / R / F2 0.672 / 0.881 /
+0.821 vs SAM2-ceiling 0.883 / 0.783 / 0.795; ΔF2 +0.026 [+0.005, +0.048], better 16/23. This is below the seq1
+pass bar (ΔF2 ≥ 0.05); the precision bar (≥ 0.60) holds. The hand labels here are strictly modal, so the label's
+extent counts as false positives; the label is weaker evidence on seq2–4 than on seq1.
+
+**V̂_anch − T1, window bootstrap (V̂_anch: u* = 0.85 anchored rule, fixed on seq1):**
+
+| seq | windows | ΔJ | ΔR | ΔF2 |
+|---|---|---|---|---|
+| seq2 | 16 | +0.008 [+0.000, +0.017] | +0.019 [+0.014, +0.027], 16/16 | +0.015 [+0.008, +0.023] |
+| seq3 | 14 | +0.003 [−0.007, +0.011] | +0.026 [+0.017, +0.038], 14/14 | +0.013 [+0.008, +0.020] |
+| seq4 | 16 | +0.010 [+0.001, +0.021] | +0.028 [+0.021, +0.037], 16/16 | +0.020 [+0.013, +0.030] |
+
+- Recall improves in every window of every new sequence, at a precision cost of 0.02–0.03; the gain is about a third
+  of seq1's (ΔR +0.067).
+- V̂_z (frozen robust-z rule, `run_vhat.py`) adds no pixels on seq2–4 (masks identical to T1): the z > 7.5 threshold
+  does not transfer across scenes. V̂_anch is the rule to carry forward.
+- B0 − T1 ≈ 0 (seq3 −0.012).
+- Caveats: same partial circularity as on seq1 (label retrieval and V̂ both use the empty-scene cue); cluster-env T1/B0
+  masks; label below its seq1 validation bar here.
