@@ -1,5 +1,5 @@
 #!/bin/bash
-# G1 baselines (plan_feature_layers_training.md step 3) under one nuisance arm per array task:
+# G1 baselines (docs/layer_sam2/training/plan_feature_layers_training.md step 3) under one nuisance arm per array task:
 #   task 0 = flutter (non-rigid foliage flutter, calibrated to NFO seq2), task 1 = chunks (perlin clump 12 ∪ 24).
 # Each writes results/benchmark/rr/layers_g1_<arm>/{clip_*.npz,g1_table.txt,g1_point.json} and
 # images/benchmark/gpjatk_foliage/g1_smaps_<arm>.png. Resumable: finished clips are skipped.

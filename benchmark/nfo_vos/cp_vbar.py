@@ -184,5 +184,45 @@ def init_masks():
         cv2.imwrite(f"{IMG}/m0_{t['id']}.jpg", cv2.resize(np.hstack(panes), None, fx=0.35, fy=0.35))
 
 
+def show_logits():
+    """Per gated-in window, the bgs construction of init_masks (box + p* on C and on bg), cropped around the box:
+    C | σ(l_C) on C | bg | σ(l_B) on bg | σ(l_C)·(1 − σ(l_B)) on C, contour = the > 0.5 mask | raw t0 + SAM2-ceiling.
+    Heat: JET (blue 0 → red 1), 50% blend."""
+    pred, rows = R.image_predictor(), []
+    sig = lambda x: 1 / (1 + np.exp(-x))
+    for t in trials():
+        bg, C = comp_t0(t)
+        if C is None:
+            continue
+        kw = dict(point_coords=np.array([t['point_native']]), point_labels=np.array([1]),
+                  box=np.array(t['box_native']), multimask_output=False, return_logits=True)
+        with torch.inference_mode():
+            l = {}
+            for name, img in (('C', C), ('B', bg)):
+                pred.set_image(np.stack([np.clip(img, 0, 255).astype(np.uint8)] * 3, -1))
+                l[name] = pred.predict(**kw)[0][0]
+        pC, pB = sig(l['C']), sig(l['B'])
+        prod = pC * (1 - pB)
+        g = lambda a: cv2.cvtColor(np.clip(a, 0, 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
+        heat = lambda img, p: cv2.addWeighted(g(img), 0.5, cv2.applyColorMap((p * 255).astype(np.uint8), cv2.COLORMAP_JET), 0.5, 0)
+        x0, y0, x1, y1 = (int(v) for v in t['box_native'])
+        panes = [g(C), heat(C, pC), g(bg), heat(bg, pB), heat(C, prod), g(V.native(t['t0'], SEQ))]
+        cnt, _ = cv2.findContours((prod > 0.5).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        cv2.drawContours(panes[4], cnt, -1, (255, 255, 255), 1)
+        cP, _ = cv2.findContours(gt_mask_native(SEQ, t['t0']).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        cv2.drawContours(panes[5], cP, -1, (0, 255, 0), 1)
+        ys, xs = slice(max(0, y0 - 30), min(600, y1 + 30)), slice(max(0, x0 - 50), min(800, x1 + 50))
+        crop = [cv2.resize(p[ys, xs], (200, 260)) for p in panes]
+        for v, txt in zip(crop, ('C', 'sig(l_C)', 'bg', 'sig(l_B)', 'product', 't0+ceiling')):
+            cv2.rectangle(v, (0, 0), (199, 259), (80, 80, 80), 1)
+            cv2.putText(v, txt, (4, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        row = np.hstack(crop)
+        cv2.putText(row, t['id'], (4, 254), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+        rows.append(row)
+        print(t['id'], f"area C>.5 {(pC > .5).sum()}  B>.5 {(pB > .5).sum()}  overlap {((pC > .5) & (pB > .5)).sum()}  "
+              f"prod>.5 {(prod > .5).sum()}", flush=True)
+    cv2.imwrite(f'{IMG}/logits_all.jpg', np.vstack(rows))
+
+
 if __name__ == '__main__':
-    {'build': build, 'score': score, 'show': show, 'init_masks': init_masks}[sys.argv[1]]()
+    {'build': build, 'score': score, 'show': show, 'init_masks': init_masks, 'show_logits': show_logits}[sys.argv[1]]()

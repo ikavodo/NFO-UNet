@@ -1,4 +1,4 @@
-"""GPJATK walkers behind photographed foliage, with exact layers (plan: docs/layer_sam2/plan_gpjatk_layer_sam2.md).
+"""GPJATK walkers behind photographed foliage, with exact layers (plan: docs/layer_sam2/data/plan_gpjatk_layer_sam2.md).
 
 Per clip: GPJATK frame I^g_t (person in the lab scene, used as is), binary occluder matte from master_thesis
 src/occluders.occ_perlin (thresholded bicubic-upsampled random grid: leaf clumps with small gaps; `density` = covered

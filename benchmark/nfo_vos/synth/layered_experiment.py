@@ -1,5 +1,5 @@
 """Layered synthetic NFO: calibrate on input statistics, then test SAM2 behaviour on held-out clips (2026-10-15).
-Design: docs/layer_sam2/synthetic_nfo_design.md. Generator: gpjatk_foliage.make_layered_clip (occluder ≡ background).
+Design: docs/layer_sam2/data/synthetic_nfo_design.md. Generator: gpjatk_foliage.make_layered_clip (occluder ≡ background).
 
 Arms (one generator component changes between neighbouring arms):
   perlin        occ_perlin mask (clump 24), photo background                 (today's best, baseline)

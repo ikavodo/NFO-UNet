@@ -1,4 +1,4 @@
-"""G1 table before any training (plan_feature_layers_training.md §4, step 3): val subjects, noisy inputs, jittered boxes.
+"""G1 table before any training (docs/layer_sam2/training/plan_feature_layers_training.md §4, step 3): val subjects, noisy inputs, jittered boxes.
 
 Score at level ℓ ∈ {s8, s4}: s = cos(F_t, F_obj) − cos(F_t, F_bg), bilinearly upsampled to 540×960 (oracle_visibility).
 F_t = Enc(noisy X_t); F_bg = Enc(pixel median of the noisy warm-up) for all arms except 'oracle-clean'.
