@@ -83,7 +83,7 @@ def make_clip(seq, cam, rho, seed, flutter=0.0, clump=24):
     cid, *_, L = make_layered_clip(seq, cam, rho, seed, 'perlin', None, n=N, clump=clump, save=False, layers=True,
                                    sway=sway[N_WARM:])
     warm = noise.photometric(np.stack([noise.displace(L['B'], d) for d in sway[:N_WARM]]), p, salt=1)
-    return dict(cid=cid, X=noise.photometric(L['X'], p), X0=L['X'], clean=L['clean'], B=L['B'], bg=np.median(warm, 0),
+    return dict(cid=cid, X=noise.photometric(L['X'], p), X0=L['X'], clean=L['clean'], B=L['B'], bg=np.median(warm, 0), warm=warm,
                 S=L['S'], V=L['V'], boxes=boxes_of(L['S']), noise=p, rng=rng)
 
 

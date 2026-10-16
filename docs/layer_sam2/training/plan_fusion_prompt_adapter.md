@@ -343,3 +343,38 @@ and exact box-only equivalence at init; (3) training/eval loop; smoke run; (4) f
    is the reflected empty scene.
 10. **Ablations (after the main run, one variable each, same budget):** −F_B; −F_C (a only); −difference terms; token
     vs box vs token + box; stride 16 only vs all three.
+
+## 13. Closing the synthetic → NFO gap (2026-10-16), pre-registered before the v3 run
+
+**What failed so far (measured):**
+- v1, old data: synthetic val J 0.75; NFO seq2–4 adapter J 0.575, R 0.59 (vs GT-box SAM2 0.722).
+- v2, blob tracker in training: seq1 selection adapter J 0.326, R 0.34 (vs box + point 0.566).
+- Diagnosis of v2:
+  - the blob tracker covered only 48% of synthetic frames, so 35% of training targets had no composite (a = 0);
+    on NFO 0% do;
+  - NFO evidence mass is about 4× lower (median Σa 6,265 vs 23,293 cells).
+
+**v3 data path (fusion_data.build):** the stride-16 kernel tracker in training and on NFO (fusion_nfo.items), one
+alignment code path.
+- Measured on synthetic: centre error 0.092 person heights, 0% lost frames at every density up to 0.6.
+  On NFO: 0.105.
+- Whole-clip batches.
+- Backgrounds: CanaTree100 50/50 with the template, every 5th image held out for val.
+- Composite parameters randomised per clip: n_h 4–8, τ 2–6, z0 2–4, widening the evidence-mass range.
+
+**Sanity checks, printed at every validation (every 100 steps):**
+1. **Tracker parity.** Kernel-tracker error on synthetic vs NFO (above). If synthetic is much easier, the adapter
+   learns to trust a composite that NFO cannot deliver.
+2. **Input parity.** Median Σa and mean a on the labelled person, synthetic val vs seq1. Large mismatch means
+   out-of-distribution inputs at test.
+3. **Composite use.** The `adapter-noC` arm (C := B, a := 0) on seq1. If it scores like `adapter`, the composite is
+   ignored and any gain is not our idea.
+4. **GT-free control.** `trk-box`: SAM2 with the kernel tracker's box, the fair comparison for the box-free token
+   adapter. GT-box SAM2 remains the oracle reference.
+5. **Gap in the quantity that matters.** GAP = (adapter − trk-box) on synthetic vs on seq1. The domain gap is
+   closed when the real-frame advantage approaches the synthetic one.
+
+**Pre-registered "gap closed" (TEST, seq2–4 handAv, touched once, checkpoint chosen on seq1):**
+- adapter J − trk-box SAM2 J > 0, with a frame-bootstrap CI excluding 0;
+- adapter R ≥ trk-box R − 0.02;
+- `adapter-noC` J < adapter J − 0.02, i.e. the composite matters.

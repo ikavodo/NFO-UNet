@@ -6,7 +6,8 @@ tracker-aligned composite and the empty scene on the three SAM2 feature levels t
   F̂_t^ℓ = F_t^ℓ + R^ℓ, the final 1×1 conv of R^ℓ zero-initialised (ControlNet zero conv; Zhang et al., ICCV 2023,
   arXiv 2302.05543; replaces a scalar α, under which R received no gradient until α moved)
   F̂^16 is the decoder's image embedding; F̂^8, F̂^4 its high-res features (mask_decoder.py:205, 224-225)
-  sparse prompt: token mode (default) w·[SAM2 point embedding at the a-weighted composite centroid + zero-init
+  sparse prompt: token mode (default; v3.2) SAM2 prompt embedding of the kernel tracker's box (t0 size) + its point, the
+  point token corrected by w·zero-init MLP(composite prototype); at step 0 = SAM2 with the GT-free tracker box + point. Without a track (f['trk'] absent): w·[point embedding at the a-weighted composite centroid + zero-init
   MLP(Σ a F_C^16 / Σ a)] + (1 − w)·learned fallback token, w = 1 − exp(−Σa / κ), κ learned (init 500 cells of 256²):
   a point prompt at step 0 when there is evidence, a learned prompt when there is none (PerSAM-style, arXiv 2305.03048); box mode (ablation) the tracker box, exactly box-only SAM2 at init.
 Frozen SAM2.1 b+; loss 20·focal + Dice vs V on the decoder's 256² logits.
@@ -27,7 +28,7 @@ import torch.nn.functional as F
 from torchvision.ops import sigmoid_focal_loss
 
 from benchmark.nfo_vos import run_t4 as R
-from benchmark.nfo_vos.layers.fusion_data import Clips, encode
+from benchmark.nfo_vos.layers.fusion_data import Clips, build, encode
 
 OUT = 'results/benchmark/rr/layers_fusion_adapter'
 CH, D_ = {'16': 256, '8': 64, '4': 32}, {'16': 64, '8': 32, '4': 32}
@@ -81,14 +82,24 @@ class Fusion(nn.Module):
             m = a.sum((1, 2))
             c = torch.stack([(a.sum(1) * g).sum(1), (a.sum(2) * g).sum(1)], 1) / m.clamp(min=1e-6)[:, None]
             c = torch.where((m > 1e-3)[:, None], c, torch.full_like(c, 512.0))
+            if 'trk' in f:                       # anchor = the kernel tracker's position at t (2026-10-16): the evidence
+                c = f['trk']                     # centroid is ~80% diffuse background mass and lands ~0.6 h off target
+            pts, lab = c[:, None], torch.ones((n, 1), dtype=torch.int, device=a.device)
+            if 'trk' in f and 'box_trk' in f:    # v3.2: tracker box (t0 size) + tracker point; δ corrects the point token
+                pts = torch.cat([f['box_trk'].view(n, 2, 2), pts], 1)
+                lab = torch.cat([torch.tensor([[2, 3]], device=a.device).repeat(n, 1), lab], 1)
             with torch.no_grad():
-                sp, _ = sam.sam_prompt_encoder(points=(c[:, None], torch.ones((n, 1), dtype=torch.int, device=a.device)),
-                                               boxes=None, masks=None)
+                sp, _ = sam.sam_prompt_encoder(points=(pts, lab), boxes=None, masks=None)
+            ip = pts.shape[1] - 1                # index of the point token
             a16 = F.avg_pool2d(a[:, None], 4)
             proto = (f['C16'] * a16).sum((2, 3)) / a16.sum((2, 3)).clamp(min=1e-3)
             delta = self.tok(proto)[:, None]
             w = (1 - torch.exp(-m / self.log_kappa.exp()))[:, None, None]
-            o['token'] = w * (sp + torch.cat([delta, torch.zeros_like(sp[:, 1:])], 1)) + (1 - w) * self.fallback[None]
+            if 'trk' in f:                       # location always known: no fallback; the composite only corrects (δ ∝ w)
+                corr = torch.zeros_like(sp); corr[:, ip] = (w * delta)[:, 0]
+                o['token'] = sp + corr
+            else:
+                o['token'] = w * (sp + torch.cat([delta, torch.zeros_like(sp[:, 1:])], 1)) + (1 - w) * self.fallback[None]
         return o
 
 
@@ -119,53 +130,73 @@ def decode(sam, f, token=None, point=False):
     return low
 
 
-def loss_fn(low, V):
+ALPHA = 0.67   # focal class weight: a missed person pixel costs 2.07× an extra background pixel (old default 0.25: 0.38×)
+
+
+def loss_fn(low, V, a_fp=0.3, b_fn=0.7):
+    """v3.3 (2026-10-16): recall-oriented. torchvision's focal default α = 0.25 weighted person pixels 0.25 vs background
+    0.75, a built-in precision bias (seq1 at step 100: P 0.71 → 0.81, R 0.76 → 0.61; a missed person pixel cost 0.38× an
+    extra background pixel). Now focal α = 0.67 + Tversky (FN 0.7, FP 0.3; Salehi et al. 2017): FN / FP cost 2.07×."""
     V = V[:, None]
     p = torch.sigmoid(low)
-    dice = 1 - (2 * (p * V).sum((1, 2, 3)) + 1) / (p.sum((1, 2, 3)) + V.sum((1, 2, 3)) + 1)
-    return (20 * sigmoid_focal_loss(low, V, reduction='none').mean((1, 2, 3)) + dice).mean()
+    tp, fp, fn = (p * V).sum((1, 2, 3)), (p * (1 - V)).sum((1, 2, 3)), ((1 - p) * V).sum((1, 2, 3))
+    tversky = 1 - (tp + 1) / (tp + a_fp * fp + b_fn * fn + 1)
+    return (20 * sigmoid_focal_loss(low, V, alpha=ALPHA, reduction='none').mean((1, 2, 3)) + tversky).mean()
 
 
 @torch.no_grad()
 def evaluate(pred, net, val):
-    """J / P / R vs native V; arms: box-only SAM2, box + point SAM2 (the G2 control), adapter."""
+    """Synthetic val (raw clips, built with the test-time path): J / P / R vs native V; arms box, box+pt, trk-box,
+    adapter. Also the input statistics used for the parity check against NFO."""
     net.eval()
-    rows = []
-    for clip in val:
-        f = encode(pred, [clip])
+    rows, a_mass, a_on = [], [], []
+    for raw in val:
+        f, meta = build(pred, raw)
+        fb = dict(f, box=f['box_trk'])          # tracker centre, t0 box size: the same GT-free control as on NFO
         with torch.autocast('cuda', dtype=AMP):
             o = net(f, sam=pred.model)
             outs = {'box': decode(pred.model, f), 'box+pt': decode(pred.model, f, point=True),
-                    'adapter': decode(pred.model, o, token=o.get('token'))}
-        for i, Vn in enumerate(clip['Vn']):
+                    'trk-box': decode(pred.model, fb), 'adapter': decode(pred.model, o, token=o.get('token'))}
+        for i, Vn in enumerate(meta['Vn']):
             Vt = torch.from_numpy(Vn).cuda()
-            r = dict(mode=int(clip['mode'][i]), clip=clip['cid'], rho=clip['occ']['rho'], clump=str(clip['occ']['clump']))
+            r = dict(mode=int(meta['mode'][i]), clip=meta['cid'], rho=meta['occ']['rho'], clump=str(meta['occ']['clump']))
             for a, low in outs.items():
                 pr = F.interpolate(low[i:i + 1].float(), Vt.shape, mode='bilinear', align_corners=False)[0, 0] > 0
                 tp = (pr & Vt).sum().item()
                 r[a] = (tp / max((pr | Vt).sum().item(), 1), tp / max(pr.sum().item(), 1), tp / max(Vt.sum().item(), 1))
             rows.append(r)
+        a_mass += meta['a_mass']; a_on += meta['a_on']
     net.train()
-    return rows
+    return rows, dict(a_mass=float(np.median(a_mass)), a_on=float(np.nanmean(a_on)))
 
 
 def summarise(rows, rng=None):
     rng = rng or np.random.default_rng(0)
-    arms = ('box', 'box+pt', 'adapter')
+    arms = ('box', 'box+pt', 'trk-box', 'adapter')
     clips = sorted({r['clip'] for r in rows})
     per = {a: np.array([np.mean([r[a] for r in rows if r['clip'] == c], 0) for c in clips]) for a in arms}
-    dj = per['adapter'][:, 0] - per['box+pt'][:, 0]
-    bs = [dj[rng.integers(0, len(dj), len(dj))].mean() for _ in range(5000)]
     s = {a: dict(zip('JPR', per[a].mean(0))) for a in arms}
-    s['dJ'], s['ci'] = float(dj.mean()), [float(np.percentile(bs, 2.5)), float(np.percentile(bs, 97.5))]
-    groups = {f'mode {m}': [r for r in rows if r['mode'] == m] for m in range(4)}
-    groups |= {f'rho {lo}-{hi}': [r for r in rows if lo <= r['rho'] < hi] for lo, hi in ((0.0, 0.01), (0.2, 0.33), (0.33, 0.47), (0.47, 0.61))}
-    groups |= {f'clump {c}': [r for r in rows if r['clump'] == c] for c in ('12', '24', '(12, 24)')}
+    for ref in ('box+pt', 'trk-box'):
+        dj = per['adapter'][:, 0] - per[ref][:, 0]
+        bs = [dj[rng.integers(0, len(dj), len(dj))].mean() for _ in range(2000)]
+        s[f'dJ_{ref}'] = [float(dj.mean()), float(np.percentile(bs, 2.5)), float(np.percentile(bs, 97.5))]
+    groups = {f'mode {m}': [r for r in rows if r['mode'] == m] for m in (0, 2)}
+    groups |= {f'rho {lo}-{hi}': [r for r in rows if lo <= r['rho'] < hi] for lo, hi in ((0.0, 0.01), (0.2, 0.4), (0.4, 0.61))}
     s['groups'] = {g: {a: float(np.mean([r[a][0] for r in rs])) for a in arms} | {'n': len(rs)} for g, rs in groups.items() if rs}
     return s
 
 
-def main(mode='token', steps=1500, seed=0, eval_every=250, clips_per_step=2):
+def fmt(d, arms):
+    return ' | '.join(f"{a} {d[a]['J']:.3f}/{d[a]['P']:.2f}/{d[a]['R']:.2f}" for a in arms if a in d)
+
+
+def main(mode='token', steps=1500, seed=0, eval_every=100, max_targets=32, n_val_fast=12, test=True):
+    """One clip per step (≤ max_targets frames), built with the test-time path (fusion_data.build). Fast validation every
+    `eval_every` steps: 12 synthetic val clips + the seq1 brush SELECTION set, with the parity statistics and the
+    composite-removal sanity arm; best checkpoint by seq1 adapter J. At the end: full synthetic val (30 clips) and ONE
+    evaluation of the selected checkpoint on the seq2–4 handAv TEST set.
+    Printed J/P/R triples; 'GAP' = (adapter − trk-box) on synthetic vs on seq1: the domain gap in the quantity that matters."""
+    from benchmark.nfo_vos.layers import fusion_nfo
     torch.manual_seed(seed); np.random.seed(seed)
     pred = R.image_predictor()
     sam = pred.model.eval()
@@ -177,42 +208,59 @@ def main(mode='token', steps=1500, seed=0, eval_every=250, clips_per_step=2):
     n_par = sum(p_.numel() for p_ in net.parameters())
     opt = torch.optim.AdamW(net.parameters(), lr=3e-4, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, steps)
-    scaler = torch.amp.GradScaler('cuda', enabled=AMP == torch.float16)     # no-op under bf16
-    dl = iter(torch.utils.data.DataLoader(Clips('train', seed), batch_size=None, num_workers=8, prefetch_factor=2, collate_fn=_ident,
-                                          persistent_workers=True))
-    val = list(torch.utils.data.DataLoader(Clips('val'), batch_size=None, num_workers=8, collate_fn=_ident))
-    from benchmark.nfo_vos.layers import fusion_nfo
-    nfo = fusion_nfo.items()
-    fusion_nfo.feature_diff_montage(pred, nfo)
-    s0 = fusion_nfo.evaluate(pred, net, nfo)
-    print('NFO it 0 (seq2-4 handAv, n %d): ' % len(nfo) + ' | '.join(f"{a} J {v['J']:.3f} P {v['P']:.3f} R {v['R']:.3f}" for a, v in s0.items()), flush=True)
+    scaler = torch.amp.GradScaler('cuda', enabled=AMP == torch.float16)
+    dl = iter(torch.utils.data.DataLoader(Clips('train', seed), batch_size=None, num_workers=6, prefetch_factor=2,
+                                          collate_fn=_ident, persistent_workers=True))
+    val_all = list(torch.utils.data.DataLoader(Clips('val'), batch_size=None, num_workers=6, collate_fn=_ident))
+    val = val_all[:n_val_fast]
+    sel = fusion_nfo.items('select', pred)
     out = f'{OUT}/{mode}_seed{seed}'
     os.makedirs(out, exist_ok=True)
-    print(f'mode {mode}; params {n_par}; val clips {len(val)}, frames {sum(len(c["X"]) for c in val)}', flush=True)
-    log, t0 = [], time.time()
+    print(f'mode {mode}; params {n_par}; val clips {len(val)} fast / {len(val_all)} final; seq1 select frames {len(sel)}', flush=True)
+    rng, log, best, t0 = np.random.default_rng(seed), [], (-1.0, None), time.time()
+
+    def validate(it, rows_inp=None):
+        rows, inp = evaluate(pred, net, val)
+        s = summarise(rows); ss = fusion_nfo.evaluate(pred, net, sel)
+        s.update(it=it, sec=time.time() - t0, sel=ss, inputs_syn=inp)
+        gap_syn = s['adapter']['J'] - s['trk-box']['J']; gap_sel = ss['adapter']['J'] - ss['trk-box']['J']
+        print(f"VAL it {it}: " + fmt(s, ('box+pt', 'trk-box', 'adapter')) + f" | ΔJ vs trk-box {s['dJ_trk-box'][0]:+.3f}", flush=True)
+        print(f"SEL it {it}: " + fmt(ss, ('box+pt', 'trk-box', 'adapter', 'adapter-noC')), flush=True)
+        print(f"GAP it {it}: adapter − trk-box  synthetic {gap_syn:+.3f}  seq1 {gap_sel:+.3f} | inputs Σa median syn "
+              f"{inp['a_mass']:.0f} / seq1 {ss['inputs']['a_mass']:.0f}, a on person syn {inp['a_on']:.2f} / seq1 {ss['inputs']['a_on']:.2f}",
+              flush=True)
+        return s
+
+    log.append(validate(0))
     for it in range(1, steps + 1):
-        f = encode(pred, [next(dl) for _ in range(clips_per_step)])
+        f, _ = build(pred, next(dl), max_targets=max_targets, rng=rng)
         with torch.autocast('cuda', dtype=AMP):
             o = net(f, sam=sam)
             loss = loss_fn(decode(sam, o, token=o.get('token')).float(), f['V'])
         opt.zero_grad(set_to_none=True); scaler.scale(loss).backward(); scaler.step(opt); scaler.update(); sched.step()
-        if it % 50 == 0:
-            al = ' '.join(f"|W{l}| {net.out[l].weight.abs().mean().item():.1e}" for l in CH)
-            print(f'it {it} loss {loss.item():.4f} {al} {(time.time() - t0) / it:.2f} s/it', flush=True)
+        if it % 25 == 0:
+            print(f'it {it} loss {loss.item():.4f} {(time.time() - t0) / it:.2f} s/it', flush=True)
         if it % eval_every == 0 or it == steps:
-            s = summarise(evaluate(pred, net, val))
-            s['nfo'] = fusion_nfo.evaluate(pred, net, nfo)
-            s.update(it=it, sec=time.time() - t0, peak_gb=torch.cuda.max_memory_allocated() / 2 ** 30)
+            s = validate(it)
             log.append(s)
-            print(f"VAL it {it}: box J {s['box']['J']:.3f} | box+pt J {s['box+pt']['J']:.3f} | adapter J "
-                  f"{s['adapter']['J']:.3f} P {s['adapter']['P']:.3f} R {s['adapter']['R']:.3f} | ΔJ vs box+pt "
-                  f"{s['dJ']:+.3f} [{s['ci'][0]:+.3f}, {s['ci'][1]:+.3f}]", flush=True)
-            print('  ' + ' | '.join(f"{g}: {v['box+pt']:.2f}→{v['adapter']:.2f} (n {v['n']})" for g, v in s['groups'].items()),
-                  flush=True)
-            print(f'NFO it {it}: ' + ' | '.join(f"{a} J {v['J']:.3f} P {v['P']:.3f} R {v['R']:.3f}" for a, v in s['nfo'].items()), flush=True)
             torch.save(net.state_dict(), f'{out}/fusion_it{it}.pt')
+            if s['sel']['adapter']['J'] > best[0]:
+                best = (s['sel']['adapter']['J'], it)
             json.dump(log, open(f'{out}/log.json', 'w'), indent=1, default=float)
-
+    net.load_state_dict(torch.load(f'{out}/fusion_it{best[1]}.pt'))
+    rows, inp = evaluate(pred, net, val_all if test else val)
+    full = summarise(rows)
+    print(f"FINAL synthetic val ({len(val_all)} clips, checkpoint it {best[1]}): " + fmt(full, ('box+pt', 'trk-box', 'adapter')), flush=True)
+    if not test:                                     # smoke runs never touch the test set
+        return
+    test = fusion_nfo.evaluate(pred, net, fusion_nfo.items('test', pred))
+    pf = test.pop('per_frame'); d = np.array(pf['adapter']) - np.array(pf['trk-box'])
+    bs = [d[rng.integers(0, len(d), len(d))].mean() for _ in range(5000)]
+    log.append(dict(final_val=full, test=test, test_dJ_trk=[float(d.mean()), float(np.percentile(bs, 2.5)), float(np.percentile(bs, 97.5))],
+                    selected_it=best[1]))
+    json.dump(log, open(f'{out}/log.json', 'w'), indent=1, default=float)
+    print(f"TEST (seq2-4 handAv, it {best[1]} chosen on seq1): " + fmt(test, ('box', 'box+pt', 'trk-box', 'adapter', 'adapter-noC'))
+          + f" | ΔJ adapter − trk-box {d.mean():+.3f} [{np.percentile(bs, 2.5):+.3f}, {np.percentile(bs, 97.5):+.3f}]", flush=True)
 
 if __name__ == '__main__':
     a = sys.argv[1:]

@@ -17,16 +17,17 @@ def test_occlusion_sampler_ranges():
     assert kinds == {'12', '24', '(12, 24)'}, kinds
 
 
-def test_clip_batch_layout():
-    from benchmark.nfo_vos.layers.fusion_data import clip_batch, specs
-    b = clip_batch(specs('val')[0], np.random.default_rng(0))
-    k = len(b['X'])
-    assert k >= 5
-    assert b['X'].shape[1:] == b['Ct'].shape[1:] == b['bg'].shape == (540, 960) and b['X'].dtype == np.uint8
-    assert b['a'].shape == (k, 256, 256) and b['V'].shape == (k, 256, 256) and len(b['Vn']) == k
-    assert b['box'].shape == (k, 4) and b['mode'].shape == (k,)
-    assert {'rho', 'clump', 'flutter'} <= set(b['occ'])
-    assert ((b['a'] >= 0) & (b['a'] <= 1)).all()
+def test_clip_raw_and_build():
+    from benchmark.nfo_vos import run_t4 as R
+    from benchmark.nfo_vos.layers.fusion_data import build, clip_raw, specs
+    raw = clip_raw(specs('val')[0], np.random.default_rng(0))
+    assert raw['X'].dtype == np.uint8 and raw['X'].ndim == 3 and {'nh', 'tau', 'z0'} <= set(raw['occ'])
+    f, meta = build(R.image_predictor(), raw, max_targets=8, rng=np.random.default_rng(0))
+    k = len(meta['ts'])
+    assert 1 <= k <= 8 and min(meta['ts']) >= max(6, raw['occ']['nh'])
+    assert f['X16'].shape == (k, 256, 64, 64) and f['C4'].shape == (k, 32, 256, 256) and f['B8'].shape == (k, 64, 128, 128)
+    assert f['a'].shape == (k, 256, 256) and float(f['a'].min()) >= 0 and float(f['a'].max()) <= 1
+    assert meta['trk'].shape == (len(raw['X']), 2) and np.isfinite(meta['trk']).all()
 
 
 def test_rescale_clip_shrinks_person_and_keeps_labels():
@@ -119,6 +120,21 @@ def test_token_falls_back_without_evidence():
         o = net(f, sam=sam)
     assert torch.allclose(o['token'], net.fallback[None].expand(2, -1, -1)), 'empty evidence must give the fallback token'
     assert torch.isfinite(o['token']).all()
+
+
+def test_token_anchored_at_tracker_point_at_init():
+    from benchmark.nfo_vos import run_t4 as R
+    from benchmark.nfo_vos.layers.fusion_adapter import Fusion
+    sam = R.image_predictor().model.eval()
+    f = _fake_feats(2, 'cuda'); f['trk'] = torch.tensor([[300.0, 480.0], [700.0, 200.0]], device='cuda')
+    f['box_trk'] = torch.cat([f['trk'] - 60, f['trk'] + 60], 1)
+    net = Fusion(token=True).cuda(); net.init_fallback(sam)
+    with torch.no_grad():
+        o = net(f, sam=sam)
+        pts = torch.cat([f['box_trk'].view(2, 2, 2), f['trk'][:, None]], 1)
+        lab = torch.tensor([[2, 3, 1]], device='cuda').repeat(2, 1)
+        sp, _ = sam.sam_prompt_encoder(points=(pts, lab), boxes=None, masks=None)
+    assert torch.allclose(o['token'], sp, atol=1e-5), float((o['token'] - sp).abs().max())
 
 
 if __name__ == '__main__':

@@ -37,13 +37,19 @@ ARMS = ('pt', 'box', 'hand_C', 'hand_Ct', 'gt_S', 'gt_SO', 'gt_V', 'box+hand_Ct'
 SIGMA_A = 3.0
 
 
-def composite_and_mass(imgs, Ms, bg):
+def composite_and_mass(imgs, Ms, bg, tau=None, z0=3.0):
+    """tau (age weight scale, default a4.TAU_AGE) and z0 (gate threshold) are randomised in training (fusion_data)."""
+    tau = a4.TAU_AGE if tau is None else tau
     """factorised_gtfree.composite_frames (factorised_gtfree.py:62-71) plus the gate mass a = Σ w G."""
-    w = np.exp(-np.arange(len(imgs) - 1, -1, -1) / a4.TAU_AGE); w = (w / w.sum())[:, None, None]
+    w = np.exp(-np.arange(len(imgs) - 1, -1, -1) / tau); w = (w / w.sum())[:, None, None]
     wa = lambda x, M: cv2.warpAffine(x.astype(np.float32), M, (x.shape[1], x.shape[0]), flags=cv2.INTER_LINEAR,
                                      borderMode=cv2.BORDER_REPLICATE)
     A = np.stack([wa(img, M) for img, M in zip(imgs, Ms)])
-    G = np.stack([wa(1 / (1 + np.exp(-(zpix(img, bg) - 3))), M) for img, M in zip(imgs, Ms)])
+    def gate(img):                        # z0 = 'adaptive': per-frame threshold max(3, q90(z)) → ≤ ~10% of pixels gated,
+        z = zpix(img, bg)                 # invariant to the scene's nuisance level (train / test parity, 2026-10-16)
+        th = max(3.0, float(np.percentile(z, 90))) if z0 == 'adaptive' else z0
+        return 1 / (1 + np.exp(-(z - th)))
+    G = np.stack([wa(gate(img), M) for img, M in zip(imgs, Ms)])
     raw, mass = (w * A).sum(0), (w * G).sum(0)
     C = np.where(mass > 1e-6, (w * G * A).sum(0) / np.maximum(mass, 1e-6), raw)
     return C, np.clip(mass, 0, 1)

@@ -1031,3 +1031,67 @@ docs/gt_conditioned_blend_plan.md stages 1–3, plan defaults, G := P; scored vs
 - Reading: energy alignment moves the label toward the modal convention. Under the pre-registered metric (F2) no arm
   beats the frozen label on either set, so the frozen label stays. S3 LP sum is the candidate if a modal-leaning label is
   wanted (seq2–4 ΔJ +0.020 [+0.003, +0.041]; seq1 TEST-8 ΔF2 +0.005, all-17 −0.017 [−0.048, +0.006]).
+
+## Tracking on SAM2 features beats the blob tracker on NFO, 2026-10-16 (`layers/track_check.py`, all 61 windows)
+
+Causal trackers started from the t0 prompt box, scored against GT boxes:
+- `blob`: the current MOG2 blob tracker, with its chain and readout on gaps;
+- `kernel-*`: a fixed-size person kernel (the t0 box) searched around a Theil–Sen constant-velocity prediction,
+  maximising the mean of a foreground map. The maps are pixel z vs the empty scene, or 1 − cos(F_t, F_B) at SAM2
+  stride 16 / 8.
+
+| tracker | centre error (person heights) | dx6: 6-frame x-shift error (native px) |
+|---|---|---|
+| blob | 0.270 | 29.7 |
+| kernel, pixel z | 0.371 | 22.8 |
+| **kernel, SAM2 stride 16** | **0.105** | **10.0** |
+| kernel, SAM2 stride 8 | 0.320 | 18.4 |
+
+**Kernel-f16 vs blob, window bootstrap:** Δcentre error −0.165 [−0.222, −0.086]; Δdx6 −19.6 px [−25.3, −14.3].
+
+**Per sequence, dx6 (blob → kernel-f16):** seq1 31.9 → 14.2, seq2 30.6 → 10.5, seq3 21.6 → 8.4, seq4 33.7 → 7.2.
+
+**Reading:**
+- The stride-16 feature map gives a 3× smaller alignment error in every sequence.
+- Pixel change and stride 8 fail in some windows: pixel z collapses on seq3 (54 px), and both pixel z and stride 8
+  lose the person on seq1_s1_t317.
+- This is consistent with the coarse SAM2 cell integrating over fragments.
+
+**Caveats:**
+- These are raw per-frame estimates. V̂ smooths the blob chain with a Theil–Sen fit before aligning, so the
+  composite-level gap is smaller than 29.7 vs 10.0 px. Not measured.
+- The kernel keeps the t0 box size fixed: no scale change.
+
+**Next:** feed the kernel-f16 track into the composite, for V̂ and for the adapter's training data. Measure V̂'s
+ΔR again.
+
+## Per-frame boxes from the feature tracker are nearly as good a SAM2 prompt as hand boxes, 2026-10-16
+
+**Setup:** SAM2 only, no adapter; one box + one point per frame.
+- Box: hand GT box, or tracker box (kernel-f16 centre, t0 box size).
+- Point: GT box centre, or tracker position.
+- Data: seq1 selection frames (12) and synthetic val (96 frames).
+
+| | GT box + GT pt | GT box + trk pt | trk box + GT pt | trk box + trk pt |
+|---|---|---|---|---|
+| seq1 J | 0.566 | 0.570 | 0.551 | 0.582 |
+| synthetic J | 0.551 | 0.557 | 0.527 | 0.527 |
+
+**Effects:**
+- Point source (tracker vs GT centre, with the GT box): ΔJ +0.004 [−0.009, +0.018] (seq1), +0.006 [−0.001, +0.013]
+  (synthetic). No effect.
+- Box source (tracker vs GT, with the GT point): ΔJ −0.015 [−0.039, +0.006] (seq1), −0.024 [−0.036, −0.011]
+  (synthetic).
+- Box area, tracker / GT: median 0.93 on seq1 (IQR 0.82–1.01), 1.00 on synthetic (IQR 0.79–1.24). The tracker box is
+  not systematically smaller.
+
+**Reading:**
+- The 0.582 vs 0.566 on seq1 is noise on 12 frames, not a "smaller box is better" effect.
+- The tracker box costs about 0.02 J against hand boxes. So given the t0 prompt (the standard semi-supervised VOS
+  protocol), per-frame localisation is essentially solved for a static camera.
+- The hand boxes are evaluation and initialisation data, not a requirement of the method.
+
+**Not shown:**
+- That the t0 box can be dropped. The tracker starts from it. A GT-free start would come from the global kernel
+  maximum at t0 plus a foot-position size prior h(y); untested.
+- Behaviour with a moving camera: the evidence 1 − cos(F_t, F_B) needs a registered empty scene.

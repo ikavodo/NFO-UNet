@@ -82,10 +82,14 @@ def load(idx_range, seq=TR.SEQ):
 def detect_and_track(frame_idx, warmup, h0, seq=TR.SEQ):
     """MOG2 (warmed on the person-free warm-up range) -> morphology -> blobs -> Kalman/Hungarian
     tracks over CONTIGUOUS 224 frames. All scale-dependent parameters from the person height h0."""
-    frames = load(frame_idx, seq)
     w0, w1 = warmup
+    return detect_and_track_frames(load(frame_idx, seq), load(range(w0, w1 + 1), seq), h0)
+
+
+def detect_and_track_frames(frames, warm_frames, h0):
+    """detect_and_track on in-memory 224 frames (used for synthetic clips, layers/fusion_data.py)."""
     kw, (p_var, q_var, r_var) = scale_relative_params(h0)
-    masks = foreground_mask(frames, warmup_frames=load(range(w0, w1 + 1), seq))
+    masks = foreground_mask(frames, warmup_frames=warm_frames)
     masks = refine_mask(masks, kw['close_kernel_size'], kw['open_kernel_size'])
     masks = filter_by_shape(masks, min_area=kw['min_area'], min_solidity=0.1)
     dets = detect_blobs(masks, min_area=kw['min_area'])
@@ -98,14 +102,15 @@ def detect_and_track(frame_idx, warmup, h0, seq=TR.SEQ):
     return dict(frames=frames, masks=masks, dets=dets, tracks=tracks, kw=kw)
 
 
-def track(trial, max_frames=None):
+def track(trial, max_frames=None, D=None):
     """Causal tracker. Track at t0: the detection whose centre lies in the GT box (largest if
     several). Followed by identity; once unseen for > MAX_AGE frames, re-acquired as the detection
     nearest the last predicted position. Returns per-frame foreground masks, detections and the
     followed chain {local t: (x, y)}."""
     h0 = trial['box_224'][3] - trial['box_224'][1]
-    D = detect_and_track(trial['frames'][:max_frames] if max_frames else trial['frames'], trial['warmup'], h0,
-                         trial.get('seq', TR.SEQ))
+    if D is None:                           # D: a precomputed detect_and_track(_frames) result
+        D = detect_and_track(trial['frames'][:max_frames] if max_frames else trial['frames'], trial['warmup'], h0,
+                             trial.get('seq', TR.SEQ))
     frames, masks, dets, tracks, kw = D['frames'], D['masks'], D['dets'], D['tracks'], D['kw']
 
     def at(k):

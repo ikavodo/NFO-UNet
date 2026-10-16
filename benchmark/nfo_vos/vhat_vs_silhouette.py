@@ -22,7 +22,8 @@ from benchmark.nfo_vos.learned_thresh import add_anchored, anchors, features
 from benchmark.nfo_vos.run_sam2_video import gt_mask_native
 
 LDIR = f'{TR.RES}/labels_sil_frozen'
-FDIR = f'{TR.RES}/vhat_sil_feats'
+TRACK = os.environ.get('NFO_TRACK', 'blob')     # 'kernel16': alignment from layers/track_check.kernel16_chain (2026-10-16)
+FDIR = f'{TR.RES}/vhat_sil_feats' + ('' if TRACK == 'blob' else f'_{TRACK}')
 U = 0.85
 # 2026-10-16: the same frozen rule on seq2–4 (NFO_SEQ=seq2 ...): the exemplar bank, evidence and depth are the
 # sequence's own (depth_seq.py); the label modules read SEQ as a module global, so it is set here.
@@ -63,9 +64,18 @@ def main():
         else:
             pred = pred or R.image_predictor()
             Tk = R.track(t)
+            reg = None
+            if TRACK in ('kernel16', 'register'):
+                from benchmark.nfo_vos.layers.track_check import CX, CY, kernel16_chain
+                ch, d16, kc, wh = kernel16_chain(t, pred, return_feats=True)
+                Tk = dict(Tk, chain=ch)
+                if TRACK == 'register':                  # layers/align.py: measured shifts l → j, prior = kernel track
+                    from benchmark.nfo_vos.layers.align import shifts as align_shifts
+                    reg = lambda j: dict(zip(range(j - 6, j), align_shifts(
+                        d16[j - 6:j], d16[j], kc[j], wh, [kc[j, 0] - kc[l, 0] for l in range(j - 6, j)], (CX, CY))[0]))
             MC, PB = np.zeros_like(M1), np.zeros(M1.shape, np.float16)
             for j in js:
-                f = features(t, j, Tk, bg, pred, M1[j])
+                f = features(t, j, Tk, bg, pred, M1[j], shifts=reg(j) if reg else None)
                 if f is not None:
                     MC[j], PB[j] = f[0], f[1].astype(np.float16)
             np.savez_compressed(fp, MC=MC, pb=PB); PB = PB.astype(np.float32)

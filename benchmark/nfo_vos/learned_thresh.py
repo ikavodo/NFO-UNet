@@ -39,13 +39,16 @@ def gt(seq, k, tag):
     return cv2.imread(p, 0) == 1 if os.path.exists(p) else None
 
 
-def features(t, j, Tk, bg, pred, M1):
+def features(t, j, Tk, bg, pred, M1, shifts=None):
+    """shifts: optional {local l: native x-shift l → j} for l in j-6..j-1 (layers/align.py); default: Theil–Sen on the chain."""
     seq, k = t['seq'], t['frames'][j]
     cs = [l for l in range(max(0, j - 12), j + 1) if l in Tk['chain']]
     if len(cs) < 2:
         return None
-    fx = theil_at(cs, [TR.to_native(*Tk['chain'][l])[0] for l in cs], [j] + list(range(j - 6, j)))
-    C = composite(seq, k, {t['frames'][l]: (fx[j] - fx[l], 0.0) for l in range(j - 6, j)}, bg)
+    if shifts is None:
+        fx = theil_at(cs, [TR.to_native(*Tk['chain'][l])[0] for l in cs], [j] + list(range(j - 6, j)))
+        shifts = {l: fx[j] - fx[l] for l in range(j - 6, j)}
+    C = composite(seq, k, {t['frames'][l]: (shifts[l], 0.0) for l in range(j - 6, j)}, bg)
     anchor = Tk['chain'].get(j) or tuple(R.readout_line(Tk['chain'], j)[:2])
     pt = TR.to_native(*merged_center(Tk['dets'][j], *anchor, Tk['kw']['merge_radius']))
     with torch.inference_mode():

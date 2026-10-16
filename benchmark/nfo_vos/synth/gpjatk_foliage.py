@@ -139,8 +139,31 @@ def template():
     return _TPL['g'], _TPL['d']
 
 
+BG_POOL = []        # optional extra background photos (paths), drawn with probability 0.5 (set_bg_pool; 2026-10-16)
+
+
+def set_bg_pool(paths):
+    """CanaTree100 forest images as extra backgrounds (layers/fusion_data.py: train / held-out val split). Their depth
+    and brightness statistics match NFO better than the template; their texture is smoother
+    (synth/canatree_stats.py). Disparity is not loaded (perlin mode does not use it)."""
+    BG_POOL[:] = list(paths)
+
+
+def _pool_pair(rng):
+    g = cv2.imread(BG_POOL[rng.integers(len(BG_POOL))], cv2.IMREAD_GRAYSCALE).astype(np.float32)
+    cw = int(rng.uniform(960, min(g.shape[1], g.shape[0] * 16 / 9))); ch = int(cw * 9 / 16)
+    x, y = rng.integers(0, g.shape[1] - cw + 1), rng.integers(0, g.shape[0] - ch + 1)
+    G = cv2.resize(g[y:y + ch, x:x + cw], (W, H), interpolation=cv2.INTER_AREA)
+    if rng.random() < 0.5:
+        G = G[:, ::-1].copy()
+    return G, np.zeros_like(G), [int(x), int(y), cw, ch]
+
+
 def foliage_pair(rng):
-    """Random 16:9 crop (width 960…2667 px of the template = leaf scale), random h-flip: grayscale + disparity."""
+    """Random 16:9 crop (width 960…2667 px of the template = leaf scale), random h-flip: grayscale + disparity.
+    With a BG_POOL set: half the draws come from the pool instead."""
+    if BG_POOL and rng.random() < 0.5:
+        return _pool_pair(rng)
     g, d = template()
     cw = int(rng.uniform(960, min(2667, g.shape[1], g.shape[0] * 16 / 9))); ch = int(cw * 9 / 16)
     x, y = rng.integers(0, g.shape[1] - cw + 1), rng.integers(0, g.shape[0] - ch + 1)
