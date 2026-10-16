@@ -1095,3 +1095,46 @@ Causal trackers started from the t0 prompt box, scored against GT boxes:
 - That the t0 box can be dropped. The tracker starts from it. A GT-free start would come from the global kernel
   maximum at t0 plus a foot-position size prior h(y); untested.
 - Behaviour with a moving camera: the evidence 1 − cos(F_t, F_B) needs a registered empty scene.
+
+## Per-frame SAM2 prompted by the feature tracker ties SAMURAI; adapter v3.4 (layer-aware loss) improves on both, 2026-10-16
+
+**vs the frozen silhouette pseudo-GT, seq1, 15 windows, every 4th labelled frame, J / P / R / F2:**
+
+| arm | J | P | R | F2 |
+|---|---|---|---|---|
+| per-frame SAM2, kernel-f16 tracker box + point (GT box at t0 only, no memory, no training) | **0.507** | 0.772 | **0.571** | **0.593** |
+| T1 (SAMURAI) | 0.488 | 0.824 | 0.515 | 0.548 |
+| adapter v3.2 step 100 (focal α 0.25 + Dice) | 0.421 | 0.854 | 0.428 | 0.469 |
+| adapter v3.3 step 100 / 200 (focal α 0.67 + Tversky) | 0.466 / 0.458 | 0.825 / 0.842 | 0.486 / 0.472 | 0.523 / 0.511 |
+
+- **Tracker-prompted SAM2 vs T1:** ΔJ +0.019 [−0.066, +0.098].
+- **Adapter v3.3 step 200 vs its own step 0:** ΔJ −0.049 [−0.077, −0.023], ΔR −0.099.
+
+**Synthetic-vs-real gap (adapter − tracker-box SAM2, step 100):**
+- v3.3: synthetic +0.121 / seq1 +0.023;
+- v3.4 (layer-aware weights + Focal Tversky): synthetic +0.102 / seq1 +0.014.
+- seq1 hand frames at step 100, J vs step-0 0.582: v3.2 0.541, v3.3 0.561, v3.4 0.551.
+
+**v3.4 (layer-aware loss: occluded-person pixels near visible fragments ignored, far occluded person 0.3, background 1;
+focal α 0.67 + Focal Tversky), same 15 windows:**
+
+| arm | J | P | R | F2 |
+|---|---|---|---|---|
+| step 0 (tracker-prompted SAM2) | 0.507 | 0.772 | 0.571 | 0.593 |
+| v3.4 step 100 | 0.503 | 0.813 | 0.533 | 0.567 |
+| **v3.4 step 200** | **0.546** | **0.804** | **0.596** | **0.622** |
+
+v3.4 step 200 − step 0, window bootstrap:
+- ΔJ **+0.040 [+0.027, +0.053]**;
+- ΔR **+0.025 [+0.005, +0.043]**;
+- ΔF2 **+0.029 [+0.013, +0.043]**.
+
+Against T1 (SAMURAI): J +0.058. On the seq1 hand frames: J 0.584, R 0.79 (step 0: 0.582 / 0.76). Composite-removed
+arm: 0.564.
+
+**Reading:**
+- The global reweightings (v3.2, v3.3) lost recall on real frames.
+- The layer-aware loss, which is generous behind the occluder and strict on background, raises precision and recall
+  together by step 200: fewer FP and more FN caught, the intended use of the layer separation.
+- The step 100 → 200 change shows the run is still moving, so later checkpoints may differ.
+- seq1 is the selection sequence. The pre-registered seq2–4 test (once, end of run) decides.

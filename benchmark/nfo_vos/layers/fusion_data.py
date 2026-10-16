@@ -98,6 +98,23 @@ CANATREE = sorted(__import__('glob').glob('data/CanaTree100/images/*.png'))
 BG_SPLIT = {'train': [p for i, p in enumerate(CANATREE) if i % 5], 'val': [p for i, p in enumerate(CANATREE) if i % 5 == 0]}
 
 
+NEAR_PX, FAR_W = 8, 0.3
+
+
+def loss_weights(S, V):
+    """Layer-aware loss weights on SAM2's 256² grid (v3.4, 2026-10-16; the pseudo-GT's three pixel classes, cf. BCNet's
+    occluder / occludee layers, arXiv 2103.12340): 1 on the visible person and outside the person (background, incl.
+    see-through gaps: leaks are errors); 0 on occluded person pixels within NEAR_PX native px of a visible fragment
+    (S \ V near V: the annotators' void / gap-filling convention); FAR_W on occluded person far from any visible
+    fragment (modal: hidden parts are mildly penalised, not ignored)."""
+    near = cv2.dilate(V.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * NEAR_PX + 1, 2 * NEAR_PX + 1))) > 0
+    occ = S & ~V
+    w = np.ones(S.shape, np.float32)
+    w[occ & near] = 0.0
+    w[occ & ~near] = FAR_W
+    return cv2.resize(w, (256, 256), interpolation=cv2.INTER_AREA)
+
+
 def clip_raw(spec, rng):
     """One clip on the CPU (DataLoader worker): rescaled frames, labels, jittered boxes (the t0 prompt), per-frame
     corruption mode, and the composite parameters drawn for this clip (randomised: history n_h ∈ 4..8, age τ ∈ [2, 6],
@@ -174,6 +191,7 @@ def build(pred, raw, max_targets=None, rng=None, dev='cuda'):
          'B16': B16.float().expand(n, -1, -1, -1), 'B8': B8.float().expand(n, -1, -1, -1), 'B4': B4.float().expand(n, -1, -1, -1),
          'a': torch.as_tensor(np.stack([a256(a) for _, a in CA]), device=dev),
          'V': torch.as_tensor(np.stack([a256(raw['V'][t]) for t in ts]), device=dev),
+         'W': torch.as_tensor(np.stack([loss_weights(raw['S'][t], raw['V'][t]) for t in ts]), device=dev),
          'box': torch.as_tensor(np.stack(boxes), device=dev),
          'mode': torch.as_tensor(raw['modes'][ts].astype(np.float32), device=dev)}
     f['pt'] = torch.stack([(f['box'][:, 0] + f['box'][:, 2]) / 2, (f['box'][:, 1] + f['box'][:, 3]) / 2], 1)

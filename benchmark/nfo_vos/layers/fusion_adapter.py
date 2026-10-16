@@ -133,15 +133,19 @@ def decode(sam, f, token=None, point=False):
 ALPHA = 0.67   # focal class weight: a missed person pixel costs 2.07× an extra background pixel (old default 0.25: 0.38×)
 
 
-def loss_fn(low, V, a_fp=0.3, b_fn=0.7):
-    """v3.3 (2026-10-16): recall-oriented. torchvision's focal default α = 0.25 weighted person pixels 0.25 vs background
-    0.75, a built-in precision bias (seq1 at step 100: P 0.71 → 0.81, R 0.76 → 0.61; a missed person pixel cost 0.38× an
-    extra background pixel). Now focal α = 0.67 + Tversky (FN 0.7, FP 0.3; Salehi et al. 2017): FN / FP cost 2.07×."""
+def loss_fn(low, V, W=None, a_fp=0.3, b_fn=0.7, gamma=0.75):
+    """v3.4 (2026-10-16): layer-aware, recall-oriented. Per-pixel weights W (fusion_data.loss_weights: occluded person
+    near visible fragments ignored, far occluded person 0.3, elsewhere 1) on focal (α = ALPHA) and on the FP sum of a
+    Focal Tversky term (Abraham & Khan, ISBI 2019, arXiv 1810.07842; FN 0.7, FP 0.3, γ 0.75).
+    History: v3.2 focal α 0.25 + Dice was precision-biased (FN/FP cost 0.38); v3.3 α 0.67 + Tversky still lost recall
+    on seq1 (R 0.76 → 0.67 by step 200): a global price cannot be generous behind foliage and strict on background."""
     V = V[:, None]
+    W = torch.ones_like(V) if W is None else W[:, None]
     p = torch.sigmoid(low)
-    tp, fp, fn = (p * V).sum((1, 2, 3)), (p * (1 - V)).sum((1, 2, 3)), ((1 - p) * V).sum((1, 2, 3))
-    tversky = 1 - (tp + 1) / (tp + a_fp * fp + b_fn * fn + 1)
-    return (20 * sigmoid_focal_loss(low, V, alpha=ALPHA, reduction='none').mean((1, 2, 3)) + tversky).mean()
+    tp, fp, fn = (p * V).sum((1, 2, 3)), (W * p * (1 - V)).sum((1, 2, 3)), ((1 - p) * V).sum((1, 2, 3))
+    ft = (1 - (tp + 1) / (tp + a_fp * fp + b_fn * fn + 1)) ** gamma
+    focal = (W * sigmoid_focal_loss(low, V, alpha=ALPHA, reduction='none')).sum((1, 2, 3)) / W.sum((1, 2, 3)).clamp(min=1)
+    return (20 * focal + ft).mean()
 
 
 @torch.no_grad()
@@ -236,7 +240,7 @@ def main(mode='token', steps=1500, seed=0, eval_every=100, max_targets=32, n_val
         f, _ = build(pred, next(dl), max_targets=max_targets, rng=rng)
         with torch.autocast('cuda', dtype=AMP):
             o = net(f, sam=sam)
-            loss = loss_fn(decode(sam, o, token=o.get('token')).float(), f['V'])
+            loss = loss_fn(decode(sam, o, token=o.get('token')).float(), f['V'], f.get('W'))
         opt.zero_grad(set_to_none=True); scaler.scale(loss).backward(); scaler.step(opt); scaler.update(); sched.step()
         if it % 25 == 0:
             print(f'it {it} loss {loss.item():.4f} {(time.time() - t0) / it:.2f} s/it', flush=True)
