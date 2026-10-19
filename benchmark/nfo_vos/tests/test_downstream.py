@@ -61,7 +61,7 @@ from benchmark.nfo_vos.downstream import recognition as RC
 def test_composite_no_mask_is_bg():
     bg = np.full((20, 30, 3), 7, np.uint8)
     imgs = [np.full((20, 30, 3), 200, np.uint8)] * 3
-    out = RC.masked_composite(imgs, [np.zeros((20, 30), bool)] * 3, [(0, 0)] * 3, bg)
+    out = RC.masked_composite(imgs, [np.zeros((20, 30), bool)] * 3, [(0, 0)] * 3, bg, fill='bg')
     np.testing.assert_array_equal(out, bg)
 
 
@@ -82,3 +82,10 @@ def test_gt_shifts_zero_at_t():
     boxes = {1: np.array([0., 0., 10., 10.]), 2: np.array([4., 2., 14., 12.])}
     s = RC.gt_shifts(boxes, [1, 2], 2)
     assert s[-1] == (0.0, 0.0) and s[0] == (4.0, 2.0)
+
+
+def test_composite_mean_fill_where_unmasked():
+    a, b = np.zeros((4, 4, 3), np.uint8), np.full((4, 4, 3), 100, np.uint8)
+    m = np.zeros((4, 4), bool); m[0, 0] = True
+    out = RC.masked_composite([a, b], [m, np.zeros((4, 4), bool)], [(0, 0)] * 2, np.full_like(a, 7))
+    assert out[0, 0, 0] == 0 and np.all(out[1:, :, 0] == 50)      # masked pixel: frame a only; elsewhere plain mean
