@@ -107,12 +107,19 @@ The −0.031 row is over-segmentation: P 0.76, R 0.93.
 | frozen pseudo-GT (extent-leaning) | 0.726 | 0.78 / 0.90 | — | — |
 | *for reference: adapter-pf, no memory* | 0.761 | 0.86 / 0.86 | 0.717 | 0.709 |
 
-The recognition figures here are on the 414-composite subset. The best memory content does not beat the memory-free
-adapter on any metric. Memory transmits the precision/recall balance of what is written in; it adds no information.
+The recognition figures here are on the 414-composite subset. **Scope of this bound:** it is only as good as the
+content written in. SAM2-ceiling matches the hand masks at J 0.716, *below* the per-frame adapter's own masks (0.761).
+So the result is: memory filled with SAM2-ceiling-quality masks does not beat the memory-free adapter, and memory
+transmits the precision/recall balance of what is written in. Whether better-than-SAM2-ceiling content (e.g. the
+adapter's own masks, or a trained write path) makes memory useful is open; see §8.
 
-**Principle (working claim):** under fragmented occlusion, bring past evidence in **open-loop** (aligned past pixels
-compared to the empty scene) rather than **closed-loop** (the model's own past predictions in memory, whose errors
-compound).
+**Principle (working hypothesis):** closed-loop memory (the model's own past predictions) compounds errors under
+fragmented occlusion; open-loop evidence (aligned past pixels vs the empty scene) does not. The architectural
+consequence is untested:
+- put the correction on the **write path**, so the mask fed to SAM2's memory encoder (`memory_encoder.py:174-177`
+  takes only frame features and the mask) is the evidence-grounded one;
+- the current read-side adapter (residual on the query features before memory attention) cannot stop wrong masks from
+  entering the bank.
 
 ## 6. Dense labels: which can stand in for the hand masks?
 
@@ -165,8 +172,15 @@ it **ranks methods like the hand masks**.
 2. **Rank validity of the single-frame GT-box SAM2 label** (§6), using the same 9-method test.
 3. **Second annotator** on the hand frames: the ceiling for hand J, and whether the +0.010 tie with T1 is within
    annotator disagreement.
-4. **Not pursued:**
-   - video-mode training of the adapter (the oracle bound in §5 shows no headroom);
+4. **Memory, decided on synthetic data with exact labels** (GPJATK val clips, exact visible-mask J). Arms:
+   - (a) per-frame adapter;
+   - (b) video + tracker prompts;
+   - (c) video + prompts with the exact mask written into memory, the true upper bound;
+   - (d) video + prompts with the adapter's own masks written into memory (write-path correction, zero training).
+
+   If (c) ≤ (a), memory is dead. If (c) > (a), (d) shows how much a corrected write path captures, and video training
+   targets the rest. NFO arm `vid-write-pf` = (d) on real data.
+5. **Not pursued:**
    - Diffusion-VAS (amodal completion, a different task and non-causal).
 
 ## Code map
