@@ -4,6 +4,57 @@
 > GT box + centre point at confirmed-clear checkpoints, propagated both ways, union, clipped to the GT box, thin
 > components removed; files `*_sammask*.png`). It is an oracle-prompted SAM2 reference, not ground truth.
 
+## READ FIRST: what counts as evidence (audit of 2026-10-19)
+
+On 2026-10-19 every arm was scored on all 61 windows against labels that need no derived segmentation (last section).
+That check also measured each dense pseudo-label as an *evaluation proxy*: does it rank the 9 arms the way the hand
+labels do (seq2–4, 23 hand frames)?
+- **SAM2-ceiling:** Spearman +0.80, 7 of 8 paired Δ signs agree.
+- **Frozen silhouette pseudo-GT:** Spearman −0.07, 3 of 8. It rewards extent.
+
+Every result below falls into one of three classes by the label it was scored on.
+
+**A. Evidence: cite it.** The label is human-made or not a segmentation.
+| result | label | section |
+|---|---|---|
+| per-frame layer adapter ≥ T1 on hand J, box AUC, recognition; video arms over-segment | hand handAv, GT boxes, YOLO | last section |
+| ingredient ablations (motion prompt, empty-scene cue, composite, memory) | same | last section |
+| oracle memory (SAM2-ceiling / pseudo-GT written in) does not beat the per-frame adapter on hand J | hand handAv | last section |
+| proxy validity of SAM2-ceiling vs pseudo-GT | hand handAv | last section |
+| hand-mask box vs GT box IoU 0.714; depth-trimmed box fails | hand masks, GT boxes | last section |
+| kernel-f16 tracker vs blob tracker (10.0 vs 29.7 px) | GT box centres | "Tracking on SAM2 features…" |
+| tracker box ≈ GT box as a SAM2 prompt | seq1 hand frames (12) + synthetic exact V | "Per-frame boxes…" (small n) |
+| seq2–4 hand-label method results (handAv, void) | hand handAv | 2026-10-14 sections |
+| label-vs-label comparisons against polygons (e.g. V = S ∧ ¬O first label to beat SAM2-ceiling) | hand polygons | 2026-10-13/14 |
+| synthetic GPJATK results | exact visible masks | in-domain only; documented synthetic→real gap |
+
+**B. Not evidence: withdrawn.** The scoring label is the frozen pseudo-GT, which ranks methods wrongly.
+| result | why it fails | replaced by |
+|---|---|---|
+| adapter v3.4 it200 per-frame +0.040 J over tracker-prompted SAM2 | pseudo-GT; hand frames gave +0.002 | hand J +0.044 on seq2–4 (`adapter-pf` − `trk`) |
+| adapter zero-shot in video +0.020/+0.022 J, recall-over-time slopes | pseudo-GT | video adapter is −0.033 J vs T1 on hand labels |
+| "memory helps": prompts +0.082 J over plain video | pseudo-GT | hand J −0.005 (n.s.); box +0.070 |
+| oracle-mem +0.069 J headroom | pseudo-GT written into memory **and** used for scoring (circular) | oracle arms on hand J: no headroom over per-frame adapter |
+| V̂ vs silhouette (seq1, seq2–4) and V̂_anch on B0 | pseudo-GT | not re-scored |
+| v3.2/v3.3/v3.4 loss comparisons on seq1 | pseudo-GT | open: re-select on SAM2-ceiling + hand + box + recognition |
+
+**Decisions that rest partly on class B and must be revisited:**
+- **The step-200 checkpoint.** v3.4 was killed at step 550 for "over-segmenting", measured on seq1 brush frames (12)
+  and synthetic, but the step-200 pick was sold on the pseudo-GT ΔJ.
+- **The recall-heavy loss** (focal α 0.67, FN/FP cost 2.07×), chosen to raise pseudo-GT recall.
+- **Plan:** re-select checkpoints it100–it600 per frame on seq1 using SAM2-ceiling J (dense, about 500 frames),
+  box AUC and recognition; then simple vs layer-aware loss on the same footing.
+
+**C. Intuition only: directional, not citable.**
+- **SAM2-ceiling-scored numbers** (this doc before 2026-10-14 calls it "pseudo-GT" or "GT"). They rank correctly, but
+  effect sizes favour SAM2-video outputs: adapter-pf − T1 is −0.063 on SAM2-ceiling vs +0.010 on hand labels. Use them
+  for ranking and dense selection on seq1, never for reported Δs across method families.
+- **seq1 hand frames.** They fall in 3 windows only, so they are anecdotes for selection, not a test.
+- **Pseudo-GT P/R.** Use only as an extent indicator ("this arm adds extent"), never for J.
+- **Box metrics as segmentation evidence.** They reward extent: the tracker box alone (0.709) is above a perfect
+  visible-part mask's box (mean IoU 0.714 vs AUC). Valid for tracking claims only.
+- **Synthetic validation numbers.** Gap to real frames documented: synthetic +0.10 vs seq1 +0.01 at step 100.
+
 
 Pilot: seq1 segments 4–5, 21 starts, 51-frame windows, SAM2-ceiling at 224 (spec
 `docs/superpowers/specs/2026-10-02-nfo-vos-benchmark-pilot-design.md`, rev. 4). Two segments: all
@@ -1247,8 +1298,45 @@ label sources that need no derived segmentation:
 - SAM2 video is deterministic run-to-run. 0.66% px drift local vs cluster.
 - Cluster node22 lacks kernels for the comp_vis torch build (exclude node2, node22).
 
+**Composite input, per frame (`adapter-pf-noC`: composite zeroed at test time, seq2–4):**
+
+| arm | hand J | P | R | box AUC |
+|---|---|---|---|---|
+| per-frame SAM2 + tracker prompts (`trk`) | 0.716 | 0.823 | 0.851 | 0.693 |
+| adapter without composite | 0.759 | **0.874** | 0.844 | 0.699 |
+| adapter with composite | **0.761** | 0.862 | **0.861** | **0.717** |
+
+- **The empty-scene cue carries the precision:** no-composite − `trk` J +0.043 [+0.002, +0.099].
+- **The composite adds recall and extent at equal J:** J +0.001 [−0.008, +0.009], R +0.017, box +0.018
+  [+0.013, +0.022].
+- In video mode the composite adds nothing (above), consistent with memory already supplying extent.
+- Recognition for this pair: pending.
+
+**Oracle memory** (video + tracker prompts, a label written into memory for past frames, scored on hand labels, seq2–4):
+
+| arm | hand J | P | R |
+|---|---|---|---|
+| per-frame adapter | **0.761** | 0.862 | 0.861 |
+| video + prompts | 0.748 | 0.823 | 0.885 |
+| SAM2-ceiling written into memory | 0.756 | 0.873 | 0.841 |
+| pseudo-GT written into memory (19 of 23 windows so far) | 0.726 | 0.779 | 0.904 |
+
+- **Even a non-causal, GT-box-prompted memory does not beat the per-frame adapter:** −0.005 [−0.023, +0.013].
+- **Memory transmits the extent of what is written into it:** tight label → P up, R down; extent label → the reverse.
+  It moves along the precision/recall trade-off without adding information.
+- Since video training only optimises what gets written into memory, this oracle bounds it.
+- Recognition for the oracle arms: pending. It is the one metric where memory's extent could become evidence.
+
+**Composite vs memory, the principle.** Both bring past information into frame t:
+- **Memory is closed-loop.** It stores the model's own past predictions, so errors feed back. Measured: precision
+  falls over the window and extent grows.
+- **The composite is open-loop.** It stores past pixels aligned by motion and compared to the empty scene; it does not
+  depend on past predictions.
+
+Working claim: *under fragmented occlusion, integrate past evidence open-loop (pixels, motion, empty scene), not
+closed-loop (self-predictions).*
+
 **Next:**
-- Oracle-memory arms (pseudo-GT or SAM2-ceiling written into memory, scored on these metrics) decide whether video
-  training can beat the per-frame adapter.
-- `adapter-pf-noC` decides the composite input.
-- Bar for video training: ≥ the per-frame adapter on hand J and recognition.
+1. Recognition for the composite ablation and the oracle arms (running).
+2. Re-select the per-frame checkpoint and loss on seq1: SAM2-ceiling J, box AUC, recognition.
+3. Video training only if the recognition oracle shows headroom over the per-frame adapter.
