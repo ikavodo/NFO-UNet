@@ -15,10 +15,12 @@ import numpy as np
 
 from benchmark.nfo_vos.downstream import box_metrics as BM
 
-ARMS = ('b0-c2', 't1-c2', 'trkbox', 'trk', 'adapter-pf', 'vid-plain', 'vid-prompts', 'vid-adapter-pre', 'vid-adapter-noC')
+ARMS = ('b0-c2', 't1-c2', 'trkbox', 'trk', 'adapter-pf', 'adapter-pf-noC', 'vid-plain', 'vid-prompts', 'vid-adapter-pre',
+        'vid-adapter-noC', 'vid-oracle-ceil', 'vid-oracle-pseudo')
 PAIRS = (('vid-adapter-pre', 't1-c2'), ('vid-adapter-pre', 'trkbox'), ('vid-adapter-pre', 'trk'),
          ('vid-adapter-pre', 'vid-prompts'), ('vid-adapter-pre', 'vid-adapter-noC'), ('vid-prompts', 'vid-plain'),
-         ('adapter-pf', 'trk'), ('trk', 't1-c2'))
+         ('adapter-pf', 'trk'), ('trk', 't1-c2'), ('adapter-pf', 't1-c2'), ('adapter-pf', 'adapter-pf-noC'),
+         ('vid-oracle-ceil', 'vid-prompts'), ('vid-oracle-ceil', 'adapter-pf'), ('vid-oracle-pseudo', 'adapter-pf'))
 GROUPS = (('seq1 (selection)', ('seq1',)), ('seq2-4 (test)', ('seq2', 'seq3', 'seq4')))
 
 
@@ -88,6 +90,8 @@ def main():
         print(f'\n== {name}\n{"arm":17s}' + ''.join(f'{m:>11s}' for m in W))
         arms = list(ARMS) + [a for a in ('nomask', 'sam2ceil', 'pseudo') if a in W['recog conf']]
         for a in arms:
+            if a not in W['box AUC']:
+                continue
             vals = []
             for m in W:
                 v = [x for i, x in W[m].get(a, {}).items() if sq[i] in sel]
@@ -96,6 +100,8 @@ def main():
         print('paired Δ (window bootstrap 95% CI):')
         for a, b in PAIRS:
             parts = []
+            if a not in W['box AUC'] or b not in W['box AUC']:
+                continue
             for m in ('hand J', 'box AUC', 'recog conf'):
                 ids = [i for i in sq if sq[i] in sel]
                 mu, lo, hi, n = delta(W[m], a, b, ids)

@@ -157,13 +157,14 @@ def main(N=7, weights='uniform', arms=('nomask', 'gtbox', 't1'), stride=None, mo
                 C = masked_composite([frame(t['seq'], fr[i]) for i in idx], [M[i] for i in idx],
                                      gt_shifts(gtb, [fr[i] for i in idx], fr[j]), bg, w)
                 s = score_yolo(model, C, gtb[fr[j]])
-                rows.append(dict(arm=arm, id=t['id'], seq=t['seq'], frame=fr[j], conf=s['conf']))
+                rows.append(dict(arm=arm, id=t['id'], seq=t['seq'], frame=fr[j], conf=s['conf'],
+                                 dets=json.dumps([[round(c, 4), round(i, 4)] for c, i in s['dets']])))
                 dets.setdefault((arm, t['seq']), []).append(s['dets'])
                 if montage_ids and t['id'] in montage_ids and j == max(i for i in range(len(fr)) if ok[i]):
                     keep[(t['id'], arm)] = (C, s['box'], gtb[fr[j]])
         print(t['id'], flush=True)
     os.makedirs(BM.OUT, exist_ok=True)
-    with open(f'{BM.OUT}/recog_N{N}_{weights}_meanfill.csv', 'w', newline='') as f:
+    with open(f"{BM.OUT}/recog_N{N}_{weights}_meanfill{os.environ.get('NFO_RECOG_TAG', '')}.csv", 'w', newline='') as f:
         wr = csv.DictWriter(f, fieldnames=list(rows[0])); wr.writeheader(); wr.writerows(rows)
     report(rows, dets, arms)
     if keep:
@@ -171,26 +172,29 @@ def main(N=7, weights='uniform', arms=('nomask', 'gtbox', 't1'), stride=None, mo
     return rows, dets
 
 
-def report(rows, dets, arms, base=os.environ.get('NFO_BASE', 't1'), B=2000):
+def report(rows, dets, arms, base=os.environ.get('NFO_BASE', 't1'), B=1000):
+    """Group AP50 and mean conf; paired window-bootstrap Δ vs base for both (AP recomputed on each resample of windows)."""
     rng = np.random.default_rng(0)
     for name, sel in [('seq1 (selection)', ('seq1',)), ('seq2-4 (test)', ('seq2', 'seq3', 'seq4'))]:
-        print(f'\n{name}\n{"arm":16s} n_comp  AP50   mean conf  Δconf vs {base} [95% CI, window bootstrap]')
+        print(f'\n{name}\n{"arm":17s} n_comp  AP50   conf   ΔAP50 vs {base} [95% CI]      Δconf vs {base} [95% CI]')
         win = {a: {} for a in arms}
         for r in rows:
             if r['seq'] in sel:
-                win[r['arm']].setdefault(r['id'], []).append(r['conf'])
-        for a in arms:
-            if not win[a]:
-                continue
-            ap = ap50([d for s in sel for d in dets.get((a, s), [])])
-            mc = np.mean([c for v in win[a].values() for c in v])
-            ci = ''
-            ids = sorted(set(win[a]) & set(win.get(base, {})))
-            if a != base and ids:
-                d = np.array([np.mean(win[a][i]) - np.mean(win[base][i]) for i in ids])
-                bs = d[rng.integers(0, len(d), (B, len(d)))].mean(1)
-                ci = f'{d.mean():+.3f} [{np.quantile(bs, .025):+.3f}, {np.quantile(bs, .975):+.3f}]'
-            print(f'{a:16s} {sum(map(len, win[a].values())):5d}   {ap:.3f}  {mc:.3f}      {ci}')
+                d = r['dets'] if isinstance(r['dets'], list) else json.loads(r['dets'])
+                win[r['arm']].setdefault(r['id'], []).append((float(r['conf']), [tuple(x) for x in d]))
+        ids = sorted(set.intersection(*[set(win[a]) for a in arms if win[a]]))
+        boot = rng.integers(0, len(ids), (B, len(ids)))
+        ap = lambda a, sub: ap50([d for i in sub for _, d in win[a][ids[i]]])
+        cf = {a: np.array([np.mean([c for c, _ in win[a][i]]) for i in ids]) for a in arms if win[a]}
+        apb = {a: np.array([ap(a, b) for b in boot]) for a in cf}
+        for a in cf:
+            full = ap(a, range(len(ids)))
+            s_ = f'{a:17s} {sum(len(win[a][i]) for i in ids):5d}  {full:.3f}  {cf[a].mean():.3f}'
+            if a != base and base in cf:
+                dap = apb[a] - apb[base]; dc = cf[a] - cf[base]; dcb = dc[boot].mean(1)
+                s_ += f'  {full - ap(base, range(len(ids))):+.3f} [{np.quantile(dap, .025):+.3f}, {np.quantile(dap, .975):+.3f}]'
+                s_ += f'   {dc.mean():+.3f} [{np.quantile(dcb, .025):+.3f}, {np.quantile(dcb, .975):+.3f}]'
+            print(s_)
 
 
 def _montage(keep, arms, N, weights):
@@ -254,6 +258,9 @@ def label_montage(ids, j=30, N=7):
 
 
 if __name__ == '__main__':
+    if sys.argv[1] == 'report':                      # re-report from the saved CSV, no YOLO
+        rows = list(csv.DictReader(open(f'{BM.OUT}/recog_N7_uniform_meanfill.csv')))
+        report(rows, None, list(dict.fromkeys(r['arm'] for r in rows))); sys.exit()
     if sys.argv[1] == 'labels':
         label_montage(sys.argv[2:]); sys.exit()
     trials = json.load(open('results/benchmark/rr/trials.json'))
