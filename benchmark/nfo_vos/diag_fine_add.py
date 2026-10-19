@@ -1,7 +1,7 @@
 """Can missed visible person pixels be ADDED to T1's mask from frame-t evidence compared against two
 references, the empty scene (static background layer) and a person-aligned cleaned composite of t-6..t-1
 (moving person layer)? Layered framing: Wang & Adelson, "Representing moving images with layers", IEEE TIP
-1994. Pre-registered in docs/vos_benchmark/nfo_vos_pilot_findings.md (2026-10-12).
+1994. Pre-registered in docs/vos_benchmark/archive/nfo_vos_pilot_findings_full.md (2026-10-12).
 
     python -m benchmark.nfo_vos.diag_fine_add run       # GPU: ring scores per frame -> results/.../fine_add/<trial>.npz
     python -m benchmark.nfo_vos.diag_fine_add report    # CPU: precision at 50% reach, AUC, tau on seq1, dJ on seq2-4

@@ -1,5 +1,5 @@
 """Uncertainty-weighted logit fusion of the static-layer cue into T1's mask logits (ViperSAM-style late
-fusion, docs/external/ViperSAM_with_equations.md, eq. for K_t; pre-registered in docs/vos_benchmark/nfo_vos_pilot_findings.md,
+fusion, docs/external/ViperSAM_with_equations.md, eq. for K_t; pre-registered in docs/vos_benchmark/archive/nfo_vos_pilot_findings_full.md,
 2026-10-12). Output-only.
 
     python -m benchmark.nfo_vos.logit_fusion tune            # seq1: theta, lambda for fuse and const

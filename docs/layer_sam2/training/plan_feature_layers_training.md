@@ -81,7 +81,7 @@ frame and fuse them with learned weights. Three later developments replace its p
   person passes during the estimate.
 
 **Recurrent variant (ablation only).** Replace the window with a per-layer ConvGRU state, updated each frame.
-- This is the O(1)-per-frame form derived in `nfo_vos_pilot_findings.md` (keyframe section).
+- This is the O(1)-per-frame form derived in `archive/nfo_vos_pilot_findings_full.md` (keyframe section).
 - Ancestor: BasicVSR++ propagation.
 
 ## 2. Data
@@ -200,7 +200,7 @@ Report per row: parameters, FLOPs per frame, ms per frame, peak GPU memory, and 
 4. `benchmark/nfo_vos/layers/model.py` + `train.py`: §1 and §3. Overfit test first: 1 clip, loss → ~0, s AUC →
    oracle.
 5. Full training, 1 seed, then G1. On a pass: 3 seeds, then G2, G3, G4, then the ablations.
-6. Write results into `docs/vos_benchmark/nfo_vos_pilot_findings.md` (constructive) and
+6. Write results into `docs/vos_benchmark/archive/nfo_vos_pilot_findings_full.md` (constructive) and
    `docs/vos_benchmark/nfo_failure_log.md` (one line per dead end).
 
 **Not in this plan:** injecting s or the layers into SAM2 (dense prompt, high-res residual, attention bias, extra

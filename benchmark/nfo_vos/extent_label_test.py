@@ -1,4 +1,4 @@
-"""Pre-registered test (docs/vos_benchmark/nfo_vos_pilot_findings.md, 2026-10-13): automatic extent-leaning labels vs the
+"""Pre-registered test (docs/vos_benchmark/archive/nfo_vos_pilot_findings_full.md, 2026-10-13): automatic extent-leaning labels vs the
 annotator's polygon labels.        python -m benchmark.nfo_vos.extent_label_test
 
 Label = (blended exemplar silhouette minus empty-scene disparity > theta) u SAM2-ceiling; exemplar_gt.py v2 without G.

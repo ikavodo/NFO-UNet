@@ -3,7 +3,7 @@
 Status: **live**, not started. Written for an implementing session. Data generation is out of scope: §3 lists only
 what the data must provide; another session builds it.
 
-Read first: `docs/vos_benchmark/nfo_vos_pilot_findings.md` (last four sections) and
+Read first: `docs/vos_benchmark/archive/nfo_vos_pilot_findings_full.md` (last four sections) and
 `docs/vos_benchmark/nfo_failure_log.md` (2026-10-16 lines).
 
 ## 0. Why (measured, 2026-10-16, NFO seq1, 11 windows with composite history)
@@ -254,7 +254,7 @@ That is a few ×0.1 s per frame, against about 1 s/frame plus depth for Diffusio
 3. The adapter plus a training loop (frozen SAM2 in fp16/bf16, adapter fp32), with logged parameter count and
    wall-clock.
 4. G2 on val, with ablations only after G2 passes.
-5. G3 on NFO; append the results to `nfo_vos_pilot_findings.md` and the failures to `nfo_failure_log.md`.
+5. G3 on NFO; append the results to `archive/nfo_vos_pilot_findings_full.md` and the failures to `nfo_failure_log.md`.
 
 Working rules: code and .md only in git; commit messages end with the Co-Authored-By line; save visual traces in the
 repo and let the user judge them; ask before dispatching subagents.

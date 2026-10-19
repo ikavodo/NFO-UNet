@@ -229,7 +229,7 @@
 
 **Files:**
 - Create `benchmark/nfo_vos/downstream/report.py`.
-- Modify `docs/vos_benchmark/nfo_vos_pilot_findings.md` (new section) and `nfo_failure_log.md`.
+- Modify `docs/vos_benchmark/archive/nfo_vos_pilot_findings_full.md` (new section) and `nfo_failure_log.md`.
 
 **Interfaces:** consumes the CSVs of Tasks 1, 2 and 4, plus a hand-label J/P/R scorer reused from
 `vhat_vs_silhouette.py` / `fusion_nfo` (the hand frames inside windows).

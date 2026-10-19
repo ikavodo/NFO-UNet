@@ -1,7 +1,7 @@
 # docs/ index (by topic)
 
 - `vos_benchmark/` — NFO video-segmentation benchmark (current work, Oct 2026)
-  - `nfo_vos_pilot_findings.md` — constructive results log, chronological; the last sections are the current state
+  - `nfo_vos_pilot_findings.md` — compressed current findings (task, metrics, results, evidence status); full chronological log in `archive/nfo_vos_pilot_findings_full.md`
   - `nfo_failure_log.md` — one line per dead end
   - `hand_annotation_plan.md`, `label_generators_design.md` — how the hand labels / automatic labels were made
   - `gtfree_clean_composite.md` — construction of the GT-free composite C, with equations
