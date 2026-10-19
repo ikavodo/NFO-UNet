@@ -35,7 +35,7 @@ from benchmark.nfo_vos.run_sam2_video import build_predictor
 CKPT = 'results/benchmark/rr/layers_fusion_adapter/token_seed0/fusion_it200.pt'
 OUT = 'results/benchmark/rr/synth_memory'
 IMG = 'images/benchmark/downstream/synth_memory.jpg'
-ARMS = ('trk', 'adapter-pf', 'vid-prompts', 'vid-oracle-V', 'vid-write-pf', 'vid-adapter-pre')
+ARMS = ('trk', 'adapter-pf', 'vid-prompts', 'vid-oracle-V', 'vid-write-pf', 'step0-post')
 
 
 def up(low, shape):
@@ -44,39 +44,47 @@ def up(low, shape):
 
 @torch.no_grad()
 def clip_arms(pred, net, vp, raw):
-    """{arm: [T, H, W] bool} (per-frame arms only on build's targets) and the target list."""
+    """{arm: [T, H, W] bool} and the scored frames. Review fixes (2026-10-19): A_w runs on EVERY frame with history
+    (no V gate: the bank must not depend on GT); scored frames = those with V non-empty; object score of a written mask
+    = +10 if non-empty else −10 (hook). step0-post: prompts-only loop with A_w written into memory, F_t^mem captured,
+    A_w's residuals applied AFTER memory and decoded OUTSIDE the loop (its output never enters memory or obj_ptr)."""
     T, H, W = raw['X'].shape
-    f, meta = FD.build(pred, raw)
+    f, meta = FD.build(pred, raw, all_targets=True)
     ts = meta['ts']
+    score_ts = [t for t in ts if raw['V'][t].any()]
     sc = np.array([1024 / W, 1024 / H] * 2, np.float32)
     with torch.autocast('cuda', dtype=torch.bfloat16):
         o = net(f, sam=pred.model)
         low_ad = decode(pred.model, o, token=o['token'])
         low_trk = decode(pred.model, dict(f, box=f['box_trk']), point=True)
-        sp_plain, _ = pred.model.sam_prompt_encoder(
-            points=(torch.cat([f['box_trk'].view(-1, 2, 2), f['trk'][:, None]], 1),
-                    torch.tensor([[2, 3, 1]], device='cuda').repeat(len(ts), 1)), boxes=None, masks=None)
-    M = {a: np.zeros((T, H, W), bool) for a in ('trk', 'adapter-pf')}
+    M = {a: np.zeros((T, H, W), bool) for a in ('trk', 'adapter-pf', 'step0-post')}
     for i, t in enumerate(ts):
         M['trk'][t], M['adapter-pf'][t] = up(low_trk[i, 0], (H, W)), up(low_ad[i, 0], (H, W))
-    # per-frame video inputs: tracker box (t0 size) + point for every frame; residuals / δ where the adapter ran
     trk = meta['trk']
     S0 = raw['S'][0] if raw['S'][0].any() else raw['S'][int(np.argmax(raw['S'].sum((1, 2))))]
     ys, xs = np.nonzero(S0); asp0 = (np.ptp(xs) + 1) / (np.ptp(ys) + 1); h0 = raw['bxj'][0][2]
     hb = np.array([asp0 * h0 / 2, h0 / 2], np.float32)
     inputs = [dict(box=(np.concatenate([trk[j] - hb, trk[j] + hb]) * sc).astype(np.float32),
                    pt=(trk[j] * sc[:2]).astype(np.float32), R=None, delta=None) for j in range(T)]
-    for i, t in enumerate(ts):
-        inputs[t]['R'] = {l: (o[f'X{l}'][i:i + 1] - f[f'X{l}'][i:i + 1]).half() for l in ('16', '8', '4')}
-        inputs[t]['delta'] = (o['token'][i:i + 1].float() - sp_plain[i:i + 1].float())[:, 2].half()
+    assert np.allclose(np.stack([inputs[t]['box'] for t in ts]), f['box_trk'].cpu().numpy(), atol=1e-2)   # review 13
     cx0, cy0, _ = raw['bxj'][0]
     box0 = [cx0 - hb[0], cy0 - hb[1], cx0 + hb[0], cy0 + hb[1]]
     tv = dict(frames=list(range(T)), imgs=list(raw['X']), box_native=box0, point_native=[cx0, cy0])
     M['vid-prompts'] = run_window(vp, tv, inputs, 'prompts')
-    M['vid-adapter-pre'] = run_window(vp, tv, inputs, 'adapter-pre')
     M['vid-oracle-V'] = run_window(vp, tv, inputs, 'oracle-mem', labels={t: raw['V'][t] for t in range(T)})
-    M['vid-write-pf'] = run_window(vp, tv, inputs, 'oracle-mem', labels={t: M['adapter-pf'][t] for t in ts})
-    return M, ts
+    cap = dict(ts=set(ts), F={})
+    M['vid-write-pf'] = run_window(vp, tv, inputs, 'oracle-mem', labels={t: M['adapter-pf'][t] for t in ts}, capture=cap)
+    idx = [i for i, t in enumerate(ts) if t in cap['F']]
+    Fm = torch.cat([cap['F'][ts[i]][0] for i in idx]); h4 = torch.cat([cap['F'][ts[i]][1][0] for i in idx])
+    h8 = torch.cat([cap['F'][ts[i]][1][1] for i in idx])
+    sel = torch.as_tensor(idx, device='cuda')
+    g = {'X16': Fm + (o['X16'] - f['X16'])[sel], 'X8': h8 + (o['X8'] - f['X8'])[sel], 'X4': h4 + (o['X4'] - f['X4'])[sel]}
+    with torch.autocast('cuda', dtype=torch.bfloat16):
+        low_s0 = decode(pred.model, g, token=o['token'][sel])
+    for k, i in enumerate(idx):
+        M['step0-post'][ts[i]] = up(low_s0[k, 0], (H, W))
+    empty_w = float(np.mean([not M['adapter-pf'][t].any() for t in ts]))
+    return M, score_ts, empty_w
 
 
 def jpr(m, v):
@@ -95,9 +103,13 @@ def main(n=30):
     res, keep = [], []
     for k, spec in enumerate(S):
         raw = FD.clip_raw(spec, np.random.default_rng([1, k]))
-        M, ts = clip_arms(pred, net, vp, raw)
-        row = {a: np.mean([jpr(M[a][t], raw['V'][t]) for t in ts], 0).tolist() for a in ARMS}
-        row.update(cid=raw['cid'], n=len(ts), rho=float(raw['occ'].get('rho', np.nan)))
+        M, ts, empty_w = clip_arms(pred, net, vp, raw)
+        pf = {a: [jpr(M[a][t], raw['V'][t]) for t in ts] for a in ARMS}
+        row = {a: np.mean(pf[a], 0).tolist() for a in ARMS}
+        # review gate: per-frame oracle selector between the memory-free and the memory arm (heuristic bound for A_r)
+        row['max(pf,write)'] = [float(np.mean([max(x[0], y[0]) for x, y in zip(pf['adapter-pf'], pf['vid-write-pf'])]))] * 3
+        row['max(pf,step0)'] = [float(np.mean([max(x[0], y[0]) for x, y in zip(pf['adapter-pf'], pf['step0-post'])]))] * 3
+        row.update(cid=raw['cid'], n=len(ts), rho=float(raw['occ'].get('rho', np.nan)), empty_w=empty_w)
         res.append(row)
         print(k, raw['cid'], ' '.join(f'{a} {row[a][0]:.3f}' for a in ARMS), flush=True)
         if len(keep) < 4:
@@ -114,8 +126,10 @@ def report(res, B=2000):
     for a in ARMS:
         v = np.array([r[a] for r in res])
         print(f'  {a:16s} J {v[:, 0].mean():.3f}  P {v[:, 1].mean():.3f}  R {v[:, 2].mean():.3f}')
-    for a, b in (('vid-oracle-V', 'adapter-pf'), ('vid-oracle-V', 'vid-prompts'), ('vid-write-pf', 'adapter-pf'),
-                 ('vid-write-pf', 'vid-prompts'), ('vid-prompts', 'trk'), ('adapter-pf', 'trk'), ('vid-adapter-pre', 'adapter-pf')):
+    print(f"  empty A_w masks: {np.mean([r['empty_w'] for r in res]):.1%} of written frames")
+    for a, b in (('vid-oracle-V', 'adapter-pf'), ('vid-write-pf', 'adapter-pf'), ('vid-write-pf', 'vid-prompts'),
+                 ('step0-post', 'adapter-pf'), ('step0-post', 'vid-write-pf'), ('max(pf,write)', 'adapter-pf'),
+                 ('max(pf,step0)', 'adapter-pf'), ('adapter-pf', 'trk')):
         d = np.array([r[a][0] - r[b][0] for r in res])
         bs = d[rng.integers(0, len(d), (B, len(d)))].mean(1)
         print(f'  ΔJ {a} − {b}: {d.mean():+.3f} [{np.quantile(bs, .025):+.3f}, {np.quantile(bs, .975):+.3f}]')

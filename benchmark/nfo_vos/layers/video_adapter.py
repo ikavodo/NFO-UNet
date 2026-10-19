@@ -85,7 +85,7 @@ def install_hooks(vp, state):
             m = torch.as_tensor(cv2.resize(lab.astype(np.float32), pred_masks_high_res.shape[-1:-3:-1]),
                                 device=pred_masks_high_res.device)[None, None]
             pred_masks_high_res = (20 * m - 10).to(pred_masks_high_res.dtype)
-            object_score_logits = torch.full_like(object_score_logits, 10.0)
+            object_score_logits = torch.full_like(object_score_logits, 10.0 if lab.any() else -10.0)  # empty → absent
         return orig_enc(current_vision_feats, feat_sizes, pred_masks_high_res, object_score_logits, is_mask_from_pts)
 
     def track_step(frame_idx, *a, **k):
@@ -96,6 +96,9 @@ def install_hooks(vp, state):
         t = state.get('t', 0)
         inp = state['inputs'][t] if t < len(state['inputs']) else None
         state['inject'] = False
+        cap = state.get('capture')
+        if cap is not None and t in cap['ts']:          # memory-conditioned decoder inputs, before any residual
+            cap['F'][t] = (backbone_features.float().clone(), [h.float().clone() for h in high_res_features])
         if state['arm'] != 'b0' and inp is not None and point_inputs is None and mask_inputs is None:
             dev = backbone_features.device
             pts = torch.as_tensor(np.concatenate([inp['box'].reshape(2, 2), inp['pt'][None]])[None], device=dev)
@@ -126,12 +129,12 @@ def install_hooks(vp, state):
     return uninstall
 
 
-def run_window(vp, t, inputs, arm, labels=None, dtype=torch.bfloat16):
+def run_window(vp, t, inputs, arm, labels=None, dtype=torch.bfloat16, capture=None):
     """SAM2 video on one window with GT box + point at t0 (as run_sam2_video); returns [T, H, W] bool masks.
     arm 'plain': no hooks at all (SC1 reference). t may carry 'imgs' (synthetic clip frames) instead of an NFO 'seq'."""
     frames = t['frames']
     stage = tempfile.mkdtemp(prefix='vidadapt_')
-    state = dict(inputs=inputs, arm=arm, labels=labels or {})
+    state = dict(inputs=inputs, arm=arm, labels=labels or {}, capture=capture)   # capture: {'ts': set, 'F': {}}
     uninstall = install_hooks(vp, state) if arm != 'plain' else (lambda: None)
     try:
         import os

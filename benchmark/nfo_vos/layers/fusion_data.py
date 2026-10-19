@@ -139,7 +139,7 @@ def _enc(pred, imgs, chunk=8):
 
 
 @torch.no_grad()
-def build(pred, raw, max_targets=None, rng=None, dev='cuda'):
+def build(pred, raw, max_targets=None, rng=None, dev='cuda', all_targets=False):
     """GPU side of one clip, the test-time path: encode every frame once (+ the empty scene); kernel-f16 tracker
     (layers/track_check.kernel_track on 1 − cos(F_t, F_B)) from the jittered t0 box; for each target t, x-only Theil–Sen
     on the track over [t-12, t] aligns frames t-n_h..t-1 into V̂'s gated composite (composite_and_mass with the clip's
@@ -161,7 +161,9 @@ def build(pred, raw, max_targets=None, rng=None, dev='cuda'):
     trk = kernel_track(dmap, (cx0, cy0), asp0 * h0, h0)
     nh = occ['nh']
     ok = ~np.isnan(raw['boxes']).any(1)
-    ts = [t for t in range(max(6, nh), T) if ok[t] and raw['V'][t].any()]
+    # all_targets: every frame with history, no GT gate (the memory bank at test time has no V); training default keeps
+    # the visible-person gate for the loss targets
+    ts = list(range(max(6, nh), T)) if all_targets else [t for t in range(max(6, nh), T) if ok[t] and raw['V'][t].any()]
     if max_targets and len(ts) > max_targets:
         ts = sorted((rng or np.random.default_rng()).choice(ts, max_targets, replace=False))
 
@@ -182,6 +184,9 @@ def build(pred, raw, max_targets=None, rng=None, dev='cuda'):
     sc = np.array([1024 / W, 1024 / H] * 2, np.float32)
     boxes = []
     for t in ts:
+        if not raw['S'][t].any() or np.isnan(raw['bxj'][t]).any():          # no person / no GT box: tracker box
+            boxes.append(np.concatenate([trk[t] - [asp0 * h0 / 2, h0 / 2], trk[t] + [asp0 * h0 / 2, h0 / 2]]).astype(np.float32) * sc)
+            continue
         ys, xs = np.nonzero(raw['S'][t]); asp = (np.ptp(xs) + 1) / (np.ptp(ys) + 1)
         cx, cy, h = raw['bxj'][t]
         boxes.append(np.array([cx - asp * h / 2, cy - h / 2, cx + asp * h / 2, cy + h / 2], np.float32) * sc)
