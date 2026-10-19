@@ -113,3 +113,70 @@ Effect: improved masks enter memory, so memory improves gradually.
 layer-aware one *in video mode*. Prefer the simpler one if it is within the CI.
 
 **Not now:** composite / background from buffered features.
+
+## 7. Closing the memory headroom: memory-conditioned read adapter over a corrected bank (design, 2026-10-19)
+
+**Measured motivation** (`synth_memory.py`, `downstream/`):
+- **Synthetic, exact visible masks V** (2-clip smoke test; 30-clip run pending):
+  - per-frame adapter: J 0.628;
+  - video, adapter masks written into memory (`write-pf`): 0.623;
+  - **video, exact V written into memory: 0.714**;
+  - video + read-side zero-shot adapter (residual before memory attention): 0.576.
+- **NFO seq2–4 hand labels:** write-pf ties the per-frame adapter (0.763 vs 0.761) and beats video + prompts by
+  +0.014 [+0.001, +0.028].
+
+**Diagnosis:**
+1. **Memory amplifies the quality of what is written.** Perfect content gives +0.09 J over the per-frame adapter; the
+   adapter's own content gives ±0.
+2. **The memory-blind adapter double-counts.** Its residual assumes nothing else supplies the object prior, but in video
+   the decoder input F_t^mem already carries memory's extent: over-segmentation, R 0.93, P 0.76.
+
+**Design, two adapter roles:**
+- **A_w, the write adapter.** The frozen per-frame adapter (v3.4 it200, or the re-selected checkpoint). Its mask m_t^w
+  is what SAM2's memory encoder receives: MemEnc(F_t, m_t^w), `memory_encoder.py:174-177`. It is open-loop: grounded in
+  frame / composite / empty-scene evidence, never in past predictions. This equals the tested `write-pf` arm.
+- **A_r, the read adapter (trainable).** Same architecture, initialised from A_w, with one extra stride-16 input group:
+  the memory-conditioned feature F_t^mem and F_t^mem − F_t (zero-initialised weights, so step 0 = A_w).
+  - Its residual R¹⁶ is added to **F_t^mem, the decoder input after memory attention**, not before it.
+  - R⁸ and R⁴ go to the high-res skips as before; prompt = tracker box + point + δ.
+  - It learns to add only what memory lacks (fragments new at t, removal of propagated FP).
+- **Output:** Decoder(F_t^mem + R¹⁶_r, hi-res + R⁸⁴_r, token_r). The bank is always written by A_w, so the train-time
+  bank and the test-time bank have the same provenance (no exposure bias; no scheduled sampling needed).
+
+**Training: computationally ≈ the per-frame pipeline.**
+- **Per clip (unchanged):** `fusion_data.build` gives features, composites, tracker, targets.
+- **Bank (no grad):** A_w masks for the targets (one batched forward, already part of eval). Then the frozen SAM2 video
+  loop over the clip's 40 frames with tracker prompts, A_w masks written into memory (the `oracle-mem` hook with
+  labels = A_w masks). A capture hook stores F_t^mem (the `_forward_sam_heads` input) for the targets.
+  - Extra cost per clip: SAM2 re-encodes 40 frames + 40 memory-attention / decoder / memory-encoder steps, all
+    no-grad. About 1–2 s per clip (measured: synth_memory ≈ 4 video runs per clip).
+- **Gradient only into A_r:** one decoder pass per target, as in per-frame training. No backprop through memory
+  attention (R is added after it) and none across frames, so no BPTT.
+- **Targets:** same max 32 per clip; 2 clips per step, as now.
+
+**Loss.** Memory supplies recall, so the recall-heavy weighting is dropped:
+- focal α 0.5 + Focal Tversky FN 0.5 / FP 0.5 (≈ Dice);
+- the layer-aware weights W (ignore occluded person near visible fragments) kept, because that is a label convention,
+  not a recall price.
+
+Ablation: the same without W (the "simple loss").
+
+**Init and LR:** A_r from A_w weights, memory-input conv zero-initialised. AdamW 1e-4 (lower than the original 3e-4,
+since this is fine-tuning). Cosine schedule, 1,000 steps.
+
+**Validation and selection (every 100 steps):**
+- 12 synthetic val clips, exact-V J of the full video arm (write A_w, read A_r);
+- seq1 15 windows, J vs SAM2-ceiling (dense ranking proxy, valid within the SAM2-video family);
+- best checkpoint by synthetic J, with seq1 as a tie-breaker.
+
+**Single test at the end** (`dump_arms` arm `vid-write-read`): seq2–4 hand J, box AUC, recognition, against T1,
+adapter-pf, write-pf.
+
+**Pre-registered success bar:** write-read ≥ adapter-pf + 0.02 J on synthetic (CI > 0), and ≥ adapter-pf on seq2–4
+hand J and recognition (not worse beyond CI).
+
+**Cluster:** same sbatch pattern.
+- Exclude node2 and node22.
+- Request an Ampere-or-newer GPU (bf16).
+- Keep 2 clips per step and use the extra memory to run 2 seeds and the loss ablation in parallel as an array, rather
+  than a larger batch: a larger batch changes the optimisation; parallel runs answer the open questions.
