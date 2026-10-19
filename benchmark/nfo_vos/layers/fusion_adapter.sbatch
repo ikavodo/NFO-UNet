@@ -3,6 +3,7 @@
 # One array task per sparse-prompt mode: 0 = token (default), 1 = box (ablation). Override MODES / STEPS / SEED.
 #   sbatch benchmark/nfo_vos/layers/fusion_adapter.sbatch
 #   MODES="token" STEPS=1500 SEED=1 sbatch --export=ALL --array=0 benchmark/nfo_vos/layers/fusion_adapter.sbatch
+#   LOSS=balanced|simple|v34 selects the loss (fusion_adapter.LOSS_CFG); output dir gets a _<loss> suffix
 # Writes results/benchmark/rr/layers_fusion_adapter/<mode>_seed<seed>/{log.json,fusion_it*.pt} (≈ 3 MB per checkpoint)
 # and images/benchmark/gpjatk_foliage/fusion_nfo_featdiff.png. Nothing else is written: clips are regenerated online.
 # Needs on the cluster (none of it is in git):
@@ -20,7 +21,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=10
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:nvidia_l40s:1      # Ada, bf16, 48 GB (fallback: gpu:a40:1); never Pascal/Turing (no bf16) or node22
+#SBATCH --exclude=node2,node22
 #SBATCH --mem=48G
 #SBATCH --time=03:00:00
 #SBATCH --mail-type=END,FAIL
@@ -33,7 +35,7 @@ MODES=(${MODES:-token box})
 MODE=${MODES[$SLURM_ARRAY_TASK_ID]}
 
 pwd; hostname; date; nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
-echo "fusion adapter mode=$MODE steps=${STEPS:-1500} seed=${SEED:-0} amp=${AMP:-bf16} ckpt=$NFO_SAM2_CKPT"
+echo "fusion adapter loss=${LOSS:-v34} mode=$MODE steps=${STEPS:-1500} seed=${SEED:-0} amp=${AMP:-bf16} ckpt=$NFO_SAM2_CKPT"
 export OMP_NUM_THREADS=2 PYTHONPATH=.
 srun "$PYTHON" -m benchmark.nfo_vos.layers.fusion_adapter "$MODE" "${STEPS:-1500}" "${SEED:-0}"
 date

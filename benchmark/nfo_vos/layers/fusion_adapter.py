@@ -131,20 +131,25 @@ def decode(sam, f, token=None, point=False):
 
 
 ALPHA = 0.67   # focal class weight: a missed person pixel costs 2.07× an extra background pixel (old default 0.25: 0.38×)
+# LOSS env (2026-10-19, re-selection on valid labels): v34 = layer-aware recall-heavy (default); balanced = same W,
+# focal α 0.5, Tversky FN 0.5 / FP 0.5; simple = balanced without the layer weights W
+LOSS = os.environ.get('LOSS', 'v34')
+LOSS_CFG = {'v34': dict(alpha=0.67, a_fp=0.3, b_fn=0.7, use_w=True), 'balanced': dict(alpha=0.5, a_fp=0.5, b_fn=0.5, use_w=True),
+            'simple': dict(alpha=0.5, a_fp=0.5, b_fn=0.5, use_w=False)}[LOSS]
 
 
-def loss_fn(low, V, W=None, a_fp=0.3, b_fn=0.7, gamma=0.75):
+def loss_fn(low, V, W=None, a_fp=0.3, b_fn=0.7, gamma=0.75, alpha=ALPHA, use_w=True):
     """v3.4 (2026-10-16): layer-aware, recall-oriented. Per-pixel weights W (fusion_data.loss_weights: occluded person
     near visible fragments ignored, far occluded person 0.3, elsewhere 1) on focal (α = ALPHA) and on the FP sum of a
     Focal Tversky term (Abraham & Khan, ISBI 2019, arXiv 1810.07842; FN 0.7, FP 0.3, γ 0.75).
     History: v3.2 focal α 0.25 + Dice was precision-biased (FN/FP cost 0.38); v3.3 α 0.67 + Tversky still lost recall
     on seq1 (R 0.76 → 0.67 by step 200): a global price cannot be generous behind foliage and strict on background."""
     V = V[:, None]
-    W = torch.ones_like(V) if W is None else W[:, None]
+    W = torch.ones_like(V) if (W is None or not use_w) else W[:, None]
     p = torch.sigmoid(low)
     tp, fp, fn = (p * V).sum((1, 2, 3)), (W * p * (1 - V)).sum((1, 2, 3)), ((1 - p) * V).sum((1, 2, 3))
     ft = (1 - (tp + 1) / (tp + a_fp * fp + b_fn * fn + 1)) ** gamma
-    focal = (W * sigmoid_focal_loss(low, V, alpha=ALPHA, reduction='none')).sum((1, 2, 3)) / W.sum((1, 2, 3)).clamp(min=1)
+    focal = (W * sigmoid_focal_loss(low, V, alpha=alpha, reduction='none')).sum((1, 2, 3)) / W.sum((1, 2, 3)).clamp(min=1)
     return (20 * focal + ft).mean()
 
 
@@ -218,7 +223,7 @@ def main(mode='token', steps=1500, seed=0, eval_every=100, max_targets=32, n_val
     val_all = list(torch.utils.data.DataLoader(Clips('val'), batch_size=None, num_workers=6, collate_fn=_ident))
     val = val_all[:n_val_fast]
     sel = fusion_nfo.items('select', pred)
-    out = f'{OUT}/{mode}_seed{seed}'
+    out = f'{OUT}/{mode}_seed{seed}' + ('' if LOSS == 'v34' else f'_{LOSS}')
     os.makedirs(out, exist_ok=True)
     print(f'mode {mode}; params {n_par}; val clips {len(val)} fast / {len(val_all)} final; seq1 select frames {len(sel)}', flush=True)
     rng, log, best, t0 = np.random.default_rng(seed), [], (-1.0, None), time.time()
@@ -240,7 +245,7 @@ def main(mode='token', steps=1500, seed=0, eval_every=100, max_targets=32, n_val
         f, _ = build(pred, next(dl), max_targets=max_targets, rng=rng)
         with torch.autocast('cuda', dtype=AMP):
             o = net(f, sam=sam)
-            loss = loss_fn(decode(sam, o, token=o.get('token')).float(), f['V'], f.get('W'))
+            loss = loss_fn(decode(sam, o, token=o.get('token')).float(), f['V'], f.get('W'), **LOSS_CFG)
         opt.zero_grad(set_to_none=True); scaler.scale(loss).backward(); scaler.step(opt); scaler.update(); sched.step()
         if it % 25 == 0:
             print(f'it {it} loss {loss.item():.4f} {(time.time() - t0) / it:.2f} s/it', flush=True)
