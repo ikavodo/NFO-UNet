@@ -128,16 +128,22 @@ def install_hooks(vp, state):
 
 def run_window(vp, t, inputs, arm, labels=None, dtype=torch.bfloat16):
     """SAM2 video on one window with GT box + point at t0 (as run_sam2_video); returns [T, H, W] bool masks.
-    arm 'plain': no hooks at all (SC1 reference)."""
+    arm 'plain': no hooks at all (SC1 reference). t may carry 'imgs' (synthetic clip frames) instead of an NFO 'seq'."""
     frames = t['frames']
     stage = tempfile.mkdtemp(prefix='vidadapt_')
     state = dict(inputs=inputs, arm=arm, labels=labels or {})
     uninstall = install_hooks(vp, state) if arm != 'plain' else (lambda: None)
     try:
         import os
-        for i, k in enumerate(frames):
-            os.symlink(os.path.abspath(f"{V.NATIVE}/{t['seq']}/{k:05d}.jpg"), f'{stage}/{i}.jpg')
-        masks = np.zeros((len(frames), 600, 800), bool)
+        if 'imgs' in t:                                   # synthetic clip: frames given in memory (uint8, H×W)
+            for i, im in enumerate(t['imgs']):
+                cv2.imwrite(f'{stage}/{i}.jpg', im, [cv2.IMWRITE_JPEG_QUALITY, 100])
+            shape = t['imgs'][0].shape[:2]
+        else:
+            for i, k in enumerate(frames):
+                os.symlink(os.path.abspath(f"{V.NATIVE}/{t['seq']}/{k:05d}.jpg"), f'{stage}/{i}.jpg')
+            shape = (600, 800)
+        masks = np.zeros((len(frames),) + shape, bool)
         with torch.inference_mode(), torch.autocast('cuda', dtype=dtype):
             st = vp.init_state(stage, offload_video_to_cpu=True, offload_state_to_cpu=True)
             vp.add_new_points_or_box(st, frame_idx=0, obj_id=0, points=np.array([t['point_native']], np.float32),
