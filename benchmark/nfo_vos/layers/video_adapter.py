@@ -29,8 +29,9 @@ S1 = np.array([1024 / 800, 1024 / 600] * 2, np.float32)
 
 
 @torch.no_grad()
-def per_frame_inputs(pred, net, t):
-    """Tracker box / point per frame (1024 frame) and, where the 6-frame history exists, the adapter residuals and δ."""
+def per_frame_inputs(pred, net, t, noC=False):
+    """Tracker box / point per frame (1024 frame) and, where the 6-frame history exists, the adapter residuals and δ.
+    noC: composite removed (C := empty scene, a := 0), the −composite ablation. d['it'] keeps the encoder item."""
     seq, fr = t['seq'], t['frames']
     _, _, kc, wh = kernel16_chain(t, pred, return_feats=True)
     w0, w1 = t['warmup']
@@ -44,6 +45,8 @@ def per_frame_inputs(pred, net, t):
             fx = theil_at(cs, [kc[l, 0] for l in cs], [j] + list(range(j - 6, j)))
             C, a = composite_and_mass([V.native(fr[l], seq).astype(np.float32) for l in range(j - 6, j)],
                                       [np.float32([[1, 0, fx[j] - fx[l]], [0, 1, 0]]) for l in range(j - 6, j)], bg, z0='adaptive')
+            if noC:
+                C, a = bg, np.zeros_like(a)
             it = dict(X=V.native(fr[j], seq)[None], Ct=FD.u8(C)[None], a=FD.a256(a)[None], V=np.zeros((1, 256, 256), np.float32),
                       box=box[None], box_trk=box[None], trk=d['pt'][None], mode=np.zeros(1, int), bg=FD.u8(bg))
             f = FD.encode(pred, [it])
@@ -54,6 +57,7 @@ def per_frame_inputs(pred, net, t):
                 points=(torch.cat([f['box_trk'].view(1, 2, 2), f['trk'][:, None]], 1),
                         torch.tensor([[2, 3, 1]], device='cuda')), boxes=None, masks=None)
             d['delta'] = (o['token'].float() - sp_plain.float())[:, 2].half()          # correction on the point token
+            d['it'] = it
         out.append(d)
     return out
 
@@ -122,7 +126,7 @@ def install_hooks(vp, state):
     return uninstall
 
 
-def run_window(vp, t, inputs, arm, labels=None):
+def run_window(vp, t, inputs, arm, labels=None, dtype=torch.bfloat16):
     """SAM2 video on one window with GT box + point at t0 (as run_sam2_video); returns [T, H, W] bool masks.
     arm 'plain': no hooks at all (SC1 reference)."""
     frames = t['frames']
@@ -134,7 +138,7 @@ def run_window(vp, t, inputs, arm, labels=None):
         for i, k in enumerate(frames):
             os.symlink(os.path.abspath(f"{V.NATIVE}/{t['seq']}/{k:05d}.jpg"), f'{stage}/{i}.jpg')
         masks = np.zeros((len(frames), 600, 800), bool)
-        with torch.inference_mode(), torch.autocast('cuda', dtype=torch.bfloat16):
+        with torch.inference_mode(), torch.autocast('cuda', dtype=dtype):
             st = vp.init_state(stage, offload_video_to_cpu=True, offload_state_to_cpu=True)
             vp.add_new_points_or_box(st, frame_idx=0, obj_id=0, points=np.array([t['point_native']], np.float32),
                                      labels=np.array([1], np.int32), box=np.array(t['box_native'], np.float32))
