@@ -163,7 +163,7 @@ def score(arms, ref='gt'):
     return rows
 
 
-def report(rows, arms, base='t1', B=2000):
+def report(rows, arms, base=os.environ.get('NFO_BASE', 't1'), B=2000):
     rng = np.random.default_rng(0)
     for name, sel in [('seq1 (selection)', ('seq1',)), ('seq2-4 (test)', ('seq2', 'seq3', 'seq4'))]:
         print(f'\n{name}\n{"arm":14s} n_win   AUC    P@20   P_norm  fail    ΔAUC vs {base} [95% CI]')

@@ -171,7 +171,7 @@ def main(N=7, weights='uniform', arms=('nomask', 'gtbox', 't1'), stride=None, mo
     return rows, dets
 
 
-def report(rows, dets, arms, base='t1', B=2000):
+def report(rows, dets, arms, base=os.environ.get('NFO_BASE', 't1'), B=2000):
     rng = np.random.default_rng(0)
     for name, sel in [('seq1 (selection)', ('seq1',)), ('seq2-4 (test)', ('seq2', 'seq3', 'seq4'))]:
         print(f'\n{name}\n{"arm":16s} n_comp  AP50   mean conf  Δconf vs {base} [95% CI, window bootstrap]')

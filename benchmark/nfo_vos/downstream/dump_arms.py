@@ -8,6 +8,9 @@ Writes results/benchmark/rr/masks/<arm>/<trial_id>.npz in the B0/T1 schema (mask
   vid-prompts       SAM2 video + tracker box + point every frame (decoder only)
   vid-adapter-pre   + adapter residual before memory attention
   vid-adapter-noC   vid-adapter-pre with the composite removed (C := empty scene, a := 0)
+  vid-oracle-pseudo ORACLE: vid-prompts, but the frozen pseudo-GT is written into memory (causal: past frames only)
+  vid-oracle-ceil   ORACLE: same with the SAM2-ceiling (both bound what memory could deliver; scored on hand J /
+                    box / recognition, never on the label written in, which made the 2026-10-16 number circular)
     PYTHONPATH=. ../samurai/.venv/bin/python -m benchmark.nfo_vos.downstream.dump_arms ARM TRIAL_INDEX [ckpt]
 """
 import json
@@ -24,7 +27,8 @@ from benchmark.nfo_vos.layers.fusion_adapter import Fusion, decode
 from benchmark.nfo_vos.layers.video_adapter import S1, per_frame_inputs, run_window
 
 CKPT = 'results/benchmark/rr/layers_fusion_adapter/token_seed0/fusion_it200.pt'
-VIDEO = {'vid-plain': 'plain', 'vid-prompts': 'prompts', 'vid-adapter-pre': 'adapter-pre', 'vid-adapter-noC': 'adapter-pre'}
+VIDEO = {'vid-plain': 'plain', 'vid-prompts': 'prompts', 'vid-adapter-pre': 'adapter-pre', 'vid-adapter-noC': 'adapter-pre',
+         'vid-oracle-pseudo': 'oracle-mem', 'vid-oracle-ceil': 'oracle-mem'}
 
 
 def _up(low):
@@ -50,6 +54,17 @@ def per_frame_masks(pred, net, t, inputs, arm):
     return out
 
 
+def oracle_labels(arm, t):
+    """{local frame index: bool mask} written into memory by the oracle arms (video_adapter enc hook), else None."""
+    if arm == 'vid-oracle-pseudo':
+        L = np.load(f"{TR.RES}/labels_sil_frozen/{t['id']}.npz")
+        return {int(k): L[k] for k in L.files}
+    if arm == 'vid-oracle-ceil':
+        ms = {j: TR.gt_mask_native(k, t['seq']) for j, k in enumerate(t['frames'])}
+        return {j: m for j, m in ms.items() if m is not None}
+    return None
+
+
 def main(arm, idx, ckpt=CKPT):
     t = json.load(open(TR.OUT))[int(idx)]
     path = f'{TR.RES}/masks/{arm}/{t["id"]}.npz'
@@ -73,7 +88,7 @@ def main(arm, idx, ckpt=CKPT):
     else:
         from benchmark.nfo_vos.run_sam2_video import build_predictor
         dt = torch.float16 if os.environ.get('NFO_VID_FP16') else torch.bfloat16   # fp16 = run_sam2_video's protocol (SC)
-        m = run_window(build_predictor('b0'), t, inputs, VIDEO[arm], dtype=dt)
+        m = run_window(build_predictor('b0'), t, inputs, VIDEO[arm], labels=oracle_labels(arm, t), dtype=dt)
     np.savez_compressed(path, masks=m, frames=np.array(t['frames']), **extra)
     print(arm, t['id'], 'saved', path, 'mean area px', int(m.sum((1, 2)).mean()))
 
