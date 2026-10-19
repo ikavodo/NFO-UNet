@@ -17,7 +17,7 @@ Every result below falls into one of three classes by the label it was scored on
 **A. Evidence: cite it.** The label is human-made or not a segmentation.
 | result | label | section |
 |---|---|---|
-| per-frame layer adapter ≥ T1 on hand J, box AUC, recognition; video arms over-segment | hand handAv, GT boxes, YOLO | last section |
+| per-frame layer adapter: box AUC +0.070 over T1, ties T1 on hand J and recognition; video arms over-segment | hand handAv, GT boxes, YOLO | last section |
 | ingredient ablations (motion prompt, empty-scene cue, composite, memory) | same | last section |
 | oracle memory (SAM2-ceiling / pseudo-GT written in) does not beat the per-frame adapter on hand J | hand handAv | last section |
 | proxy validity of SAM2-ceiling vs pseudo-GT | hand handAv | last section |
@@ -1260,7 +1260,10 @@ label sources that need no derived segmentation:
 **Per-frame adapter − T1:**
 - hand J +0.010 [−0.011, +0.034];
 - box AUC **+0.070 [+0.056, +0.086]**;
-- recognition conf **+0.030 [+0.002, +0.057]**.
+- recognition conf **+0.030 [+0.002, +0.057]** on the 414 composites shared with the pseudo-GT arm (window frames
+  12–38). **On all 552 composites: +0.015 [−0.014, +0.042], AP50 +0.010 [−0.018, +0.036], i.e. a tie.** The all-frames
+  set is primary: the restriction existed only to make the pseudo-GT arm comparable. Honest summary: the adapter wins
+  tracking and ties T1 on segmentation and recognition.
 
 **Per-frame adapter − its baseline (`trk`):** hand J +0.044 [+0.007, +0.096], box +0.024, conf +0.110 [+0.079, +0.144].
 
@@ -1310,7 +1313,8 @@ label sources that need no derived segmentation:
 - **The composite adds recall and extent at equal J:** J +0.001 [−0.008, +0.009], R +0.017, box +0.018
   [+0.013, +0.022].
 - In video mode the composite adds nothing (above), consistent with memory already supplying extent.
-- Recognition for this pair: pending.
+- **Recognition, paired on the same 552 composites (all frames of the 46 windows): the composite helps.** Conf +0.022
+  [+0.010, +0.033], AP50 +0.017 [−0.002, +0.031]. The extra recall is real person evidence, not just extent.
 
 **Oracle memory** (video + tracker prompts, a label written into memory for past frames, scored on hand labels, seq2–4):
 
@@ -1325,7 +1329,9 @@ label sources that need no derived segmentation:
 - **Memory transmits the extent of what is written into it:** tight label → P up, R down; extent label → the reverse.
   It moves along the precision/recall trade-off without adding information.
 - Since video training only optimises what gets written into memory, this oracle bounds it.
-- Recognition for the oracle arms: pending. It is the one metric where memory's extent could become evidence.
+- **Recognition: no headroom either.** SAM2-ceiling-in-memory scores conf 0.689 / AP50 0.942, against the per-frame
+  adapter's 0.709 / 0.949 on the same 414 composites. On none of the three metrics does the best memory content beat the
+  per-frame adapter, so video training of the memory path is not justified by this benchmark.
 
 **Composite vs memory, the principle.** Both bring past information into frame t:
 - **Memory is closed-loop.** It stores the model's own past predictions, so errors feed back. Measured: precision
@@ -1339,4 +1345,5 @@ closed-loop (self-predictions).*
 **Next:**
 1. Recognition for the composite ablation and the oracle arms (running).
 2. Re-select the per-frame checkpoint and loss on seq1: SAM2-ceiling J, box AUC, recognition.
-3. Video training only if the recognition oracle shows headroom over the per-frame adapter.
+3. Video training of the memory path: not justified (the oracle shows no headroom on any metric). Remaining lever
+   is the per-frame adapter itself (checkpoint, loss), selected on SAM2-ceiling + box + recognition.
