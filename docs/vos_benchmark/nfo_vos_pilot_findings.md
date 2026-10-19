@@ -113,6 +113,21 @@ So the result is: memory filled with SAM2-ceiling-quality masks does not beat th
 transmits the precision/recall balance of what is written in. Whether better-than-SAM2-ceiling content (e.g. the
 adapter's own masks, or a trained write path) makes memory useful is open; see §8.
 
+**Write-path correction, causal, no training (`vid-write-pf`).** SAM2 video + tracker prompts produces the output, but
+the memory encoder is fed the per-frame adapter's mask of the same frame. Seq2–4, recognition on all 552 composites:
+
+| arm | hand J | P / R | box AUC | recog conf |
+|---|---|---|---|---|
+| video + prompts (SAM2's own mask written) | 0.748 | 0.82 / 0.89 | 0.713 | 0.627 |
+| **video + prompts, adapter mask written** | **0.763** | 0.84 / 0.88 | 0.718 | 0.648 |
+| per-frame adapter (no memory) | 0.761 | 0.86 / 0.86 | 0.717 | **0.678** |
+
+- **Correcting what enters memory helps the video output:** J **+0.014 [+0.001, +0.028]** over video + prompts, and
+  recognition conf +0.021.
+- **It ties the per-frame adapter on J and box** (+0.002, +0.001).
+- **It stays below it on recognition:** −0.030 [−0.048, −0.012].
+- Memory with adapter-quality content no longer hurts segmentation, but adds nothing over the memory-free adapter.
+
 **Principle (working hypothesis):** closed-loop memory (the model's own past predictions) compounds errors under
 fragmented occlusion; open-loop evidence (aligned past pixels vs the empty scene) does not. The architectural
 consequence is untested:
