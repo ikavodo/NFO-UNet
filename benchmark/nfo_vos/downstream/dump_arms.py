@@ -4,6 +4,7 @@ Writes results/benchmark/rr/masks/<arm>/<trial_id>.npz in the B0/T1 schema (mask
   trkbox            kernel-f16 tracker box itself (fixed t0 size), masks = filled box
   trk               per-frame SAM2, tracker box + point, no memory
   adapter-pf        per-frame adapter v3.4 it200 (frames < 6 have no composite → trk)
+  adapter-pf-noC    per-frame adapter with the composite input removed (C := empty scene, a := 0)
   vid-plain         SAM2 video, GT box + point at t0 only (must reproduce masks/b0: the SC)
   vid-prompts       SAM2 video + tracker box + point every frame (decoder only)
   vid-adapter-pre   + adapter residual before memory attention
@@ -73,9 +74,9 @@ def main(arm, idx, ckpt=CKPT):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     pred = R.image_predictor()
     net = None
-    if arm in ('adapter-pf', 'vid-adapter-pre', 'vid-adapter-noC'):
+    if arm in ('adapter-pf', 'adapter-pf-noC', 'vid-adapter-pre', 'vid-adapter-noC'):
         net = Fusion(token=True).cuda(); net.init_fallback(pred.model); net.load_state_dict(torch.load(ckpt)); net.eval()
-    inputs = per_frame_inputs(pred, net if arm not in ('trk', 'trkbox') else None, t, noC=arm == 'vid-adapter-noC')
+    inputs = per_frame_inputs(pred, net if arm not in ('trk', 'trkbox') else None, t, noC=arm.endswith('noC'))
     extra = {}
     if arm == 'trkbox':
         boxes = np.stack([d['box'] / S1 for d in inputs])
@@ -83,8 +84,8 @@ def main(arm, idx, ckpt=CKPT):
         for j, b in enumerate(np.round(boxes).astype(int)):
             m[j, max(b[1], 0):b[3] + 1, max(b[0], 0):b[2] + 1] = True
         extra['boxes'] = boxes
-    elif arm in ('trk', 'adapter-pf'):
-        m = per_frame_masks(pred, net, t, inputs, arm)
+    elif arm in ('trk', 'adapter-pf', 'adapter-pf-noC'):
+        m = per_frame_masks(pred, net, t, inputs, 'adapter-pf' if arm.startswith('adapter') else arm)
     else:
         from benchmark.nfo_vos.run_sam2_video import build_predictor
         dt = torch.float16 if os.environ.get('NFO_VID_FP16') else torch.bfloat16   # fp16 = run_sam2_video's protocol (SC)
