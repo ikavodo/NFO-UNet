@@ -1174,3 +1174,81 @@ arm: 0.564.
 - The memory oracle leaves about 0.05 J of headroom above adapter-pre, so training in video mode is justified.
 - Caveat: the memory-free reference (0.507 / 0.546) was scored on every 4th frame, not all frames, so it is not
   frame-identical to this table.
+
+## Downstream benchmark without pseudo-GT: the per-frame layer adapter is the only method ≥ SAMURAI on all three metrics, 2026-10-19 (`downstream/`)
+
+**Why.** A dense pseudo-label should not be the headline target (user, 2026-10-19). Every method is scored on three
+label sources that need no derived segmentation:
+- **Hand-label J/P/R.** Visible pixels: seq2–4 handAv, void ignored, 23 frames in 46 windows. seq1 brush masks fall
+  in only 3 windows, so they can't drive selection.
+- **One-pass box metrics vs the dense GT boxes.** AUC, P@20, P_norm, failure rate, ported from
+  samurai@76ba195 `lib/test/analysis/extract_results.py`; masks become boxes as SAMURAI does.
+- **Recognition on masked temporal composites.**
+  - N = 7 frames aligned by GT-box motion (the same motion for every method, so only the masks differ).
+  - Uniform masked mean, filled with the plain aligned mean where no mask covers a pixel.
+  - YOLO11m person AP50, and the confidence of the best IoU ≥ 0.5 detection.
+  - Stride ⌊N/2⌋.
+  - Ancestor: airborne optical sectioning (integral images of aligned views before classification).
+
+**seq2–4 (single test, 46 windows), window-bootstrap Δ vs T1 (SAMURAI, cluster rerun):**
+
+| arm | hand J | P / R | box AUC | recog AP50 | recog conf |
+|---|---|---|---|---|---|
+| plain aligned mean, no masks (recognition floor) | — | — | — | 0.818 | 0.572 |
+| tracker box alone (`trkbox`) | 0.250 | 0.25 / 0.96 | 0.709 | 0.770 | 0.481 |
+| B0, SAM2.1 video | 0.755 | 0.90 / 0.81 | 0.641 | 0.926 | 0.678 |
+| T1, SAMURAI | 0.750 | 0.89 / 0.82 | 0.646 | 0.930 | 0.679 |
+| per-frame SAM2 + kernel-f16 tracker box/point (`trk`) | 0.716 | 0.82 / 0.85 | 0.693 | 0.841 | 0.599 |
+| **per-frame layer adapter v3.4 it200 (`adapter-pf`)** | **0.761** | 0.86 / 0.86 | 0.717 | **0.949** | **0.709** |
+| SAM2 video + tracker prompts | 0.748 | 0.82 / 0.89 | 0.713 | 0.910 | 0.646 |
+| SAM2 video + tracker prompts + adapter before memory | 0.718 | 0.76 / 0.93 | **0.735** | 0.884 | 0.646 |
+| same, composite input removed at test time | 0.724 | 0.77 / 0.92 | 0.730 | 0.905 | 0.646 |
+| reference: SAM2-ceiling (non-causal, GT-box prompted) | — | — | — | 0.920 | 0.684 |
+| reference: frozen pseudo-GT (non-causal) | — | — | — | 0.940 | 0.728 |
+
+**Per-frame adapter − T1:**
+- hand J +0.010 [−0.011, +0.034];
+- box AUC **+0.070 [+0.056, +0.086]**;
+- recognition conf **+0.030 [+0.002, +0.057]**.
+
+**Per-frame adapter − its baseline (`trk`):** hand J +0.044 [+0.007, +0.096], box +0.024, conf +0.110 [+0.079, +0.144].
+
+**Reading (the ingredients):**
+- **The motion prompt buys tracking but costs precision.**
+  - `trk` vs T1: box +0.046, but J −0.034 and conf −0.080.
+  - Video + prompts vs plain: box +0.070, conf −0.034.
+- **The layer cue (frame vs empty-scene and composite features, adapter residuals) restores the precision.** The
+  per-frame adapter is the only arm ≥ T1 on every metric.
+- **Memory compounds extent.**
+  - Video arms with prompts reach R 0.89–0.93 but P 0.76–0.82.
+  - Box AUC rewards that; hand J and recognition do not. Video + adapter vs T1: J −0.033 [−0.067, −0.002], conf −0.033.
+  - The adapter was trained recall-heavy (focal α 0.67) and without memory.
+- **The composite input contributes nothing measurable in video mode** (with vs without: J −0.007, box +0.005,
+  conf 0.000). This is a test-time ablation of a model trained with the composite. The per-frame ablation, where the
+  composite has no memory to compete with, is pending (`adapter-pf-noC`).
+- **The box metric rewards extent beyond the visible pixels.** A perfect visible-part mask's box reaches mean IoU 0.714
+  vs GT, while the tracker box alone scores AUC 0.709 and the video adapter 0.735. Box metrics measure tracking, not
+  segmentation.
+
+**Dense labels as evaluation proxies** (all 9 arms, about 2,000 window frames, vs the 23 hand frames):
+- **SAM2-ceiling ranks arms like the hand labels:** Spearman +0.80, 7 of 8 paired Δ signs. It favours SAM2-video
+  outputs (adapter-pf − T1: hand +0.010, SAM2-ceiling −0.063), so use it for ranking, not for effect sizes.
+- **The frozen pseudo-GT does not:** Spearman −0.07, 3 of 8 signs. It rewards extent. Every adapter gain measured on it
+  (2026-10-16: per-frame +0.040, video +0.022) is withdrawn.
+
+**Controls behind the recognition design:**
+- Empty-scene fill (first design): masked arms lose to the plain mean on seq2–4 (AP50 0.48 vs 0.80), because the fill
+  re-inserts sharp foliage.
+- Whole-GT-box mask: below the plain mean (AP50 0.78), so covering more than the person is penalised.
+- N = 1: every arm at AP50 ≈ 0.27–0.37, so temporal integration is what makes recognition possible.
+
+**Environment.**
+- B0 masks from 7 Oct and the cluster rerun: box AUC identical (0.641).
+- SAM2 video is deterministic run-to-run. 0.66% px drift local vs cluster.
+- Cluster node22 lacks kernels for the comp_vis torch build (exclude node2, node22).
+
+**Next:**
+- Oracle-memory arms (pseudo-GT or SAM2-ceiling written into memory, scored on these metrics) decide whether video
+  training can beat the per-frame adapter.
+- `adapter-pf-noC` decides the composite input.
+- Bar for video training: ≥ the per-frame adapter on hand J and recognition.
