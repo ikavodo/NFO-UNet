@@ -11,7 +11,9 @@
 set -euo pipefail
 # preference order; substrings of the gres type name. Excluded on purpose: Pascal (p6000, p100, titan_x, gtx_1080),
 # Volta/Turing (v100, titan_v, rtx_2080, quadro_rtx_6000/8000, t4): no native bf16. 'a6000' does not match quadro_rtx_6000.
-ALLOWED=(6000_ada l40s l40 a100 h100 a40 a6000 rtx_4090 rtx_3090 a5000)
+# cluster (sinfo 2026-10-20): 6000_ada node4-5, a40 node15-18, rtx_a6000 node14, h100_nvl node21, l40s node19-20;
+# not: rtx_8000 / rtx_6000 (Quadro) / rtx_5000 (Turing), p6000 / titan (Pascal), node22 Blackwell (sm 12.0: no cu126 kernels)
+ALLOWED=(6000_ada a40 a6000 l40s h100 a100 rtx_4090 rtx_3090 a5000)
 EXCLUDE_NODES=${EXCLUDE_NODES:-node2,node22}
 
 TABLE=$(sinfo -N -h -O "NodeList:30,Gres:80,GresUsed:100,StateCompact:12")
@@ -19,7 +21,7 @@ pick() {   # $1 = 1: require a free GPU
     for want in "${ALLOWED[@]}"; do
         while read -r node gres used state; do
             [[ ",$EXCLUDE_NODES," == *",$node,"* ]] && continue
-            [[ $state =~ ^(idle|mix) ]] || continue
+            [[ $state =~ ^(idle|mix|mixed)-?$ ]] || continue   # '$' = maintenance reservation, '*~#!%@' = not usable; '-' = backfill ok
             type=$(sed -E 's/^gpu:([^:]+):([0-9]+).*/\1/' <<<"$gres")
             [[ $type == *"$want"* ]] || continue
             total=$(sed -E 's/^gpu:[^:]+:([0-9]+).*/\1/' <<<"$gres")
