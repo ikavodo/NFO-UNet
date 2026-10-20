@@ -36,7 +36,11 @@ ARM_CKPT = {'adapter-bal': 'results/benchmark/rr/layers_fusion_adapter/token_see
             'adapter-pf-loc': CKPT,
             # seed replicates of adapter-pf (v34, it200), 2026-10-20: seed 1 trained locally (STEPS 1000), seed 2 on the cluster
             'adapter-s1': 'results/benchmark/rr/layers_fusion_adapter/token_seed1/fusion_it200.pt',
-            'adapter-s2': 'results/benchmark/rr/layers_fusion_adapter/token_seed2/fusion_it200.pt'}
+            'adapter-s2': 'results/benchmark/rr/layers_fusion_adapter/token_seed2/fusion_it200.pt',
+            # composite removed at inference (C := B, a := 0), seeds 1 / 2: the 3-seed composite gain that sets the
+            # one-pass adapter's bar (docs/superpowers/specs/2026-10-20-one-pass-adapter-design.md)
+            'adapter-s1-noC': 'results/benchmark/rr/layers_fusion_adapter/token_seed1/fusion_it200.pt',
+            'adapter-s2-noC': 'results/benchmark/rr/layers_fusion_adapter/token_seed2/fusion_it200.pt'}
 VIDEO = {'vid-plain': 'plain', 'vid-prompts': 'prompts', 'vid-adapter-pre': 'adapter-pre', 'vid-adapter-noC': 'adapter-pre',
          'vid-oracle-pseudo': 'oracle-mem', 'vid-oracle-ceil': 'oracle-mem', 'vid-write-pf': 'oracle-mem'}
 
