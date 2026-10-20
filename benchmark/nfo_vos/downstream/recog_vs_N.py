@@ -1,5 +1,5 @@
 """Recognition vs composite length N (seq2–4 test): YOLO11m person AP50 on masked GT-motion composites of N frames,
-N ∈ {1, 3, 7}, uniform masked mean, stride max(1, ⌊N/2⌋). All three CSVs from one interpreter (NFO_RECOG_TAG=_ablN,
+N ∈ {1, 3, 5, 7, 11, 15, 21}, uniform masked mean, stride max(1, ⌊N/2⌋). All three CSVs from one interpreter (NFO_RECOG_TAG=_ablN,
 2026-10-20); absolute AP is only comparable within that set. 95% CI: window bootstrap (AP recomputed per resample, as
 recognition.report).
 N = 1 is the same for every arm by construction: unmasked pixels are filled with the plain aligned mean, which for a
@@ -18,7 +18,7 @@ import numpy as np
 from benchmark.nfo_vos.downstream import box_metrics as BM
 from benchmark.nfo_vos.downstream.recognition import ap50
 
-NS = (1, 3, 7)
+NS = (1, 3, 5, 7, 11, 15, 21)
 # dataviz default categorical slots 1-4 (validated reference palette); no-mask baseline in neutral gray, dashed
 ARMS = (('adapter-pf', 'adapter (ours, per-frame)', '#2a78d6', '-'), ('t1-c2', 'SAMURAI', '#eb6834', '-'),
         ('b0-c2', 'SAM2.1 video', '#1baf7a', '-'), ('trk', 'SAM2.1 per-frame (tracker box)', '#eda100', '-'),
@@ -55,10 +55,10 @@ def main():
     for y, _ in ends:
         pos.append(min(y, pos[-1] - gap) if pos else y)
     for (y, label), p in zip(ends, pos):
-        ax.annotate(label, (NS[-1], y), xytext=(NS[-1] + 0.25, p), textcoords='data', va='center', fontsize=8.5,
+        ax.annotate(label, (NS[-1], y), xytext=(NS[-1] + 0.6, p), textcoords='data', va='center', fontsize=8.5,
                     color='#0b0b0b', annotation_clip=False)
     ax.legend(loc='lower right', fontsize=8, frameon=False)
-    ax.set_xticks(NS); ax.set_xlim(0.7, 7.3)
+    ax.set_xticks(NS); ax.set_xlim(0.5, NS[-1] + 0.5)
     ax.annotate('N = 1: raw frame,\nidentical for all arms', (1, res['nomask', 1][0]), xytext=(1.25, res['nomask', 1][0] - 0.06),
                 fontsize=8, color='#52514e')
     ax.set_xlabel('frames per composite N'); ax.set_ylabel('YOLO11m person AP50')
