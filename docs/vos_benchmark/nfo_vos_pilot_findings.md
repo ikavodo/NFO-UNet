@@ -93,6 +93,9 @@ segmentation and recognition.** No other method is at or above T1 on all three.
 
 The −0.031 row is over-segmentation: P 0.76, R 0.93.
 
+Related work for the composite (AOS ancestor) and for slimmer adapter variants (feature-space composite, learned
+gate): `docs/related_work_minimal_adapter.md`.
+
 **Reading:**
 - **The motion prompt buys tracking and costs precision.**
 - **The empty-scene cue restores the precision.**
