@@ -33,7 +33,10 @@ CKPT = 'results/benchmark/rr/layers_fusion_adapter/token_seed0/fusion_it200.pt'
 # per-frame adapter arms by checkpoint (2026-10-20): balanced loss it1000 (synthetic memory test winner); v34 it200 rerun
 # locally on window 0 to check local vs cluster parity of 'adapter-pf'
 ARM_CKPT = {'adapter-bal': 'results/benchmark/rr/layers_fusion_adapter/token_seed0_balanced/fusion_it1000.pt',
-            'adapter-pf-loc': CKPT}
+            'adapter-pf-loc': CKPT,
+            # seed replicates of adapter-pf (v34, it200), 2026-10-20: seed 1 trained locally (STEPS 1000), seed 2 on the cluster
+            'adapter-s1': 'results/benchmark/rr/layers_fusion_adapter/token_seed1/fusion_it200.pt',
+            'adapter-s2': 'results/benchmark/rr/layers_fusion_adapter/token_seed2/fusion_it200.pt'}
 VIDEO = {'vid-plain': 'plain', 'vid-prompts': 'prompts', 'vid-adapter-pre': 'adapter-pre', 'vid-adapter-noC': 'adapter-pre',
          'vid-oracle-pseudo': 'oracle-mem', 'vid-oracle-ceil': 'oracle-mem', 'vid-write-pf': 'oracle-mem'}
 
