@@ -16,7 +16,7 @@ set -euo pipefail
 ALLOWED=(6000_ada a40 a6000 l40s h100 a100 rtx_4090 rtx_3090 a5000)
 EXCLUDE_NODES=${EXCLUDE_NODES:-node2,node22}
 
-TABLE=$(sinfo -N -h -O "NodeList:30,Gres:80,GresUsed:100,StateCompact:12")
+TABLE=$(sinfo -N -h -O "NodeList:30,Gres:250,GresUsed:250,StateCompact:12")
 pick() {   # $1 = 1: require a free GPU
     for want in "${ALLOWED[@]}"; do
         while read -r node gres used state; do
