@@ -41,5 +41,6 @@ MODE=${MODES[$SLURM_ARRAY_TASK_ID]}
 pwd; hostname; date; nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 echo "fusion adapter loss=${LOSS:-v34} mode=$MODE steps=${STEPS:-1500} seed=${SEED:-0} amp=${AMP:-bf16} ckpt=$NFO_SAM2_CKPT"
 export OMP_NUM_THREADS=2 PYTHONPATH=.
-srun "$PYTHON" -m benchmark.nfo_vos.layers.fusion_adapter "$MODE" "${STEPS:-1500}" "${SEED:-0}"
+# TEST=0: no seq2-4 test at the end (single held-out test is run separately on the selected checkpoint)
+srun "$PYTHON" -m benchmark.nfo_vos.layers.fusion_adapter "$MODE" "${STEPS:-1500}" "${SEED:-0}" 100 32 12 "${TEST:-0}"
 date
