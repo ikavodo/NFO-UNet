@@ -1,4 +1,4 @@
-# NFO video object segmentation under fragmented occlusion: findings (status 2026-10-19)
+# NFO video object segmentation under fragmented occlusion: findings (status 2026-10-20)
 
 Compressed, current view. The full chronological log, with every intermediate test, is in
 `archive/nfo_vos_pilot_findings_full.md`; dead ends get one line each in `nfo_failure_log.md`. Numbers are measured on
@@ -67,6 +67,7 @@ the data below unless marked otherwise. CIs are 95% window-bootstrap (2,000 resa
 | trkbox | 0.250 | 0.25 / 0.96 | 0.709 | 0.840 | — | — |
 | trk | 0.716 | 0.82 / 0.85 | 0.693 | 0.833 | — | — |
 | **adapter-pf (ours)** | **0.761** | 0.86 / 0.86 | **0.717** | **0.848** | **0.926** | **0.678** |
+| **ours, 3 seeds (mean ± sd)** | **0.760 ± 0.003** | 0.87 / 0.85 | **0.718 ± 0.004** | — | **0.922 ± 0.006** | — |
 | vid-prompts | 0.748 | 0.82 / 0.89 | 0.713 | 0.859 | — | — |
 | vid-adapter-pre | 0.718 | 0.76 / 0.93 | 0.735 | 0.871 | — | — |
 
@@ -77,6 +78,23 @@ The empty recognition cells were scored on the 414-composite subset only: see §
 - box AUC **+0.070 [+0.056, +0.086]**;
 - hand J +0.010 [−0.011, +0.034];
 - recognition conf +0.015 [−0.014, +0.042].
+
+**Over 3 training seeds** (seed 0 = adapter-pf; seeds 1, 2 = same loss, step 200; seed 2 trained in fp16 on a Turing
+node; all masks from the cluster), against T1:
+- box AUC **+0.072 ± 0.004**, and every seed's CI excludes 0;
+- hand J +0.010 ± 0.003;
+- recognition AP50 +0.006 ± 0.006, one YOLO run.
+
+Segment-cluster bootstrap for seed 0 (24 segments): box AUC +0.070 [+0.054, +0.088], with the adapter ahead in 24/24
+segments.
+
+**Runtime** (laptop RTX PRO 4000, per frame, `benchmark/nfo_vos/timing.py`):
+- **ours: 61 ms**, with `video_adapter.fast_masks` (one encode per frame plus one for the composite; composite and SAM2
+  preprocessing on the GPU);
+- **SAM2 video: 53 ms**.
+
+Masks are unchanged against the benchmark code path: box AUC Δ 0.000, hand J Δ +0.001. The benchmark path itself
+takes 445 ms, because it re-encodes everything about 7×.
 
 **Claim supported:** the per-frame layer adapter **tracks clearly better than SAMURAI and ties it on visible-pixel
 segmentation and recognition.** No other method is at or above T1 on all three.

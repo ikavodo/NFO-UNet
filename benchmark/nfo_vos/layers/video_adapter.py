@@ -179,11 +179,12 @@ def _shift_x(x, dx):
 
 
 @torch.no_grad()
-def fast_masks(pred, net, t, tau=3.5):
+def fast_masks(pred, net, t, tau=3.5, noC=False):
     """The adapter-pf masks of one window with each frame encoded ONCE (shared by tracker, adapter and decoder), the
     empty scene once per window, each frame's gate once, and the composite on the GPU. Same computation as
     per_frame_inputs + dump_arms.per_frame_masks, which re-encode frame / composite / empty scene twice per frame and
-    build the composite in numpy. Returns ([T, H, W] bool, seconds per frame)."""
+    build the composite in numpy. net None: the 'trk' arm (per-frame SAM2, tracker box + point, every frame). noC: the
+    composite removed (C := empty scene, a := 0), as per_frame_inputs(noC=True). Returns ([T, H, W] bool, s / frame)."""
     import time
     from benchmark.nfo_vos.layers.fusion_adapter import decode
     from benchmark.nfo_vos.layers.track_check import gt_box, kernel_track
@@ -228,7 +229,7 @@ def fast_masks(pred, net, t, tau=3.5):
         f['box'] = f['box_trk'] = torch.as_tensor(box[None], device='cuda')
         f['pt'] = f['trk'] = torch.as_tensor(pt[None], device='cuda')
         with torch.autocast('cuda', dtype=torch.bfloat16):
-            if j < 6:                                                    # no history yet: per-frame SAM2, tracker prompts
+            if j < 6 or net is None:                                     # no history yet / trk arm: tracker prompts only
                 low = decode(pred.model, f, point=True)
             else:
                 cs = list(range(max(0, j - 12), j + 1))
@@ -237,8 +238,11 @@ def fast_masks(pred, net, t, tau=3.5):
                 A, Gw = _shift_x(Xg[j - 6:j], dx), _shift_x(Gg[j - 6:j], dx)
                 mass = (wk * Gw).sum(0)
                 C = torch.where(mass > 1e-6, (wk * Gw * A).sum(0) / mass.clamp(min=1e-6), (wk * A).sum(0))
-                with torch.autocast('cuda', dtype=FD.AMP):
-                    Cf = enc(C.clamp(0, 255))   # .to(uint8) in enc = FD.u8's truncation, as the benchmark path
+                if noC:
+                    Cf, mass = Bf, torch.zeros_like(mass)
+                else:
+                    with torch.autocast('cuda', dtype=FD.AMP):
+                        Cf = enc(C.clamp(0, 255))   # .to(uint8) in enc = FD.u8's truncation, as the benchmark path
                 f.update({f'C{l}': Cf[i] for i, l in enumerate(('16', '8', '4'))})
                 f.update({f'B{l}': Bf[i] for i, l in enumerate(('16', '8', '4'))})
                 f['a'] = torch.nn.functional.interpolate(mass.clamp(0, 1)[None, None], size=(256, 256), mode='area')[0]

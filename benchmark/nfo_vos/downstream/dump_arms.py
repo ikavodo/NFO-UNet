@@ -89,6 +89,15 @@ def main(arm, idx, ckpt=CKPT):
         return print('exists', path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     pred = R.image_predictor()
+    if arm == 'trk' or arm.startswith('adapter'):     # 2026-10-20: single-encode path (video_adapter.fast_masks, 61 vs
+        from benchmark.nfo_vos.layers.video_adapter import fast_masks   # 445 ms/frame, metric parity); masks dumped
+        net = None                                    # before this date came from per_frame_inputs + per_frame_masks
+        if arm != 'trk':
+            net = Fusion(token=True).cuda(); net.init_fallback(pred.model)
+            net.load_state_dict(torch.load(ARM_CKPT.get(arm, ckpt))); net.eval()
+        m, sec = fast_masks(pred, net, t, noC=arm.endswith('noC'))
+        np.savez_compressed(path, masks=m, frames=np.array(t['frames']))
+        return print(arm, t['id'], 'saved', path, f'{1000 * sec:.0f} ms/frame', 'mean area px', int(m.sum((1, 2)).mean()))
     net = None
     if arm in ('adapter-pf', 'adapter-pf-noC', 'vid-adapter-pre', 'vid-adapter-noC', *ARM_CKPT):
         net = Fusion(token=True).cuda(); net.init_fallback(pred.model)
