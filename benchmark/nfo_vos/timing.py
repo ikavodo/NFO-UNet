@@ -5,7 +5,7 @@ evidence mass (CPU, 6 frames); the adapter forward; the frozen prompt encoder + 
 used for the benchmark masks (video_adapter.per_frame_inputs + dump_arms.per_frame_masks; video_adapter.run_window),
 not optimised: per-frame inputs re-encode the empty scene every frame, run_window reads JPEGs from disk.
 
-    TC_BATCH=1 PYTHONPATH=. ../samurai/.venv/bin/python -m benchmark.nfo_vos.timing
+    TC_BATCH=1 PYTHONPATH=. ../samurai/.venv/bin/python -m benchmark.nfo_vos.timing [fast]
 """
 import json
 import time
@@ -71,5 +71,29 @@ def main():
         print(f'{k:48s} {v:8.1f} ms')
 
 
+
+def fast():
+    """video_adapter.fast_masks on all 61 windows: per-frame time, saved as masks/adapter-pf-fast; parity (per-frame J)
+    against masks/adapter-pf-loc, the benchmark code path run on this machine with the same checkpoint."""
+    import os
+    from benchmark.nfo_vos import run_t4 as R, trials as TR
+    from benchmark.nfo_vos.downstream.dump_arms import CKPT
+    from benchmark.nfo_vos.layers.fusion_adapter import Fusion
+    from benchmark.nfo_vos.layers.video_adapter import fast_masks
+    pred = R.image_predictor()
+    net = Fusion(token=True).cuda(); net.init_fallback(pred.model); net.load_state_dict(torch.load(CKPT)); net.eval()
+    os.makedirs(f'{TR.RES}/masks/adapter-pf-fast', exist_ok=True)
+    secs, J = [], []
+    for t in json.load(open('results/benchmark/rr/trials.json')):
+        m, s = fast_masks(pred, net, t)
+        secs.append(s)
+        np.savez_compressed(f"{TR.RES}/masks/adapter-pf-fast/{t['id']}.npz", masks=m, frames=np.array(t['frames']))
+        ref = np.load(f"{TR.RES}/masks/adapter-pf-loc/{t['id']}.npz")['masks']
+        J += [(a & b).sum() / max((a | b).sum(), 1) for a, b in zip(m, ref)]
+    print(f'fast path: {1000 * np.median(secs[1:]):.1f} ms per frame (median over windows, first excluded as warm-up)')
+    print(f'parity vs benchmark path (same machine): per-frame J mean {np.mean(J):.4f}, 5th pct {np.percentile(J, 5):.4f}, min {np.min(J):.4f}')
+
+
 if __name__ == '__main__':
-    main()
+    import sys
+    fast() if sys.argv[1:] == ['fast'] else main()
