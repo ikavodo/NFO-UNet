@@ -15,9 +15,9 @@ import numpy as np
 
 from benchmark.nfo_vos.downstream import box_metrics as BM
 
-ARMS = ('b0-c2', 't1-c2', 'trkbox', 'trk', 'adapter-pf', 'adapter-pf-noC', 'vid-plain', 'vid-prompts', 'vid-adapter-pre',
+ARMS = ('b0-c2', 't1-c2', 'trkbox', 'trk', 'adapter-pf', 'adapter-bal', 'adapter-pf-noC', 'vid-plain', 'vid-prompts', 'vid-adapter-pre',
         'vid-adapter-noC', 'vid-oracle-ceil', 'vid-oracle-pseudo')
-PAIRS = (('vid-adapter-pre', 't1-c2'), ('vid-adapter-pre', 'trkbox'), ('vid-adapter-pre', 'trk'),
+PAIRS = (('adapter-bal', 'adapter-pf'), ('adapter-bal', 't1-c2'), ('vid-adapter-pre', 't1-c2'), ('vid-adapter-pre', 'trkbox'), ('vid-adapter-pre', 'trk'),
          ('vid-adapter-pre', 'vid-prompts'), ('vid-adapter-pre', 'vid-adapter-noC'), ('vid-prompts', 'vid-plain'),
          ('adapter-pf', 'trk'), ('trk', 't1-c2'), ('adapter-pf', 't1-c2'), ('adapter-pf', 'adapter-pf-noC'),
          ('vid-oracle-ceil', 'vid-prompts'), ('vid-oracle-ceil', 'adapter-pf'), ('vid-oracle-pseudo', 'adapter-pf'))
@@ -82,7 +82,7 @@ def delta(win, a, b, ids, B=2000):
 def main():
     hr = hand_rows()
     box = list(csv.DictReader(open(f'{BM.OUT}/box_gt.csv')))
-    rec = list(csv.DictReader(open(f'{BM.OUT}/recog_N7_uniform_meanfill.csv')))
+    rec = list(csv.DictReader(open(f"{BM.OUT}/recog_N7_uniform_meanfill{os.environ.get('NFO_RECOG_TAG', '')}.csv")))
     sq = {**seq_of(box), **seq_of(rec), **seq_of(hr)}
     W = {'hand J': per_window(hr, 'J'), 'hand P': per_window(hr, 'P'), 'hand R': per_window(hr, 'R'),
          'box AUC': per_window(box, 'auc'), 'recog conf': per_window(rec, 'conf')}
