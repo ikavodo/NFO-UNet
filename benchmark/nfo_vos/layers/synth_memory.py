@@ -32,9 +32,9 @@ from benchmark.nfo_vos.layers.fusion_adapter import Fusion, decode
 from benchmark.nfo_vos.layers.video_adapter import run_window
 from benchmark.nfo_vos.run_sam2_video import build_predictor
 
-CKPT = 'results/benchmark/rr/layers_fusion_adapter/token_seed0/fusion_it200.pt'
-OUT = 'results/benchmark/rr/synth_memory'
-IMG = 'images/benchmark/downstream/synth_memory.jpg'
+CKPT = os.environ.get('CKPT', 'results/benchmark/rr/layers_fusion_adapter/token_seed0/fusion_it200.pt')
+OUT = 'results/benchmark/rr/synth_memory' + os.environ.get('TAG', '')
+IMG = f"images/benchmark/downstream/synth_memory{os.environ.get('TAG', '')}.jpg"
 ARMS = ('trk', 'adapter-pf', 'vid-prompts', 'vid-oracle-V', 'vid-write-pf', 'step0-post')
 
 

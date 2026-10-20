@@ -30,6 +30,10 @@ from benchmark.nfo_vos.layers.fusion_adapter import Fusion, decode
 from benchmark.nfo_vos.layers.video_adapter import S1, per_frame_inputs, run_window
 
 CKPT = 'results/benchmark/rr/layers_fusion_adapter/token_seed0/fusion_it200.pt'
+# per-frame adapter arms by checkpoint (2026-10-20): balanced loss it1000 (synthetic memory test winner); v34 it200 rerun
+# locally on window 0 to check local vs cluster parity of 'adapter-pf'
+ARM_CKPT = {'adapter-bal': 'results/benchmark/rr/layers_fusion_adapter/token_seed0_balanced/fusion_it1000.pt',
+            'adapter-pf-loc': CKPT}
 VIDEO = {'vid-plain': 'plain', 'vid-prompts': 'prompts', 'vid-adapter-pre': 'adapter-pre', 'vid-adapter-noC': 'adapter-pre',
          'vid-oracle-pseudo': 'oracle-mem', 'vid-oracle-ceil': 'oracle-mem', 'vid-write-pf': 'oracle-mem'}
 
@@ -79,8 +83,9 @@ def main(arm, idx, ckpt=CKPT):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     pred = R.image_predictor()
     net = None
-    if arm in ('adapter-pf', 'adapter-pf-noC', 'vid-adapter-pre', 'vid-adapter-noC'):
-        net = Fusion(token=True).cuda(); net.init_fallback(pred.model); net.load_state_dict(torch.load(ckpt)); net.eval()
+    if arm in ('adapter-pf', 'adapter-pf-noC', 'vid-adapter-pre', 'vid-adapter-noC', *ARM_CKPT):
+        net = Fusion(token=True).cuda(); net.init_fallback(pred.model)
+        net.load_state_dict(torch.load(ARM_CKPT.get(arm, ckpt))); net.eval()
     inputs = per_frame_inputs(pred, net if arm not in ('trk', 'trkbox') else None, t, noC=arm.endswith('noC'))
     extra = {}
     if arm == 'trkbox':
@@ -89,7 +94,7 @@ def main(arm, idx, ckpt=CKPT):
         for j, b in enumerate(np.round(boxes).astype(int)):
             m[j, max(b[1], 0):b[3] + 1, max(b[0], 0):b[2] + 1] = True
         extra['boxes'] = boxes
-    elif arm in ('trk', 'adapter-pf', 'adapter-pf-noC'):
+    elif arm in ('trk', 'adapter-pf', 'adapter-pf-noC', *ARM_CKPT):
         m = per_frame_masks(pred, net, t, inputs, 'adapter-pf' if arm.startswith('adapter') else arm)
     else:
         from benchmark.nfo_vos.run_sam2_video import build_predictor

@@ -105,7 +105,7 @@ def loss_weights(S, V):
     """Layer-aware loss weights on SAM2's 256² grid (v3.4, 2026-10-16; the pseudo-GT's three pixel classes, cf. BCNet's
     occluder / occludee layers, arXiv 2103.12340): 1 on the visible person and outside the person (background, incl.
     see-through gaps: leaks are errors); 0 on occluded person pixels within NEAR_PX native px of a visible fragment
-    (S \ V near V: the annotators' void / gap-filling convention); FAR_W on occluded person far from any visible
+    (S − V near V: the annotators' void / gap-filling convention); FAR_W on occluded person far from any visible
     fragment (modal: hidden parts are mildly penalised, not ignored)."""
     near = cv2.dilate(V.astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * NEAR_PX + 1, 2 * NEAR_PX + 1))) > 0
     occ = S & ~V

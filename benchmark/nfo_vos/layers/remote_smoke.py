@@ -56,9 +56,11 @@ def _gpu():
     import torch
     assert torch.cuda.is_available(), 'no CUDA'
     name = torch.cuda.get_device_name(0)
-    bf16 = torch.cuda.is_bf16_supported()
-    print(f'  GPU {name}, bf16 {bf16}, torch {torch.__version__}, mem {torch.cuda.get_device_properties(0).total_memory / 2**30:.0f} GB')
-    assert bf16 or os.environ.get('AMP') == 'fp16', 'no native bf16: set AMP=fp16 or request an Ampere+ GPU'
+    cc = torch.cuda.get_device_capability(0)
+    bf16 = torch.cuda.is_bf16_supported(including_emulation=False)   # default True on Pascal (emulated): misleading
+    print(f'  GPU {name}, sm {cc[0]}.{cc[1]}, native bf16 {bf16}, torch {torch.__version__}, '
+          f'mem {torch.cuda.get_device_properties(0).total_memory / 2**30:.0f} GB')
+    assert cc >= (8, 0) and bf16, f'sm {cc[0]}.{cc[1]}: no tensor-core bf16, request an Ampere+ GPU (A40/A100/L40S/3090+)'
     torch.zeros(1, device='cuda').sum().item()                 # "no kernel image" fails here
     from benchmark.nfo_vos import run_t4 as R
     R.image_predictor()
