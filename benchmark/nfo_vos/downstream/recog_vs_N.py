@@ -73,3 +73,44 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+def montage(Ns=(7, 21), arms=(('nomask', 'no mask'), ('adapter-pf', 'adapter'), ('t1-c2', 'SAMURAI'))):
+    """Composites ending at the last frame of the first seq2 / seq3 / seq4 window, rows = window × N, columns = arm,
+    cropped around the GT box (green); YOLO's best-matching person box in magenta with its confidence. For judging
+    why masked composites lose to the plain mean at long N (seams vs ghost limbs)."""
+    import cv2
+    from ultralytics import YOLO as Y
+    from benchmark.nfo_vos.downstream.recognition import YOLO, arm_masks, background, frame, gt_shifts, \
+        masked_composite, score_yolo
+    model = Y(YOLO)
+    trials = json.load(open('results/benchmark/rr/trials.json'))
+    rows = []
+    for seq in ('seq2', 'seq3', 'seq4'):
+        t = next(x for x in trials if x['seq'] == seq)
+        gtb, fr = BM.gt_boxes(seq), t['frames']
+        bg = background(seq, *t['warmup'])
+        j = len(fr) - 1
+        g = gtb[fr[j]]
+        cx, cy, w, h = (g[0] + g[2]) / 2, (g[1] + g[3]) / 2, max(g[2] - g[0], 60) * 2.4, (g[3] - g[1]) * 1.6
+        X0, Y0, X1, Y1 = int(max(cx - w / 2, 0)), int(max(cy - h / 2, 0)), int(min(cx + w / 2, 800)), int(min(cy + h / 2, 600))
+        for N in Ns:
+            idx = list(range(j - N + 1, j + 1))
+            panes = []
+            for a, name in arms:
+                M, _ = arm_masks(a, t, gtb)
+                C = masked_composite([frame(seq, fr[i]) for i in idx], [M[i] for i in idx],
+                                     gt_shifts(gtb, [fr[i] for i in idx], fr[j]), bg)
+                s = score_yolo(model, C, g)
+                v = C.copy()
+                cv2.rectangle(v, tuple(int(x) for x in g[:2]), tuple(int(x) for x in g[2:]), (0, 255, 0), 1)
+                if s['box'] is not None:
+                    cv2.rectangle(v, tuple(int(x) for x in s['box'][:2]), tuple(int(x) for x in s['box'][2:]), (255, 0, 255), 1)
+                p = cv2.resize(v[Y0:Y1, X0:X1], (240, 320))
+                cv2.putText(p, f'{seq} N={N} {name}', (4, 14), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 255), 1)
+                cv2.putText(p, f'conf {s["conf"]:.2f}', (4, 312), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 255), 1)
+                panes.append(p)
+            rows.append(np.hstack(panes))
+    path = f'{BM.IMG}/composite_N7_vs_N21.jpg'
+    cv2.imwrite(path, np.vstack(rows), [cv2.IMWRITE_JPEG_QUALITY, 85])
+    print('wrote', path)
