@@ -106,6 +106,7 @@ segmentation and recognition.** No other method is at or above T1 on all three.
 | motion prompt (tracker box + point every frame) | trk − T1 | −0.034 | **+0.046** | −0.080 |
 | empty-scene layer cue | adapter-pf without composite − trk | **+0.043 [+0.002, +0.099]** | +0.007 | — |
 | composite (past pixels, open-loop) | adapter-pf − adapter-pf-noC | +0.001 | **+0.018 [+0.013, +0.022]** | **+0.022 [+0.010, +0.033]** |
+| composite, **3 seeds** (mean ± sd) | adapter − adapter-noC, per seed | **+0.016 ± 0.013** | **+0.024 ± 0.005** | **+0.025 ± 0.004** (AP50 +0.016 ± 0.006) |
 | memory (SAM2 video loop) | vid-prompts − trk | +0.032 | +0.020 | — |
 | adapter inside memory | vid-adapter-pre − vid-prompts | **−0.031 [−0.053, −0.011]** | +0.022 | −0.001 |
 
@@ -118,6 +119,8 @@ gate): `docs/related_work_minimal_adapter.md`.
 - **The motion prompt buys tracking and costs precision.**
 - **The empty-scene cue restores the precision.**
 - **The composite adds recall that is real person evidence** (recognition up), not just extent.
+  Over 3 seeds it also raises hand J (+0.016 ± 0.013): seed 0's +0.001 was the low seed (seeds 1, 2: +0.022, +0.026,
+  CIs excluding 0). Every seed's box AUC and recognition-confidence CI excludes 0.
 - **Memory propagates extent:** in the video loop, precision falls and over-extension grows.
 
 **Oracle bound on memory:** SAM2 video with a *non-causal* label written into memory for past frames.
