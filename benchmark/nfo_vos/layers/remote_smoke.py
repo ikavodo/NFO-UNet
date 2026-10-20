@@ -60,7 +60,9 @@ def _gpu():
     bf16 = torch.cuda.is_bf16_supported(including_emulation=False)   # default True on Pascal (emulated): misleading
     print(f'  GPU {name}, sm {cc[0]}.{cc[1]}, native bf16 {bf16}, torch {torch.__version__}, '
           f'mem {torch.cuda.get_device_properties(0).total_memory / 2**30:.0f} GB')
-    assert cc >= (8, 0) and bf16, f'sm {cc[0]}.{cc[1]}: no tensor-core bf16, request an Ampere+ GPU (A40/A100/L40S/3090+)'
+    assert cc >= (7, 5), f'sm {cc[0]}.{cc[1]}: Pascal or older (no usable fp16/bf16 tensor cores)'
+    assert bf16 or os.environ.get('AMP') == 'fp16', f'sm {cc[0]}.{cc[1]} has no native bf16: run with AMP=fp16'
+    assert torch.cuda.get_device_properties(0).total_memory >= 15 * 2**30, 'training needs ~16 GB'
     torch.zeros(1, device='cuda').sum().item()                 # "no kernel image" fails here
     from benchmark.nfo_vos import run_t4 as R
     R.image_predictor()
