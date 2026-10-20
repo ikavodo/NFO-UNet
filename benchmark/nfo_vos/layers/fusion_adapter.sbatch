@@ -21,7 +21,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=10
-#SBATCH --gres=gpu:nvidia_l40s:1      # Ada, bf16, 48 GB (fallback: gpu:a40:1); never Pascal/Turing (no bf16) or node22
+# GPU: default below; better: bash benchmark/nfo_vos/submit.sh <this file> (picks a free sm>=8.0, >=24 GB type)
+#SBATCH --gres=gpu:nvidia_rtx_6000_ada_generation:1
 #SBATCH --exclude=node2,node22
 #SBATCH --mem=48G
 #SBATCH --time=03:00:00

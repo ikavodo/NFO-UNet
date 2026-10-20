@@ -15,7 +15,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --gres=gpu:1
+# GPU: default below; better: bash benchmark/nfo_vos/submit.sh <this file> (picks a free sm>=8.0, >=24 GB type)
+#SBATCH --gres=gpu:nvidia_rtx_6000_ada_generation:1
 #SBATCH --mem=24G
 #SBATCH --time=00:30:00
 #SBATCH --output=/storage/slurm/akid/logs/nfo_dump-%A_%a.out
