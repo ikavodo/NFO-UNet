@@ -301,10 +301,13 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
   <tr><th>ingredient</th><th>comparison</th><th class="n">hand J</th><th class="n">box AUC</th><th class="n">recognition conf</th></tr>
   <tr><td>motion prompt (tracker box + point every frame)</td><td>trk − SAMURAI</td><td class="n">−0.034</td><td class="n"><b>+0.046</b></td><td class="n">−0.080</td></tr>
   <tr><td>empty-scene cue in the adapter</td><td>adapter without composite − trk</td><td class="n"><b>+0.043</b> [+0.002, +0.099]</td><td class="n">+0.007</td><td class="n">—</td></tr>
-  <tr><td>motion-aligned composite</td><td>adapter − adapter without composite</td><td class="n">+0.001</td><td class="n"><b>+0.018</b> [+0.013, +0.022]</td><td class="n"><b>+0.022</b> [+0.010, +0.033]</td></tr>
+  <tr><td>motion-aligned composite (3 seeds, mean ± sd)</td><td>adapter − adapter without composite, per seed</td><td class="n"><b>+0.016 ± 0.013</b></td><td class="n"><b>+0.024 ± 0.005</b></td><td class="n"><b>+0.025 ± 0.004</b></td></tr>
 </table></div>
 <section class="col">
-  <p>Reading: <b>the motion prompt buys tracking but costs precision; the empty-scene cue restores precision; the composite adds recall that is real person evidence</b> (recognition goes up, not just box extent).</p>
+  <p>Reading: <b>the motion prompt buys tracking but costs precision; the empty-scene cue restores precision; the composite adds real person evidence</b>. Recognition goes up, not just box extent. Over 3 seeds every box-AUC and recognition-confidence CI excludes 0, and the composite also lifts hand J in two of three seeds (+0.022, +0.026; seed 0 +0.001).</p>
+
+  <h3>Runtime</h3>
+  <p>Per frame, laptop RTX PRO 4000. <b>Ours: 61 ms. SAM2 video: 53 ms.</b> Each frame is encoded once and shared by the tracker, the adapter and the decoder; the composite takes a second encoder pass; the empty scene is encoded once per sequence. The composite and SAM2's preprocessing run on the GPU. SAM2 video spends its extra time on memory attention and the memory encoder instead, so the two designs cost about the same. Code: <span class="mono">video_adapter.fast_masks</span>, <span class="mono">benchmark/nfo_vos/timing.py</span>.</p>
 
   <h3>Recognition vs. the number of integrated frames</h3>
 </section>
