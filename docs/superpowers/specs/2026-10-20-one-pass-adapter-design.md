@@ -1,5 +1,7 @@
 # One-pass adapter: feature-space composite with a learned gate (design, 2026-10-20)
 
+**Status (2026-10-20): not pursued (user decision).** Kept as a record; the plan in `docs/superpowers/plans/2026-10-20-one-pass-adapter.md` is not executed.
+
 ## Intent
 
 The current per-frame adapter (`layers/fusion_adapter.py`, "adapter-pf", v3.4 loss, step 200) beats SAMURAI on
