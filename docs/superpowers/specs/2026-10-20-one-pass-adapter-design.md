@@ -1,5 +1,7 @@
 # One-pass adapter: feature-space composite with a learned gate (design, 2026-10-20)
 
+**Status (2026-10-20): not pursued (user decision).** Kept as a record; the plan in `docs/superpowers/plans/2026-10-20-one-pass-adapter.md` is not executed.
+
 ## Intent
 
 The current per-frame adapter (`layers/fusion_adapter.py`, "adapter-pf", v3.4 loss, step 200) beats SAMURAI on
@@ -178,3 +180,43 @@ prompts ("trk"), as today. The gate starts at σ(bias 0) = 0.5 everywhere.
 - Token prototype from raw stride-16 composite features under the learned mass.
 - Primary checkpoint step 200 (protocol parity); step 600 declared secondary.
 - Recency τ learned, init 3.5.
+
+## Expert pipeline review (2026-10-20): changes adopted
+
+**Blocking, fixed in the design.**
+- **B1 One history function, two callers.** `history(P_feats[K], gates[K], F_B, dx_native, W_native) → (Ĉ^s, m^s, proto)`
+  is written once and called by both the synthetic `build` path and the NFO inference path (ring buffer, from
+  `video_adapter.fast_masks`). The grid scale is taken from the clip's native width, never from `S1`, and both paths
+  store features in the same dtype. Parity test: one NFO window through both paths must give allclose Ĉ, m and proto.
+- **B2 Conditional arm for the failure branch.** If decision rule 1 fails, run one more arm: a feature composite with
+  the **old hand-made gate** (pixel z-score gate, q90 threshold, area-pooled to strides 16/8/4, fixed τ 3.5), one seed.
+  It costs no extra encoder pass. This separates "features vs pixels" from "learned vs hand-made gate". Without it, a
+  failure is reported only as "this one-pass design lost", never as "pixels beat features".
+
+**Should-fix, adopted.**
+- **S1 Gate collapse.** No supervision is added. At every eval the run logs, for synthetic val and seq1: Σm, m on the
+  person, the gate's spatial std, and the per-input feature norms (step 0).
+  - Collapse is pre-declared as either of:
+    - gate spatial std < 0.05 on synthetic val at step 200;
+    - seq1 median Σm outside [0.5×, 2×] the synthetic median.
+  - A collapsed run is reported as such and not used for the decision rule.
+- **S2 Token δ.**
+  - κ is rescaled to the stride-16 grid: init 500/16 ≈ 31 cells.
+  - The prototype is the m¹⁶-weighted mean of the composite **inside the tracker box** (box_trk), not over the whole frame.
+- **S3 Memory.**
+  - The 1×1 projection P and the gate g are computed **once per clip frame**, not per target × k.
+  - Shifting happens on the **projected** features (64/32/32 channels). P commutes exactly with a bilinear,
+    border-replicate shift, because the interpolation weights sum to 1.
+- **S4 Precision.** Ĉ = (…)/(m + ε) and the gate sigmoid are computed in fp32, outside autocast.
+- **S5 Absolute bar.** Added to decision rule 1: one-pass − SAMURAI box AUC > 0, with its window-bootstrap CI excluding 0.
+
+**Nice-to-have, adopted.**
+- **N1 History dropout.** The tensor shape stays K = 6. Per clip, n_h ∈ {4, 5, 6} is drawn, and the w_k of the dropped
+  oldest frames are zeroed and renormalised. This keeps the old history-length augmentation.
+- **N2** log τ and log κ are excluded from weight decay.
+- **N3 Unit tests.**
+  - An integer shift equals a roll with border replicate.
+  - A sub-cell shift of a pixel map, then area-pooled, matches pooling then shifting within tolerance. The stride-16
+    sub-cell blur is inherent and declared.
+  - At step 0, one-pass equals trk.
+- **N4** Assert dx is finite. On a NaN or unset tracker, fall back to the trk arm for that frame.
