@@ -121,7 +121,7 @@ svg .cross { stroke: var(--bad); stroke-width: 2; }
   <tr class="ours"><td><span style="color:var(--ours)">ours</span> (adapter-pf)</td><td>trk + the layer adapter below (frozen SAM2, about 0.73 M trained parameters)</td><td>no</td><td>tracker box + corrected point</td></tr>
 </table></div>
 <section class="col">
-  <p>The <b>feature tracker</b> is a fixed-size kernel at the t0 box size. On SAM2's stride-16 features it finds the position that maximises the change against the empty scene, 1 − cos(F<sub>t</sub>, F<sub>empty</sub>), and predicts motion with a Theil–Sen line over the last 12 frames (<span class="mono">layers/track_check.py</span>). It runs with the adapter, not as an alternative to it.</p>
+  <p>The <b>feature tracker</b> is a fixed-size kernel at the t0 box size. On SAM2's stride-16 features it finds the position that maximises the change against the empty scene, 1 − cos(F<sub>t</sub>, F<sub>empty</sub>), and predicts motion with a Theil–Sen line over the last 12 frames (<span class="mono">adapter/tracker.py</span>). It runs with the adapter, not as an alternative to it.</p>
 </section>
 
 <section class="col">
@@ -223,7 +223,7 @@ G_i(x) = σ( z_i(x) − θ_i ),  θ_i = max(3, 90th percentile of z_i)
 w_i    ∝ exp(−age_i / τ),  τ = 3.5 frames
 C(x)   = Σ w_i G_i(x) A_i(x) / Σ w_i G_i(x)        (plain weighted mean where Σ w_i G_i ≈ 0)
 a(x)   = Σ w_i G_i(x) ∈ [0, 1]                       (evidence mass)</div>
-  <p>Code: <span class="mono">layers/prompt_oracle.py: composite_and_mass</span>. The composite is <b>open-loop</b>: it is built from pixels and the empty scene, never from the model's own past masks. That is the key difference from SAM2's memory. Section 6 explains why it matters.</p>
+  <p>Code: <span class="mono">adapter/composite.py: composite_and_mass</span>. The composite is <b>open-loop</b>: it is built from pixels and the empty scene, never from the model's own past masks. That is the key difference from SAM2's memory. Section 6 explains why it matters.</p>
 
   <h3>Adapter internals</h3>
   <ul>
@@ -307,7 +307,7 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
   <p>Reading: <b>the motion prompt buys tracking but costs precision; the empty-scene cue restores precision; the composite adds real person evidence</b>. Recognition goes up, not just box extent. Over 3 seeds every box-AUC and recognition-confidence CI excludes 0, and the composite also lifts hand J in two of three seeds (+0.022, +0.026; seed 0 +0.001).</p>
 
   <h3>Runtime</h3>
-  <p>Per frame, laptop RTX PRO 4000. <b>Ours: 61 ms. SAM2 video: 53 ms.</b> Each frame is encoded once and shared by the tracker, the adapter and the decoder; the composite takes a second encoder pass; the empty scene is encoded once per sequence. The composite and SAM2's preprocessing run on the GPU. SAM2 video spends its extra time on memory attention and the memory encoder instead, so the two designs cost about the same. Code: <span class="mono">video_adapter.fast_masks</span>, <span class="mono">benchmark/nfo_vos/timing.py</span>.</p>
+  <p>Per frame, laptop RTX PRO 4000. <b>Ours: 61 ms. SAM2 video: 53 ms.</b> Each frame is encoded once and shared by the tracker, the adapter and the decoder; the composite takes a second encoder pass; the empty scene is encoded once per sequence. The composite and SAM2's preprocessing run on the GPU. SAM2 video spends its extra time on memory attention and the memory encoder instead, so the two designs cost about the same. Code: <span class="mono">adapter/inference.py: fast_masks</span>, <span class="mono">benchmark/nfo_vos/tools/timing.py</span>.</p>
 
   <h3>Recognition vs. the number of integrated frames</h3>
 </section>
@@ -357,13 +357,18 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
 </section>
 <div class="scroll"><table>
   <tr><th>what</th><th>where</th></tr>
-  <tr><td>adapter model, loss, training</td><td class="mono">benchmark/nfo_vos/layers/fusion_adapter.py</td></tr>
-  <tr><td>synthetic clips, loss weights, test-time input path</td><td class="mono">benchmark/nfo_vos/layers/fusion_data.py</td></tr>
-  <tr><td>composite + evidence mass</td><td class="mono">benchmark/nfo_vos/layers/prompt_oracle.py</td></tr>
-  <tr><td>NFO per-frame inference (tracker, composite, adapter)</td><td class="mono">benchmark/nfo_vos/layers/video_adapter.py</td></tr>
-  <tr><td>mask dumps for all methods</td><td class="mono">benchmark/nfo_vos/downstream/dump_arms.py (+ .sbatch)</td></tr>
-  <tr><td>box metrics / recognition / hand-label table</td><td class="mono">benchmark/nfo_vos/downstream/{box_metrics, recognition, report}.py</td></tr>
+  <tr><td>repo guide: layout, data manifest, environments</td><td class="mono">CLAUDE.md</td></tr>
+  <tr><td>test windows, native frames, hand labels</td><td class="mono">benchmark/nfo_vos/trials.py</td></tr>
+  <tr><td>adapter model, loss, training</td><td class="mono">benchmark/nfo_vos/adapter/fusion_adapter.py (+ .sbatch)</td></tr>
+  <tr><td>synthetic training batches, loss weights</td><td class="mono">benchmark/nfo_vos/adapter/fusion_data.py, synth/</td></tr>
+  <tr><td>feature tracker</td><td class="mono">benchmark/nfo_vos/adapter/tracker.py</td></tr>
+  <tr><td>composite + evidence mass</td><td class="mono">benchmark/nfo_vos/adapter/composite.py</td></tr>
+  <tr><td>NFO per-frame inference (tracker, composite, adapter)</td><td class="mono">benchmark/nfo_vos/adapter/inference.py</td></tr>
+  <tr><td>baselines SAM2.1 video / SAMURAI</td><td class="mono">benchmark/nfo_vos/baselines/run_sam2_video.py (+ .sbatch)</td></tr>
+  <tr><td>mask dumps for our arms</td><td class="mono">benchmark/nfo_vos/eval/dump_arms.py (+ .sbatch)</td></tr>
+  <tr><td>box metrics / recognition / results table</td><td class="mono">benchmark/nfo_vos/eval/{box_metrics, recognition, report}.py</td></tr>
+  <tr><td>cluster smoke test / runtime</td><td class="mono">benchmark/nfo_vos/tools/{remote_smoke, timing}.py</td></tr>
   <tr><td>findings (constructive) / failure log</td><td class="mono">docs/vos_benchmark/nfo_vos_pilot_findings.md · nfo_failure_log.md</td></tr>
-  <tr><td>this page's figures</td><td class="mono">benchmark/nfo_vos/briefing_figures.py, downstream/recog_vs_N.py</td></tr>
+  <tr><td>this page's figures</td><td class="mono">benchmark/nfo_vos/tools/briefing_figures.py, eval/recog_vs_N.py</td></tr>
 </table></div>
 </main>
