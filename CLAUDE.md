@@ -108,7 +108,7 @@ Nothing large is in git. The cluster copy is the source of truth for everything 
   installed from `requirements-benchmark.txt`.
 - Cluster (SLURM): `/home/wiss/akid/miniconda3/envs/comp_vis/bin/python3`, logs in `/storage/slurm/akid/logs/`.
   sbatch scripts use `--gres=gpu:1 --exclude=node1,node2,node6,node7,node22` (Pascal, 12 GB Titan, Blackwell sm 12.0
-  without kernels) and set `AMP=fp16` automatically on pre-Ampere GPUs; 16 GB is enough.
+  without kernels) and set `AMP=fp16` automatically on pre-Ampere GPUs; training peaks at 9.8 GB (32 targets), so any GPU with ≥ 12 GB works.
 - **Environment drift**: the same checkpoint gives masks differing by ~5.5% of pixels between laptop and cluster.
   Compare arms only within one environment and score recognition for all arms in one run.
 

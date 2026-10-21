@@ -62,7 +62,7 @@ def _gpu():
           f'mem {torch.cuda.get_device_properties(0).total_memory / 2**30:.0f} GB')
     assert cc >= (7, 5), f'sm {cc[0]}.{cc[1]}: Pascal or older (no usable fp16/bf16 tensor cores)'
     assert bf16 or os.environ.get('AMP') == 'fp16', f'sm {cc[0]}.{cc[1]} has no native bf16: run with AMP=fp16'
-    assert torch.cuda.get_device_properties(0).total_memory >= 15 * 2**30, 'training needs ~16 GB'
+    assert torch.cuda.get_device_properties(0).total_memory >= 11 * 2**30, 'training peaks at 9.8 GB (32 targets, 2026-10-21): needs >= 12 GB'
     torch.zeros(1, device='cuda').sum().item()                 # "no kernel image" fails here
     image_predictor()
 

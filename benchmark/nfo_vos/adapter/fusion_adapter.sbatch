@@ -20,7 +20,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=10
-# GPU: any free node (training peaks within 16 GB; it ran on a 16 GB laptop GPU). Excluded: Pascal p6000 (node1, 7),
+# GPU: any free node with >= 12 GB (training peaks at 9.8 GB, 32 targets, measured 2026-10-21). Excluded: Pascal p6000 (node1, 7),
 # 12 GB titan (node2, 6), Blackwell node22 (sm 12.0: no kernels in cu126 torch). Turing (rtx_8000/6000/5000) -> AMP=fp16 below.
 #SBATCH --gres=gpu:1
 #SBATCH --exclude=node1,node2,node6,node7,node22
