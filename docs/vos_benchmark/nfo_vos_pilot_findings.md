@@ -1,5 +1,8 @@
 # NFO video object segmentation under fragmented occlusion: findings (status 2026-10-20)
 
+> **Code paths (2026-10-21 cleanup):** the code moved to `benchmark/nfo_vos/{adapter,baselines,eval,synth,tools}/` (map: `CLAUDE.md`). Script paths cited below that no longer exist (`layers/…`, `downstream/…`, `run_t4.py`, `factorised_*.py`, …) are at git tag `archive/pre-cleanup-2026-10-21`.
+
+
 Compressed, current view. The full chronological log, with every intermediate test, is in
 `archive/nfo_vos_pilot_findings_full.md`; dead ends get one line each in `nfo_failure_log.md`. Numbers are measured on
 the data below unless marked otherwise. CIs are 95% window-bootstrap (2,000 resamples, seed 0), paired between methods.

@@ -1,82 +1,132 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code (claude.ai/code) in this repository.
 
-## Project overview
+## What this repo is
 
-Implementation of a spatio-temporal U-Net for heatmap-based person detection under fragmented occlusion,
-accompanying the paper "Person localization under fragmented occlusion". The network takes a sequence of
-grayscale frames stacked as channels and predicts a heatmap for the frame at the sequence center.
+Two things, separated by directory:
 
-## Setup
+1. **The NFO VOS benchmark and the per-frame adapter** (`benchmark/nfo_vos/`, current work). Goal: a publishable
+   benchmark for segmenting the *visible* part of a person under fragmented occlusion (foliage) on the NFO
+   sequences, and a method that beats SAM2.1 video (B0) and SAMURAI (T1) there.
+2. **The original spatio-temporal U-Net** of the paper "Person localization under fragmented occlusion" (root:
+   `train_main.py`, `test_main.py`, `network/`, `dataset/`, `config/`, `eval/`, `utils/`, `gen_data/gen_*`). Kept
+   as published; not used by (1) except `utils/bb_utils.py` and `gen_data/` helpers.
+
+Results and their numbers live in `docs/vos_benchmark/nfo_vos_pilot_findings.md` (constructive) and
+`docs/vos_benchmark/nfo_failure_log.md` (one line per dead end). The collaborator briefing is `docs/briefing/index.html`.
+Code removed in the 2026-10-21 cleanup (≈ 90 experiment scripts, the blob tracker and live-tracker app `tracking/`,
+the SAM2-memory arms) is at git tag **`archive/pre-cleanup-2026-10-21`**; docs older than that cite paths from there.
+
+## The method (what produced the current results)
+
+Frozen SAM2.1-b+ **image** predictor, per frame, no memory. Per frame t of an NFO window:
+
+- **Tracker** (`adapter/tracker.py`): kernel-f16. A fixed-size box kernel matched on 1 − cos(F_t, F_B) (SAM2 stride-16
+  features of frame t and of the empty scene B = warm-up median), Theil–Sen constant-velocity search window.
+  Replaced the MOG2 blob tracker on 2026-10-16: it locates the person in 100% of synthetic frames vs 48%.
+- **Composite** (`adapter/composite.py`): frames t−6..t−1, each shifted by the x-only Theil–Sen fit of the tracker
+  track, change-gated against B (robust z-score, adaptive threshold max(3, q90)), recency-weighted (τ = 3.5):
+  C = Σ w G A / Σ w G, evidence mass a = Σ w G. Ancestor: Airborne Optical Sectioning (arXiv 2111.06959, 2207.13344).
+- **Adapter** (`adapter/fusion_adapter.py`, `Fusion`, 730k parameters): zero-initialised residuals at strides 16/8/4
+  from (F_X, F_C, F_B, differences, a), plus a learned correction δ of the tracker point token. At step 0 it equals
+  SAM2 with tracker prompts (arm `trk`).
+- **Training** (`adapter/fusion_data.py`, `synth/`): synthetic GPJATK people behind procedural foliage
+  (`synth/occluders.py`) on CanaTree100 / photo backgrounds, NFO-calibrated noise (`synth/noise.py`), regenerated
+  online per clip. Loss **v3.4** (`LOSS=v34`): 20·focal_W(α 0.67, γ 2) + Focal Tversky (FP 0.3, FN 0.7, γ 0.75)
+  with weights W (1 visible / background, 0 occluded within 8 px of a fragment, 0.3 far occluded). AdamW 3e-4,
+  cosine, 32 targets per clip. **Checkpoint: step 200** (selected on seq1, never on seq2–4).
+- **Inference** (`adapter/inference.py`, `fast_masks`): one encoder pass per frame shared by tracker, adapter and
+  decoder: 61 ms/frame vs B0 53 ms (RTX PRO 4000 laptop). Frames with < 6 frames of history use the tracker prompts.
+
+Things that mattered (each measured; details in the findings doc): the kernel-f16 tracker for composite alignment
+(v3), the adaptive gate threshold (train/test parity), loss v3.4 over the balanced and simple variants, step 200,
+and the composite itself (vs the `-noC` control, over 3 seeds: box AUC +0.024 ± 0.005, recognition conf
++0.025 ± 0.004, hand J +0.016 ± 0.013). Main result vs SAMURAI over 3 seeds on seq2–4: box AUC 0.717 / 0.723 / 0.715
+vs 0.646; hand J 0.761 / 0.763 / 0.757 vs 0.750; recognition AP50 0.926 / 0.915 / 0.926 vs 0.916.
+
+Closed directions (do not reopen without new evidence): SAM2 memory variants (the oracle bound is +0.012 J), the
+balanced loss, the one-pass feature-space adapter (designed, not pursued:
+`docs/superpowers/specs/2026-10-20-one-pass-adapter-design.md`).
+
+## Layout of `benchmark/nfo_vos/`
+
+| path | purpose |
+|---|---|
+| `trials.py` | the test set: 61 admissible 40-frame windows over seq1–4 (`results/benchmark/rr/trials.json`, in git), GT boxes, native frames (`native`), hand labels (`hand_label`, `hand_frames`) |
+| `baselines/run_sam2_video.py` (+ sbatch) | B0 (SAM2.1 video) and T1 (SAMURAI), same t0 box + point prompt |
+| `adapter/` | the method: `tracker`, `composite`, `fusion_adapter` (model, loss, training `main`, `image_predictor`), `fusion_data` (synthetic batches), `dataset` (clip specs), `fusion_nfo` (NFO hand frames for checkpoint selection/test), `inference` (`fast_masks`), `fusion_adapter.sbatch` |
+| `synth/` | synthetic training clips: `gpjatk_foliage`, `occluders` (vendored), `noise`, `photo_depth` (one-off: depth map of the foliage photo) |
+| `eval/` | `dump_arms` (+ sbatch: masks of our arms), `box_metrics` (LaSOT one-pass AUC from masks), `recognition` (YOLO11m on GT-motion masked composites), `recog_vs_N`, `report` (the table + paired window bootstrap) |
+| `tools/` | `remote_smoke` (cluster doctor: paths, GPU, one training step; run before long jobs), `timing`, `briefing_figures`, `cvat_io` (CVAT round trip for hand labels; the second annotator) |
+| `tests/` | pytest suite; `parity_snapshot.py` = refactor guard (bit-exact before/after diff of the live paths) |
+
+Arms (mask dirs under `results/benchmark/rr/masks/`): `b0-c2`, `t1-c2` (baselines, cluster rerun), `trk` (SAM2 +
+tracker prompts), `trkbox` (the tracker box itself), `adapter-pf` / `adapter-s1` / `adapter-s2` (seeds 0/1/2),
+`<arm>-noC` (composite removed at inference).
+
+## Running
+
+All commands from the repo root, `PYTHONPATH=.`; `$PY` = the benchmark env (see Environment).
 
 ```bash
-python3 -m venv .venv
-.venv/bin/activate
-pip install -r requirements.txt
+$PY -m pytest benchmark/nfo_vos/tests -q                               # 29 tests, GPU ones skip without CUDA
+$PY -m benchmark.nfo_vos.tools.remote_smoke                            # before any cluster job
+$PY -m benchmark.nfo_vos.adapter.fusion_adapter token 1000 0           # train (mode, steps, seed); cluster: adapter/fusion_adapter.sbatch
+$PY -m benchmark.nfo_vos.eval.dump_arms adapter-pf 0                   # masks of one arm, one window; cluster: eval/dump_arms.sbatch
+$PY -m benchmark.nfo_vos.eval.box_metrics score b0-c2 t1-c2 trk adapter-pf ...   # -> results/benchmark/rr/downstream/box_gt.csv
+$PY -m benchmark.nfo_vos.eval.recognition ...                          # see its docstring; -> recog_N7_*.csv
+$PY -m benchmark.nfo_vos.eval.report                                   # the table
+TC_BATCH=1 $PY -m benchmark.nfo_vos.tools.timing ours|b0|t1
 ```
 
-Also install PyTorch separately for your platform (project was built against PyTorch 1.8.1) — see
-https://pytorch.org/.
+Refactor guard: `parity_snapshot save before.pkl`, change code, `save after.pkl`, `diff before.pkl after.pkl` must
+print IDENTICAL (deterministic on one machine; measured 2026-10-21).
 
-There is no test suite, linter, or CI config in this repo.
+## Data manifest
 
-## Running training / testing
+Nothing large is in git. The cluster copy is the source of truth for everything marked *cluster*.
+
+| path | what | in git? | how to get it |
+|---|---|---|---|
+| `results/benchmark/rr/trials.json` | the 61 windows | yes | `python -m benchmark.nfo_vos.trials` regenerates |
+| `data/nfo_processed/seq*_gt/*_handmask_raw.png`, `*_handAv.png` | human visible-part labels (seq1 20 brush masks, seq2–4 23 frames) | yes (force-added: `data/` is ignored, so add new labels with `git add -f`) | irreplaceable |
+| `data/nfo_final/nfo_final/seq{1..4}/*.jpg` | native 800×600 NFO frames (2.0 GB) | no | cluster |
+| `data/nfo_processed/seq*_gt/` (rest) | `groundtruth.txt` (GT boxes), SAM2 pseudo-masks | no | cluster; masks regenerable with `gen_data/nfo_pseudo_masks` |
+| `$NFO_GPJATK` (default `../master_thesis/GPJATK/Sequences`) | GPJATK person sequences, training (7.9 GB) | no | cluster |
+| `data/CanaTree100/images/` | training backgrounds | no | cluster (public dataset) |
+| `images/veronica111886-yakushima-2336735.jpg` | foliage template photo (Pixabay) | no | cluster |
+| `data/synthetic/foliage_depth/veronica_disp.npy` | depth of that photo | no | cluster, or `synth/photo_depth.py` |
+| `../samurai` @76ba195 + `sam2/checkpoints/sam2.1_hiera_base_plus.pt` | SAMURAI's sam2 fork + checkpoint | no | `requirements-benchmark.txt` header; cluster checkpoint `/storage/user/akid/checkpoints/` |
+| `data/yolo11m.pt` | recognition detector | no | ultralytics downloads it on first use (assumed; or copy from cluster) |
+| `results/benchmark/rr/layers_fusion_adapter/token_seed{0,1,2}/fusion_it200.pt` | the three adapter checkpoints | no | cluster (seed 2 trained there); poster tarball |
+| `results/benchmark/rr/masks/<arm>/`, `downstream/*.csv`, `images/benchmark/downstream/` | masks, metric CSVs, figures | no | regenerable (commands above); poster tarball |
+
+## Environment
+
+- Laptop: `../samurai/.venv` (Python 3.12, torch 2.13 cu130); recognition (`ultralytics`) also runs there once
+  installed from `requirements-benchmark.txt`.
+- Cluster (SLURM): `/home/wiss/akid/miniconda3/envs/comp_vis/bin/python3`, logs in `/storage/slurm/akid/logs/`.
+  sbatch scripts use `--gres=gpu:1 --exclude=node1,node2,node6,node7,node22` (Pascal, 12 GB Titan, Blackwell sm 12.0
+  without kernels) and set `AMP=fp16` automatically on pre-Ampere GPUs; 16 GB is enough.
+- **Environment drift**: the same checkpoint gives masks differing by ~5.5% of pixels between laptop and cluster.
+  Compare arms only within one environment and score recognition for all arms in one run.
+
+## Rules for this benchmark
+
+- seq2–4 is the single held-out test. Select checkpoints and tune on seq1 / synthetic data only.
+- Synthetic val J is a sanity check, not a selection metric (it ranked the losses opposite to real data).
+- Report means over 3 seeds and paired window-bootstrap CIs (`eval/report.py`).
+
+## U-Net code (legacy, unchanged)
 
 ```bash
-python3 -m train_main.py --config <config_name> --save-dir <dir>
-python3 -m test_main.py --config <config_name> --load-dir <dir_with_stored_model>
+python3 -m train_main --config <config_name> --save-dir <dir>
+python3 -m test_main --config <config_name> --load-dir <dir>
 ```
 
-`<config_name>` refers to a variable name inside `config/train_config.py` / `config/test_config.py` that is
-resolved with `eval()` (see Config system below). If `--config` is omitted, the base config is used, which
-has most fields set to `None` and will fail at runtime unless filled in.
-
-## Generating data
-
-Three synthetic datasets can be generated via `gen_data/gen_noise_data`, `gen_data/gen_mnist_data`, and
-`gen_data/gen_kth_data`. Each has a `*_config.py` to edit and a `main.py` to run. See README.md for what
-each dataset is designed to test (temporal-only cues, spatio-temporal cues under occlusion, and real
-person-detection footage from the KTH action dataset, respectively).
-
-## Architecture
-
-**Config system** (`config/config.py`, `config/train_config.py`, `config/test_config.py`): configs are
-`AbstractConfig` instances built from a dict, holding a mutable module-level `config` singleton. Named
-configs are defined as plain dicts/objects in the same file and picked up via `set_cfg(name)`, which does
-`eval(name)` against the module namespace — so `--config` values must correspond to real Python identifiers
-defined in `train_config.py`/`test_config.py`. Training persists the resolved config with `dill` next to the
-checkpoint (`train_cfg.pkl`); `test_main.py` loads that pickle first, then applies `--config` overrides on
-top, so a test config only needs to override what differs from training.
-
-**Datasets** (`dataset/`): `AbstractDataSet` (in `abstract_dataset.py`) walks a root directory for
-subfolders ending in `_gt`, and inside each expects per-frame files tagged `_or` (original), `_gauss` /
-`_circle` (heatmap variants), and a `groundtruth.txt` of bounding boxes. Concrete subclasses
-(`KthDataSet`, `MnistDataSet`, `TestingDataSet`) only need to implement `_construct_ds_entries`, which
-builds `DatasetEntry` tuples and an `idx_mapping` (a dataset may contain sequence boundaries that must be
-excluded from indexing, e.g. edges of a video root). `__getitem__` reads `seq_length` frames centered on
-the target index (`margin = seq_length // 2`, must be odd), stacks them as channels, and passes them through
-a `Transform` pipeline (`utils/transform_utils.py`, composed via `chain(...)`) before batching.
-`config.hm_filter` (a `HeatMap` enum value) selects gauss vs. circle heatmap channel at train/eval time.
-
-**Network** (`network/unet.py`, `network/unet_parts.py`): standard U-Net; `n_channels` is the sequence
-length (each frame is one input channel), `n_classes=1` (single heatmap output). Checkpoints are the raw
-`state_dict` saved via `torch.save(..., _use_new_zipfile_serialization=False)` for cross-version
-compatibility, loaded by `UNet.load_checkpoint`.
-
-**Evaluation** (`eval/`): `AbstractEval` thresholds/post-processes a predicted heatmap, extracts predicted
-center points (`extract_centers`, implemented by subclasses `MaxEval` / `ThresholdEval`), and matches them
-against ground-truth bounding boxes by squared distance (`max_dist_error`) to compute TP/FP/FN → F1, used
-by `test_main.py`.
-
-**Training loop** (`train_main.py`): standard loop with `EarlyStopping` (`early_stopping.py`) driving both
-early termination and checkpoint saving (only saved on improvement). `logistic_loss.py` provides the
-loss criterion referenced from configs.
-
-## Gotchas
-
-- `set_cfg`/`load_cfg` use `eval()` and unpickle arbitrary config objects — only pass trusted config
-  names/files.
-- `seq_size` (sequence length) must be odd; `AbstractDataSet.__init__` asserts this.
-- Frame indexing in `__getitem__` uses `idx + i * nth_frame` directly against `self.entries`, so
-  `idx_mapping` in each dataset subclass must already exclude any index too close to a sequence boundary.
+`requirements.txt` (PyTorch 1.8.1 era). `<config_name>` is a variable in `config/train_config.py` /
+`config/test_config.py`, resolved with `eval()`; training pickles the resolved config (`train_cfg.pkl`) next to the
+checkpoint and `test_main.py` applies overrides on top. Datasets (`dataset/`) walk `*_gt` folders with `_or`, `_gauss` /
+`_circle` frames and `groundtruth.txt`; `seq_size` must be odd. Generators: `gen_data/gen_{noise,mnist,kth}_data`.
+`set_cfg` / `load_cfg` use `eval()` and unpickle: trusted inputs only.

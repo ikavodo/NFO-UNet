@@ -1,7 +1,7 @@
 """GPJATK walkers behind photographed foliage, with exact layers (plan: docs/layer_sam2/data/plan_gpjatk_layer_sam2.md).
 
 Per clip: GPJATK frame I^g_t (person in the lab scene, used as is), binary occluder matte from master_thesis
-src/occluders.occ_perlin (thresholded bicubic-upsampled random grid: leaf clumps with small gaps; `density` = covered
+synth/occluders.occ_perlin (thresholded bicubic-upsampled random grid: leaf clumps with small gaps; `density` = covered
 fraction, exact up to quantisation), softened to a_t ∈ [0, 1] by a Gaussian blur, and filled with grayscale foliage
 O cropped from the template photo (rows 0 … 0.6·H, 16:9, resized to 960×540). occ_perlin's own light-canvas
 intensities are NOT used: the matte only selects where the photo shows.
@@ -11,14 +11,12 @@ Foliage is static (movement 0) in this first version, as NFO's camera and tree a
 import glob
 import json
 import os
-import sys
 
 import cv2
 import numpy as np
 import torch
 
-MT = os.path.abspath('../master_thesis')
-GP = f'{MT}/GPJATK/Sequences'
+GP = os.environ.get('NFO_GPJATK', '../master_thesis/GPJATK/Sequences')    # GPJATK person sequences (not in git)
 TEMPLATE = 'images/veronica111886-yakushima-2336735.jpg'
 OUT = 'data/synthetic/gpjatk_foliage'
 H, W = 540, 960
@@ -28,9 +26,7 @@ WALK_REL = 0.5    # deviation: the testbed's absolute 0.12 (em_severe_occlusion_
 
 
 def occ_perlin(*a, **k):
-    if MT not in sys.path:
-        sys.path.insert(0, MT)
-    from src.occluders import occ_perlin as f        # master_thesis src/occluders.py:314
+    from benchmark.nfo_vos.synth.occluders import occ_perlin as f
     return f(*a, **k)
 
 
@@ -241,9 +237,7 @@ def make_layered_clip(seq, cam, rho, seed, mode, out, n=40, K=3, clump=24, blur=
     else:
         raise ValueError(mode)
     if twigs:
-        if MT not in sys.path:
-            sys.path.insert(0, MT)
-        from src.occluders import occ_branch
+        from benchmark.nfo_vos.synth.occluders import occ_branch
         _, ob = occ_branch(torch.zeros(1, 1, H, W), num_branches=int(twigs), thickness=2, movement_x=0,
                            light_movement_x=0, light_movement_y=0, seed=int(seed) + 7, return_mask=True)
         tw = ob[0].numpy().astype(bool)

@@ -1,5 +1,8 @@
 # NFO failure log
 
+> **Code paths (2026-10-21 cleanup):** the code moved to `benchmark/nfo_vos/{adapter,baselines,eval,synth,tools}/` (map: `CLAUDE.md`). Script paths cited below that no longer exist (`layers/…`, `downstream/…`, `run_t4.py`, `factorised_*.py`, …) are at git tag `archive/pre-cleanup-2026-10-21`.
+
+
 One line per dead end: what was tried, why it failed.
 
 - 2026-10-05 · Occluder layer = Otsu-dark pixels of the person-free median background, to score pseudo-masks by |M ∧ O|/|M|: O covers 58–70% of the frame (dark clothing, shade, ground also dark), main masks already overlap it at median 0.43–0.95 → no separation. Use background agreement |I−B|<τ instead (`check_occluder_overlap.py`).

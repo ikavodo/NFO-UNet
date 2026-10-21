@@ -1,0 +1,24 @@
+# NFO VOS benchmark + per-frame adapter (benchmark/nfo_vos). Separate from requirements.txt (2021 U-Net stack).
+# Versions = the laptop env that produced the reported numbers (../samurai/.venv, Python 3.12, 2026-10-21).
+# The cluster runs the same code in the comp_vis conda env (torch cu126): masks differ by a few % of pixels across
+# environments, so compare arms only within one environment (CLAUDE.md, "Environment drift").
+#
+#   python -m venv .venv && . .venv/bin/activate
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126   # match the machine's CUDA
+#   pip install -r requirements-benchmark.txt
+#   git clone https://github.com/yangchris11/samurai ../samurai && (cd ../samurai && git checkout 76ba195) \
+#     && pip install -e ../samurai/sam2 && (cd ../samurai/sam2/checkpoints && ./download_ckpts.sh)
+# T1 (SAMURAI) and the adapter use that sam2 fork. B0 (SAM2.1 video) needs the official sam2 1.1.0 in a SEPARATE env
+# (pip install sam2==1.1.0); baselines/run_sam2_video.sbatch switches envs per method.
+#
+# torch 2.13.0, torchvision 0.28.0 (tested; any CUDA build)
+numpy==2.5.2
+scipy==1.18.1
+opencv-python==5.0.0.93
+hydra-core==1.3.6
+iopath==0.1.10
+matplotlib==3.11.1
+tqdm==4.70.1
+pytest==9.1.1
+ultralytics==8.4.89          # eval/recognition.py (YOLO11m; weights auto-download to data/yolo11m.pt)
+# optional, synth/photo_depth.py only (regenerates data/synthetic/foliage_depth/veronica_disp.npy): transformers

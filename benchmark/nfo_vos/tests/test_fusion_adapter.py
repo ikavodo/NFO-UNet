@@ -6,7 +6,7 @@ import torch
 
 
 def test_occlusion_sampler_ranges():
-    from benchmark.nfo_vos.layers.fusion_data import sample_occlusion
+    from benchmark.nfo_vos.adapter.fusion_data import sample_occlusion
     from benchmark.nfo_vos.synth import noise
     rng = np.random.default_rng(0)
     draws = [sample_occlusion(rng) for _ in range(300)]
@@ -18,11 +18,11 @@ def test_occlusion_sampler_ranges():
 
 
 def test_clip_raw_and_build():
-    from benchmark.nfo_vos import run_t4 as R
-    from benchmark.nfo_vos.layers.fusion_data import build, clip_raw, specs
+    from benchmark.nfo_vos.adapter.fusion_adapter import image_predictor
+    from benchmark.nfo_vos.adapter.fusion_data import build, clip_raw, specs
     raw = clip_raw(specs('val')[0], np.random.default_rng(0))
     assert raw['X'].dtype == np.uint8 and raw['X'].ndim == 3 and {'nh', 'tau', 'z0'} <= set(raw['occ'])
-    f, meta = build(R.image_predictor(), raw, max_targets=8, rng=np.random.default_rng(0))
+    f, meta = build(image_predictor(), raw, max_targets=8, rng=np.random.default_rng(0))
     k = len(meta['ts'])
     assert 1 <= k <= 8 and min(meta['ts']) >= max(6, raw['occ']['nh'])
     assert f['X16'].shape == (k, 256, 64, 64) and f['C4'].shape == (k, 32, 256, 256) and f['B8'].shape == (k, 64, 128, 128)
@@ -31,8 +31,8 @@ def test_clip_raw_and_build():
 
 
 def test_rescale_clip_shrinks_person_and_keeps_labels():
-    from benchmark.nfo_vos.layers import dataset as D
-    from benchmark.nfo_vos.layers.fusion_data import rescale_clip, specs
+    from benchmark.nfo_vos.adapter import dataset as D
+    from benchmark.nfo_vos.adapter.fusion_data import rescale_clip, specs
     d = D.make_clip(*specs('val')[0])
     t = 20
     h0 = d['boxes'][t, 2]
@@ -58,7 +58,7 @@ def _fake_feats(n, dev):
 
 
 def test_residual_shapes_and_zero_init():
-    from benchmark.nfo_vos.layers.fusion_adapter import Fusion
+    from benchmark.nfo_vos.adapter.fusion_adapter import Fusion, image_predictor
     f = _fake_feats(2, 'cpu')
     net = Fusion(token=False)
     out = net(f)
@@ -68,9 +68,8 @@ def test_residual_shapes_and_zero_init():
 
 
 def test_box_mode_equals_box_only_sam2_at_init():
-    from benchmark.nfo_vos import run_t4 as R
-    from benchmark.nfo_vos.layers.fusion_adapter import Fusion, decode
-    sam = R.image_predictor().model.eval()
+    from benchmark.nfo_vos.adapter.fusion_adapter import Fusion, decode, image_predictor
+    sam = image_predictor().model.eval()
     f = _fake_feats(2, 'cuda')
     net = Fusion(token=False).cuda()
     with torch.no_grad():
@@ -80,9 +79,8 @@ def test_box_mode_equals_box_only_sam2_at_init():
 
 
 def test_zero_convs_receive_gradient():
-    from benchmark.nfo_vos import run_t4 as R
-    from benchmark.nfo_vos.layers.fusion_adapter import Fusion, decode
-    sam = R.image_predictor().model.eval()
+    from benchmark.nfo_vos.adapter.fusion_adapter import Fusion, decode, image_predictor
+    sam = image_predictor().model.eval()
     for p in sam.parameters():
         p.requires_grad_(False)
     f = _fake_feats(2, 'cuda')
@@ -93,9 +91,8 @@ def test_zero_convs_receive_gradient():
 
 
 def test_token_init_equals_point_at_evidence_centroid():
-    from benchmark.nfo_vos import run_t4 as R
-    from benchmark.nfo_vos.layers.fusion_adapter import Fusion, decode
-    sam = R.image_predictor().model.eval()
+    from benchmark.nfo_vos.adapter.fusion_adapter import Fusion, decode, image_predictor
+    sam = image_predictor().model.eval()
     f = _fake_feats(2, 'cuda')
     f['a'] = torch.zeros(2, 256, 256, device='cuda'); f['a'][:, 100:140, 60:90] = 1     # evidence blob
     net = Fusion(token=True).cuda(); net.init_fallback(sam)
@@ -111,9 +108,8 @@ def test_token_init_equals_point_at_evidence_centroid():
 
 
 def test_token_falls_back_without_evidence():
-    from benchmark.nfo_vos import run_t4 as R
-    from benchmark.nfo_vos.layers.fusion_adapter import Fusion
-    sam = R.image_predictor().model.eval()
+    from benchmark.nfo_vos.adapter.fusion_adapter import Fusion, image_predictor
+    sam = image_predictor().model.eval()
     f = _fake_feats(2, 'cuda'); f['a'] = torch.zeros(2, 256, 256, device='cuda')
     net = Fusion(token=True).cuda(); net.init_fallback(sam)
     with torch.no_grad():
@@ -123,9 +119,8 @@ def test_token_falls_back_without_evidence():
 
 
 def test_token_anchored_at_tracker_point_at_init():
-    from benchmark.nfo_vos import run_t4 as R
-    from benchmark.nfo_vos.layers.fusion_adapter import Fusion
-    sam = R.image_predictor().model.eval()
+    from benchmark.nfo_vos.adapter.fusion_adapter import Fusion, image_predictor
+    sam = image_predictor().model.eval()
     f = _fake_feats(2, 'cuda'); f['trk'] = torch.tensor([[300.0, 480.0], [700.0, 200.0]], device='cuda')
     f['box_trk'] = torch.cat([f['trk'] - 60, f['trk'] + 60], 1)
     net = Fusion(token=True).cuda(); net.init_fallback(sam)

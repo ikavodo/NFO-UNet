@@ -46,8 +46,35 @@ MIN_WARMUP = 20
 KAPPA_FALLBACK = 0.394           # median fill ratio when a segment has no confirmed-clear frame
 
 
+NATIVE = 'data/nfo_final/nfo_final'      # native 800x600 grayscale frames <seq>/<idx:05d>.jpg
+
+
 def seq_dir(seq):
     return f'data/nfo_processed/{seq}_gt'
+
+
+def native(idx, seq=SEQ):
+    return cv2.imread(f'{NATIVE}/{seq}/{idx:05d}.jpg', 0)
+
+
+def hand_label(seq, k):
+    """Human visible-part label of frame k: (person bool [H, W], keep bool [H, W] or None), or None if unlabelled.
+    seq1: brush masks <k>_handmask_raw.png (> 0 = person, no void; checkpoint selection only).
+    seq2-4: <k>_handAv.png (1 = person, 2 = void, ignored in scoring; the single test set)."""
+    if seq == 'seq1':
+        p = f'{seq_dir(seq)}/{k:05d}_handmask_raw.png'
+        return None if not os.path.exists(p) else (cv2.imread(p, 0) > 0, None)
+    p = f'{seq_dir(seq)}/{k:05d}_handAv.png'
+    if not os.path.exists(p):
+        return None
+    v = cv2.imread(p, 0)
+    return v == 1, v != 2
+
+
+def hand_frames(seq):
+    """Sorted frame indices of seq that carry a hand label (hand_label is not None)."""
+    tag = '_handmask_raw.png' if seq == 'seq1' else '_handAv.png'
+    return sorted(int(f[:5]) for f in os.listdir(seq_dir(seq)) if f.endswith(tag))
 
 
 def to_native(x224, y224):

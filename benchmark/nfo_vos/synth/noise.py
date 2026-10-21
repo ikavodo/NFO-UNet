@@ -107,13 +107,13 @@ def residual_stats(F):
 
 def calibrate(max_frames=150):
     """σ_n, σ_u, lag-1 correlation, global brightness spread per NFO sequence (longest warm-up)."""
-    from benchmark.nfo_vos import velocity as Vel
+    from benchmark.nfo_vos import trials as TR
     tr = json.load(open('results/benchmark/rr/trials.json'))
     out = {}
     for seq in ('seq1', 'seq2', 'seq3', 'seq4'):
         w0, w1 = max({tuple(t['warmup']) for t in tr if t['seq'] == seq}, key=lambda w: w[1] - w[0])
         idx = range(w0, min(w1, w0 + max_frames - 1) + 1)
-        F = np.stack([Vel.native(i, seq) for i in idx]).astype(np.float32)
+        F = np.stack([TR.native(i, seq) for i in idx]).astype(np.float32)
         out[seq] = dict(frames=[idx[0], idx[-1]], **residual_stats(F))
         print(seq, {k: (round(v, 3) if isinstance(v, float) else v) for k, v in out[seq].items() if k != 'var_by_g2'}, flush=True)
     return out
@@ -122,7 +122,7 @@ def calibrate(max_frames=150):
 def calibrate_flutter(amps=(0.25, 0.5, 1.0, 1.5, 2.0), n_clips=6, n=40):
     """Synthetic warm-up stacks (B only, occluder ≡ B) with flutter at each amp, white σ 3, JPEG 85, no rigid sway:
     residual std_all / lag-1, to match NFO seq2 (std_all 11.96, lag-1 0.868; noise_calibration.json)."""
-    from benchmark.nfo_vos.layers import dataset as D
+    from benchmark.nfo_vos.adapter import dataset as D
     from benchmark.nfo_vos.synth.gpjatk_foliage import foliage_pair
     res = {}
     for amp in amps:
@@ -141,7 +141,7 @@ def montage(path='images/benchmark/gpjatk_foliage/noise.png', n_clips=3, crop=20
     """Rows: val-subject clips at the middle frame, crop around the person. Columns: clean | noisy at the low end of
     the σ / sway range | noisy at the high end | plan's original σ = 12 (no sway) | |high − clean| × 4. Last row: NFO warm-up frame crops for reference."""
     from benchmark.nfo_vos.synth.gpjatk_foliage import make_layered_clip
-    from benchmark.nfo_vos import velocity as Vel
+    from benchmark.nfo_vos import trials as TR
     lo = dict(sigma=SIGMA[0], sway_amp=0.0, sway_period=20., sway_phase=0., sway_dir=0., jpeg=JPEG_Q[1], seed=1)
     hi = dict(sigma=SIGMA[1], sway_amp=SWAY_MAX, sway_period=8., sway_phase=0., sway_dir=0.7, jpeg=JPEG_Q[0], seed=2)
     p12 = dict(lo, sigma=12.0, jpeg=JPEG_Q[0], seed=3)
@@ -166,7 +166,7 @@ def montage(path='images/benchmark/gpjatk_foliage/noise.png', n_clips=3, crop=20
     tiles = []
     for seq in ('seq1', 'seq2'):
         w0, w1 = max({tuple(t['warmup']) for t in tr if t['seq'] == seq}, key=lambda w: w[1] - w[0])
-        F = np.stack([Vel.native(i, seq) for i in range(w0, min(w1, w0 + 60))]).astype(np.float32)
+        F = np.stack([TR.native(i, seq) for i in range(w0, min(w1, w0 + 60))]).astype(np.float32)
         f, med = F[len(F) // 2], np.median(F, 0)
         y0, x0 = 300 - crop // 2, 400 - crop // 2
         a, b = f[y0:y0 + crop, x0:x0 + crop].astype(np.uint8), np.clip(4 * np.abs(f - med)[y0:y0 + crop, x0:x0 + crop], 0, 255).astype(np.uint8)
