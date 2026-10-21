@@ -6,13 +6,13 @@ tracker-aligned composite and the empty scene on the three SAM2 feature levels t
   F̂_t^ℓ = F_t^ℓ + R^ℓ, the final 1×1 conv of R^ℓ zero-initialised (ControlNet zero conv; Zhang et al., ICCV 2023,
   arXiv 2302.05543; replaces a scalar α, under which R received no gradient until α moved)
   F̂^16 is the decoder's image embedding; F̂^8, F̂^4 its high-res features (mask_decoder.py:205, 224-225)
-  sparse prompt: token mode (default; v3.2) SAM2 prompt embedding of the kernel tracker's box (t0 size) + its point, the
+  sparse prompt (v3.2): SAM2 prompt embedding of the kernel tracker's box (t0 size) + its point, the
   point token corrected by w·zero-init MLP(composite prototype); at step 0 = SAM2 with the GT-free tracker box + point. Without a track (f['trk'] absent): w·[point embedding at the a-weighted composite centroid + zero-init
   MLP(Σ a F_C^16 / Σ a)] + (1 − w)·learned fallback token, w = 1 − exp(−Σa / κ), κ learned (init 500 cells of 256²):
-  a point prompt at step 0 when there is evidence, a learned prompt when there is none (PerSAM-style, arXiv 2305.03048); box mode (ablation) the tracker box, exactly box-only SAM2 at init.
+  a point prompt at step 0 when there is evidence, a learned prompt when there is none (PerSAM-style, arXiv 2305.03048).
 Frozen SAM2.1 b+; loss 20·focal + Dice vs V on the decoder's 256² logits.
 
-    PYTHONPATH=. ../samurai/.venv/bin/python -m benchmark.nfo_vos.adapter.fusion_adapter [token|box] [steps] [seed]
+    PYTHONPATH=. ../samurai/.venv/bin/python -m benchmark.nfo_vos.adapter.fusion_adapter [steps] [seed]
 """
 import json
 import os
@@ -27,7 +27,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.ops import sigmoid_focal_loss
 
-from benchmark.nfo_vos.adapter.fusion_data import Clips, build, encode
+from benchmark.nfo_vos.adapter.fusion_data import Clips, build
 
 OUT = 'results/benchmark/rr/layers_fusion_adapter'
 SAM2_CKPT = os.path.abspath(os.environ.get('NFO_SAM2_CKPT', '../samurai/sam2/checkpoints/sam2.1_hiera_base_plus.pt'))
@@ -56,20 +56,18 @@ def block(cin, cout):
 
 
 class Fusion(nn.Module):
-    def __init__(self, token=True, w=64):
+    def __init__(self, w=64):
         super().__init__()
-        self.token = token
         self.P = nn.ModuleDict({l: nn.Conv2d(CH[l], D_[l], 1) for l in CH})
         zin = {l: 5 * D_[l] + 1 for l in CH}
         self.blk = nn.ModuleDict({'16': block(zin['16'], w), '8': block(zin['8'] + w, w), '4': block(zin['4'] + w, w)})
         self.out = nn.ModuleDict({l: nn.Conv2d(w, CH[l], 1) for l in CH})
         for l in CH:
             nn.init.zeros_(self.out[l].weight); nn.init.zeros_(self.out[l].bias)
-        if token:
-            self.tok = nn.Sequential(nn.Linear(256, 256), nn.GELU(), nn.Linear(256, 256))
-            nn.init.zeros_(self.tok[2].weight); nn.init.zeros_(self.tok[2].bias)
-            self.fallback = nn.Parameter(torch.zeros(2, 256))      # set from SAM2's centre-point embedding (init_fallback)
-            self.log_kappa = nn.Parameter(torch.tensor(float(np.log(500.0))))
+        self.tok = nn.Sequential(nn.Linear(256, 256), nn.GELU(), nn.Linear(256, 256))
+        nn.init.zeros_(self.tok[2].weight); nn.init.zeros_(self.tok[2].bias)
+        self.fallback = nn.Parameter(torch.zeros(2, 256))      # set from SAM2's centre-point embedding (init_fallback)
+        self.log_kappa = nn.Parameter(torch.tensor(float(np.log(500.0))))
 
     def z(self, f, l):
         pt, pc, pb = self.P[l](f[f'X{l}']), self.P[l](f[f'C{l}']), self.P[l](f[f'B{l}'])
@@ -84,7 +82,7 @@ class Fusion(nn.Module):
         o = dict(f)
         for l, x in (('16', x16), ('8', x8), ('4', x4)):
             o[f'X{l}'] = f[f'X{l}'] + self.out[l](x)
-        if self.token and sam is not None:
+        if sam is not None:
             # token = SAM2's own positive-point embedding at the evidence-weighted centroid of the composite (a working
             # prompt at step 0) + a zero-initialised learned correction from the composite's prototype feature
             a = f['a']
@@ -142,21 +140,16 @@ def decode(sam, f, token=None, point=False):
 
 
 ALPHA = 0.67   # focal class weight: a missed person pixel costs 2.07× an extra background pixel (old default 0.25: 0.38×)
-# LOSS env (2026-10-19, re-selection on valid labels): v34 = layer-aware recall-heavy (default); balanced = same W,
-# focal α 0.5, Tversky FN 0.5 / FP 0.5; simple = balanced without the layer weights W
-LOSS = os.environ.get('LOSS', 'v34')
-LOSS_CFG = {'v34': dict(alpha=0.67, a_fp=0.3, b_fn=0.7, use_w=True), 'balanced': dict(alpha=0.5, a_fp=0.5, b_fn=0.5, use_w=True),
-            'simple': dict(alpha=0.5, a_fp=0.5, b_fn=0.5, use_w=False)}[LOSS]
 
 
-def loss_fn(low, V, W=None, a_fp=0.3, b_fn=0.7, gamma=0.75, alpha=ALPHA, use_w=True):
+def loss_fn(low, V, W=None, a_fp=0.3, b_fn=0.7, gamma=0.75, alpha=ALPHA):
     """v3.4 (2026-10-16): layer-aware, recall-oriented. Per-pixel weights W (fusion_data.loss_weights: occluded person
     near visible fragments ignored, far occluded person 0.3, elsewhere 1) on focal (α = ALPHA) and on the FP sum of a
     Focal Tversky term (Abraham & Khan, ISBI 2019, arXiv 1810.07842; FN 0.7, FP 0.3, γ 0.75).
     History: v3.2 focal α 0.25 + Dice was precision-biased (FN/FP cost 0.38); v3.3 α 0.67 + Tversky still lost recall
     on seq1 (R 0.76 → 0.67 by step 200): a global price cannot be generous behind foliage and strict on background."""
     V = V[:, None]
-    W = torch.ones_like(V) if (W is None or not use_w) else W[:, None]
+    W = torch.ones_like(V) if W is None else W[:, None]
     p = torch.sigmoid(low)
     tp, fp, fn = (p * V).sum((1, 2, 3)), (W * p * (1 - V)).sum((1, 2, 3)), ((1 - p) * V).sum((1, 2, 3))
     ft = (1 - (tp + 1) / (tp + a_fp * fp + b_fn * fn + 1)) ** gamma
@@ -210,7 +203,7 @@ def fmt(d, arms):
     return ' | '.join(f"{a} {d[a]['J']:.3f}/{d[a]['P']:.2f}/{d[a]['R']:.2f}" for a in arms if a in d)
 
 
-def main(mode='token', steps=1500, seed=0, eval_every=100, max_targets=32, n_val_fast=12, test=True):
+def main(steps=1500, seed=0, eval_every=100, max_targets=32, n_val_fast=12, test=True):
     """One clip per step (≤ max_targets frames), built with the test-time path (fusion_data.build). Fast validation every
     `eval_every` steps: 12 synthetic val clips + the seq1 brush SELECTION set, with the parity statistics and the
     composite-removal sanity arm; best checkpoint by seq1 adapter J. At the end: full synthetic val (30 clips) and ONE
@@ -222,9 +215,8 @@ def main(mode='token', steps=1500, seed=0, eval_every=100, max_targets=32, n_val
     sam = pred.model.eval()
     for p_ in sam.parameters():
         p_.requires_grad_(False)
-    net = Fusion(token=mode == 'token').cuda()
-    if net.token:
-        net.init_fallback(sam)
+    net = Fusion().cuda()
+    net.init_fallback(sam)
     n_par = sum(p_.numel() for p_ in net.parameters())
     opt = torch.optim.AdamW(net.parameters(), lr=3e-4, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, steps)
@@ -234,9 +226,9 @@ def main(mode='token', steps=1500, seed=0, eval_every=100, max_targets=32, n_val
     val_all = list(torch.utils.data.DataLoader(Clips('val'), batch_size=None, num_workers=6, collate_fn=_ident))
     val = val_all[:n_val_fast]
     sel = fusion_nfo.items('select', pred)
-    out = f'{OUT}/{mode}_seed{seed}' + ('' if LOSS == 'v34' else f'_{LOSS}')
+    out = f'{OUT}/token_seed{seed}'
     os.makedirs(out, exist_ok=True)
-    print(f'mode {mode}; params {n_par}; val clips {len(val)} fast / {len(val_all)} final; seq1 select frames {len(sel)}', flush=True)
+    print(f'params {n_par}; val clips {len(val)} fast / {len(val_all)} final; seq1 select frames {len(sel)}', flush=True)
     rng, log, best, t0 = np.random.default_rng(seed), [], (-1.0, None), time.time()
 
     def validate(it, rows_inp=None):
@@ -256,7 +248,7 @@ def main(mode='token', steps=1500, seed=0, eval_every=100, max_targets=32, n_val
         f, _ = build(pred, next(dl), max_targets=max_targets, rng=rng)
         with torch.autocast('cuda', dtype=AMP):
             o = net(f, sam=sam)
-            loss = loss_fn(decode(sam, o, token=o.get('token')).float(), f['V'], f.get('W'), **LOSS_CFG)
+            loss = loss_fn(decode(sam, o, token=o.get('token')).float(), f['V'], f.get('W'))
         opt.zero_grad(set_to_none=True); scaler.scale(loss).backward(); scaler.step(opt); scaler.update(); sched.step()
         if it % 25 == 0:
             print(f'it {it} loss {loss.item():.4f} {(time.time() - t0) / it:.2f} s/it', flush=True)
@@ -283,5 +275,4 @@ def main(mode='token', steps=1500, seed=0, eval_every=100, max_targets=32, n_val
           + f" | ΔJ adapter − trk-box {d.mean():+.3f} [{np.percentile(bs, 2.5):+.3f}, {np.percentile(bs, 97.5):+.3f}]", flush=True)
 
 if __name__ == '__main__':
-    a = sys.argv[1:]
-    main(a[0] if a else 'token', *(int(x) for x in a[1:]))
+    main(*(int(x) for x in sys.argv[1:]))

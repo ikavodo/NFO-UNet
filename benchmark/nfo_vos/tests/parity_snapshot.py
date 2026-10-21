@@ -37,7 +37,7 @@ def save(path):
     from benchmark.nfo_vos.adapter.inference import fast_masks
     snap = {}
     pred = image_predictor()
-    net = Fusion(token=True).cuda(); net.init_fallback(pred.model); net.load_state_dict(torch.load(CKPT)); net.eval()
+    net = Fusion().cuda(); net.init_fallback(pred.model); net.load_state_dict(torch.load(CKPT)); net.eval()
     trials = json.load(open('results/benchmark/rr/trials.json'))
     for i in (0, 25, 50):
         snap[f'adapter/{i}'] = fast_masks(pred, net, trials[i])[0]

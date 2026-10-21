@@ -1,6 +1,5 @@
 """Round-robin schedule (spec §3, rev. 5): every frame used at most once; cover/backup twins."""
 import numpy as np
-import pytest
 
 from benchmark.nfo_vos import trials
 

@@ -8,7 +8,6 @@ from typing import Literal
 import cv2
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 
 def _interp_to_cv2(interpolation: Literal['cubic', 'lanczos', 'nearest']) -> int:

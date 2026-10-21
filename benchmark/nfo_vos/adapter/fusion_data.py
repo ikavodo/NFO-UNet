@@ -75,14 +75,6 @@ def u8(x):
     return np.clip(x, 0, 255).astype(np.uint8)
 
 
-def to224(img):
-    """Native frame → the 224 padded square the blob tracker runs on (NFO: BORDER_REPLICATE, then resize)."""
-    H, W = img.shape
-    s = max(H, W)
-    sq = cv2.copyMakeBorder(img, (s - H) // 2, s - H - (s - H) // 2, (s - W) // 2, s - W - (s - W) // 2, cv2.BORDER_REPLICATE)
-    return cv2.resize(sq, (224, 224), interpolation=cv2.INTER_AREA)
-
-
 CANATREE = sorted(__import__('glob').glob('data/CanaTree100/images/*.png'))
 BG_SPLIT = {'train': [p for i, p in enumerate(CANATREE) if i % 5], 'val': [p for i, p in enumerate(CANATREE) if i % 5 == 0]}
 

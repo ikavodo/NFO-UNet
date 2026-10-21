@@ -60,18 +60,18 @@ def _fake_feats(n, dev):
 def test_residual_shapes_and_zero_init():
     from benchmark.nfo_vos.adapter.fusion_adapter import Fusion, image_predictor
     f = _fake_feats(2, 'cpu')
-    net = Fusion(token=False)
+    net = Fusion()
     out = net(f)
     for l, c, s in (('16', 256, 64), ('8', 64, 128), ('4', 32, 256)):
         assert out[f'X{l}'].shape == (2, c, s, s)
         assert torch.equal(out[f'X{l}'], f[f'X{l}'])          # zero conv at init: features unchanged
 
 
-def test_box_mode_equals_box_only_sam2_at_init():
+def test_box_decode_equals_box_only_sam2_at_init():
     from benchmark.nfo_vos.adapter.fusion_adapter import Fusion, decode, image_predictor
     sam = image_predictor().model.eval()
     f = _fake_feats(2, 'cuda')
-    net = Fusion(token=False).cuda()
+    net = Fusion().cuda()
     with torch.no_grad():
         ref = decode(sam, f, token=None)
         got = decode(sam, net(f), token=None)
@@ -84,7 +84,7 @@ def test_zero_convs_receive_gradient():
     for p in sam.parameters():
         p.requires_grad_(False)
     f = _fake_feats(2, 'cuda')
-    net = Fusion(token=True).cuda()
+    net = Fusion().cuda()
     o = net(f, sam=sam)
     decode(sam, o, token=o['token']).float().mean().backward()
     assert all(net.out[l].weight.grad is not None and net.out[l].weight.grad.abs().sum() > 0 for l in ('16', '8', '4'))
@@ -95,7 +95,7 @@ def test_token_init_equals_point_at_evidence_centroid():
     sam = image_predictor().model.eval()
     f = _fake_feats(2, 'cuda')
     f['a'] = torch.zeros(2, 256, 256, device='cuda'); f['a'][:, 100:140, 60:90] = 1     # evidence blob
-    net = Fusion(token=True).cuda(); net.init_fallback(sam)
+    net = Fusion().cuda(); net.init_fallback(sam)
     with torch.no_grad():
         o = net(f, sam=sam)
         c = torch.tensor([[75 * 4.0, 120 * 4.0]] * 2, device='cuda')                       # blob centre, 1024 frame
@@ -111,7 +111,7 @@ def test_token_falls_back_without_evidence():
     from benchmark.nfo_vos.adapter.fusion_adapter import Fusion, image_predictor
     sam = image_predictor().model.eval()
     f = _fake_feats(2, 'cuda'); f['a'] = torch.zeros(2, 256, 256, device='cuda')
-    net = Fusion(token=True).cuda(); net.init_fallback(sam)
+    net = Fusion().cuda(); net.init_fallback(sam)
     with torch.no_grad():
         o = net(f, sam=sam)
     assert torch.allclose(o['token'], net.fallback[None].expand(2, -1, -1)), 'empty evidence must give the fallback token'
@@ -123,7 +123,7 @@ def test_token_anchored_at_tracker_point_at_init():
     sam = image_predictor().model.eval()
     f = _fake_feats(2, 'cuda'); f['trk'] = torch.tensor([[300.0, 480.0], [700.0, 200.0]], device='cuda')
     f['box_trk'] = torch.cat([f['trk'] - 60, f['trk'] + 60], 1)
-    net = Fusion(token=True).cuda(); net.init_fallback(sam)
+    net = Fusion().cuda(); net.init_fallback(sam)
     with torch.no_grad():
         o = net(f, sam=sam)
         pts = torch.cat([f['box_trk'].view(2, 2, 2), f['trk'][:, None]], 1)

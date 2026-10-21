@@ -18,7 +18,6 @@ import json
 import os
 import sys
 
-import cv2
 import numpy as np
 
 from benchmark.nfo_vos import trials as TR

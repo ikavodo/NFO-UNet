@@ -2,13 +2,9 @@
 Splits: 'test' = seq2–4 hand labels (handAv: 1 person, 2 void ignored), touched once at the end; 'select' = seq1 brush
 masks, used for checkpoint selection. Inputs exactly as at test time: composite of k-6..k-1 aligned by the x-only
 Theil–Sen fit of the kernel-f16 track (adapter/tracker.py), its evidence mass a, warm-up median bg.
-
-feature_diff_montage(): ‖F_t − F_C‖ and ‖F_t − F_B‖ per level on 4 NFO frames (is the encoded composite out of
-distribution?), saved to images/benchmark/gpjatk_foliage/fusion_nfo_featdiff.png.
 """
 import os
 
-import cv2
 import numpy as np
 import torch
 
@@ -21,9 +17,6 @@ from benchmark.nfo_vos.adapter.fusion_data import AMP, a256, u8
 from benchmark.nfo_vos.adapter.composite import composite_and_mass
 from gen_data.nfo_pseudo_masks.gen_nfo_pseudo_masks import gt_to_native
 from utils.stats_utils import theil_at
-
-IMG = 'images/benchmark/gpjatk_foliage/fusion_nfo_featdiff.png'
-
 
 def hand_windows(split):
     """[(seq, k, trial, j)]: each hand frame k of the split with the first admissible window holding it at local j ≥ 6
@@ -108,20 +101,3 @@ def evaluate(pred, net, its):
     return out
 
 
-@torch.no_grad()
-def feature_diff_montage(pred, its, n=4, path=IMG):
-    from benchmark.nfo_vos.adapter.fusion_data import encode
-    rows = []
-    for it in its[:: max(1, len(its) // n)][:n]:
-        f = encode(pred, [it])
-        panes = [cv2.cvtColor(it['X'][0], cv2.COLOR_GRAY2BGR), cv2.cvtColor(it['Ct'][0], cv2.COLOR_GRAY2BGR)]
-        for l in ('16', '8', '4'):
-            for ref in ('C', 'B'):
-                d = (f[f'X{l}'] - f[f'{ref}{l}']).norm(dim=1)[0].cpu().numpy()
-                d = cv2.resize(d / max(np.percentile(d, 99), 1e-6), (800, 600))
-                v = cv2.applyColorMap(np.clip(d * 255, 0, 255).astype(np.uint8), cv2.COLORMAP_JET)
-                cv2.putText(v, f'|F_t - F_{ref}| s{l}', (8, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-                panes.append(v)
-        cv2.putText(panes[0], it['cid'], (8, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-        rows.append(cv2.resize(np.hstack(panes), None, fx=0.2, fy=0.2))
-    cv2.imwrite(path, np.vstack(rows))

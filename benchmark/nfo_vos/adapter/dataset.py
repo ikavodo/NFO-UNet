@@ -11,15 +11,14 @@ Splits by subject: train p1–p20, val p21–p26, test p27–p32 (= gpjatk_folia
 """
 import os
 
-import cv2
 import numpy as np
 
 from benchmark.nfo_vos.synth import noise
-from benchmark.nfo_vos.synth.gpjatk_foliage import GP, HOLDOUT, W, H, make_layered_clip
+from benchmark.nfo_vos.synth.gpjatk_foliage import GP, HOLDOUT, make_layered_clip
 
 SPLITS = dict(train=range(1, 21), val=range(21, 27), test=range(27, 33))
 CAMS = ('c1', 'c2', 'c3', 'c4')
-N, N_HIST, N_WARM = 40, 7, 20
+N, N_WARM = 40, 20
 RHO = (0.35, 0.55)
 assert {f'p{i}' for i in SPLITS['test']} == HOLDOUT
 
@@ -53,24 +52,6 @@ def jitter(bx, sigma_a, rng):
     return j
 
 
-def sim(bi, bt):
-    """2×3 affine (pixel coords) mapping box bi = (cx, cy, h) onto box bt."""
-    s = bt[2] / bi[2]
-    return np.float32([[s, 0, bt[0] - s * bi[0]], [0, s, bt[1] - s * bi[1]]])
-
-
-def observable(S, V, bx, t):
-    acc = np.zeros(S[t].shape, bool)
-    for i in range(t - N_HIST + 1, t + 1):
-        acc |= cv2.warpAffine(V[i].astype(np.float32), sim(bx[i], bx[t]), (W, H), flags=cv2.INTER_LINEAR) >= 0.5
-    return S[t] & acc
-
-
-def valid_targets(bx, stride=3):
-    ok = ~np.isnan(bx).any(1)
-    return [t for t in range(N_HIST - 1, N, stride) if ok[t - N_HIST + 1:t + 1].all()]
-
-
 def make_clip(seq, cam, rho, seed, flutter=0.0, clump=24):
     """flutter > 0: add noise.flutter_fields of that per-axis RMS (px) to the rigid sway, warm-up included.
     clump: perlin clump size, or a tuple for a mixed-scale union. Defaults reproduce the step-3 'base' clips exactly
@@ -87,20 +68,5 @@ def make_clip(seq, cam, rho, seed, flutter=0.0, clump=24):
                 S=L['S'], V=L['V'], boxes=boxes_of(L['S']), noise=p, rng=rng)
 
 
-def check(n=10):
-    """Unit check (plan step 2): O_t ⊇ V_t and O_t ⊆ S_t on n val clips."""
-    fails, fr = 0, []
-    for spec in clip_specs('val')[::12][:n]:
-        d = make_clip(*spec)
-        for t in valid_targets(d['boxes']):
-            O = observable(d['S'], d['V'], d['boxes'], t)
-            fails += int((d['V'][t] & ~O).any() or (O & ~d['S'][t]).any())
-            fr.append((d['V'][t].sum() / d['S'][t].sum(), O.sum() / d['S'][t].sum()))
-        print(d['cid'], f"σ {d['noise']['sigma']:.1f} sway {d['noise']['sway_amp']:.2f} q{d['noise']['jpeg']}", flush=True)
-    fr = np.array(fr)
-    print(f'frames {len(fr)}, violations {fails}; mean |V|/|S| {fr[:, 0].mean():.3f}, mean |O|/|S| {fr[:, 1].mean():.3f}')
-
-
 if __name__ == '__main__':
     print('val clips:', len(clip_specs('val')), '| train clips:', len(clip_specs('train')))
-    check()

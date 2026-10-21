@@ -74,7 +74,7 @@ def main():
          'box AUC': per_window(box, 'auc'), 'recog conf': per_window(rec, 'conf')}
     for name, sel in GROUPS:
         print(f'\n== {name}\n{"arm":17s}' + ''.join(f'{m:>11s}' for m in W))
-        arms = list(ARMS) + [a for a in ('nomask', 'sam2ceil', 'pseudo') if a in W['recog conf']]
+        arms = list(ARMS) + [a for a in ('nomask', 'sam2ceil') if a in W['recog conf']]
         for a in arms:
             if a not in W['box AUC']:
                 continue

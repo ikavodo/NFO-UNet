@@ -33,7 +33,7 @@ Frozen SAM2.1-b+ **image** predictor, per frame, no memory. Per frame t of an NF
   SAM2 with tracker prompts (arm `trk`).
 - **Training** (`adapter/fusion_data.py`, `synth/`): synthetic GPJATK people behind procedural foliage
   (`synth/occluders.py`) on CanaTree100 / photo backgrounds, NFO-calibrated noise (`synth/noise.py`), regenerated
-  online per clip. Loss **v3.4** (`LOSS=v34`): 20·focal_W(α 0.67, γ 2) + Focal Tversky (FP 0.3, FN 0.7, γ 0.75)
+  online per clip. Loss **v3.4** (`fusion_adapter.loss_fn`): 20·focal_W(α 0.67, γ 2) + Focal Tversky (FP 0.3, FN 0.7, γ 0.75)
   with weights W (1 visible / background, 0 occluded within 8 px of a fragment, 0.3 far occluded). AdamW 3e-4,
   cosine, 32 targets per clip. **Checkpoint: step 200** (selected on seq1, never on seq2–4).
 - **Inference** (`adapter/inference.py`, `fast_masks`): one encoder pass per frame shared by tracker, adapter and
@@ -72,7 +72,7 @@ All commands from the repo root, `PYTHONPATH=.`; `$PY` = the benchmark env (see 
 ```bash
 $PY -m pytest benchmark/nfo_vos/tests -q                               # 29 tests, GPU ones skip without CUDA
 $PY -m benchmark.nfo_vos.tools.remote_smoke                            # before any cluster job
-$PY -m benchmark.nfo_vos.adapter.fusion_adapter token 1000 0           # train (mode, steps, seed); cluster: adapter/fusion_adapter.sbatch
+$PY -m benchmark.nfo_vos.adapter.fusion_adapter 1000 0                 # train (steps, seed); cluster: adapter/fusion_adapter.sbatch
 $PY -m benchmark.nfo_vos.eval.dump_arms adapter-pf 0                   # masks of one arm, one window; cluster: eval/dump_arms.sbatch
 $PY -m benchmark.nfo_vos.eval.box_metrics score b0-c2 t1-c2 trk adapter-pf ...   # -> results/benchmark/rr/downstream/box_gt.csv
 $PY -m benchmark.nfo_vos.eval.recognition ...                          # see its docstring; -> recog_N7_*.csv

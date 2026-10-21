@@ -35,7 +35,6 @@ IMG = f'images/benchmark/{RUN}'
 OUT = f'{RES}/trials.json'
 ALL_SEQS = ('seq1', 'seq2', 'seq3', 'seq4')
 SEQ = 'seq1'                     # default for single-sequence callers
-SEQ_DIR = f'data/nfo_processed/{SEQ}_gt'
 NATIVE_W, NATIVE_H = 800, 600
 SIZE = 224
 W = 40

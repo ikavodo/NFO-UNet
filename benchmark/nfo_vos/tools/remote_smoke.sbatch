@@ -1,7 +1,7 @@
 #!/bin/bash
 # Cluster smoke test before adapter training (benchmark/nfo_vos/tools/remote_smoke.py), ≈ 3 min. Same env and GPU
 # request as fusion_adapter.sbatch. Output ends with "SMOKE OK" or the list of failed checks.
-#   sbatch benchmark/nfo_vos/tools/remote_smoke.sbatch            (LOSS=balanced sbatch --export=ALL ... to test a loss)
+#   sbatch benchmark/nfo_vos/tools/remote_smoke.sbatch         
 #SBATCH --job-name=nfo_smoke
 #SBATCH --nodes=1
 #SBATCH --ntasks=1

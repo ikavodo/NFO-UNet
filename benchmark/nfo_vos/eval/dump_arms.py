@@ -27,7 +27,7 @@ ARM_CKPT = {'adapter-pf': CKPT, 'adapter-s1': f'{CKPT_DIR}/token_seed1/fusion_it
 
 
 def load_net(pred, ckpt):
-    net = Fusion(token=True).cuda(); net.init_fallback(pred.model)
+    net = Fusion().cuda(); net.init_fallback(pred.model)
     net.load_state_dict(torch.load(ckpt)); net.eval()
     return net
 

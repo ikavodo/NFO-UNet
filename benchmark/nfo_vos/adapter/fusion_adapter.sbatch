@@ -1,11 +1,9 @@
 #!/bin/bash
 # Approach A (docs/layer_sam2/training/plan_fusion_prompt_adapter.md §11–12): residual fusion adapter on frozen SAM2.
-# One array task per sparse-prompt mode: 0 = token (default), 1 = box (ablation). Override MODES / STEPS / SEED.
-#   sbatch benchmark/nfo_vos/adapter/fusion_adapter.sbatch
-#   MODES="token" STEPS=1500 SEED=1 sbatch --export=ALL --array=0 benchmark/nfo_vos/adapter/fusion_adapter.sbatch
-#   LOSS=balanced|simple|v34 selects the loss (fusion_adapter.LOSS_CFG); output dir gets a _<loss> suffix
-# Writes results/benchmark/rr/layers_fusion_adapter/<mode>_seed<seed>/{log.json,fusion_it*.pt} (≈ 3 MB per checkpoint)
-# and images/benchmark/gpjatk_foliage/fusion_nfo_featdiff.png. Nothing else is written: clips are regenerated online.
+# One training run; override STEPS / SEED (the reported seeds: STEPS=1000 SEED=0|1|2, checkpoint step 200).
+#   STEPS=1000 SEED=1 sbatch --export=ALL benchmark/nfo_vos/adapter/fusion_adapter.sbatch
+# Writes results/benchmark/rr/layers_fusion_adapter/token_seed<seed>/{log.json,fusion_it*.pt} (≈ 3 MB per checkpoint)
+# Nothing else is written: clips are regenerated online.
 # Needs on the cluster (none of it is in git):
 #   $NFO_GPJATK (default ../master_thesis/GPJATK/Sequences)  GPJATK source frames + silhouettes (synth/gpjatk_foliage.GP)
 #   images/veronica111886-yakushima-2336735.jpg  foliage template photo (gpjatk_foliage.TEMPLATE)
@@ -16,7 +14,6 @@
 # Measured locally (RTX PRO 4000 Blackwell laptop): ≈ 3.1 s per step (2 clips ≈ 24 frames), 1500 steps ≈ 80 min.
 
 #SBATCH --job-name=nfo_fusion
-#SBATCH --array=0-1
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=10
@@ -27,19 +24,17 @@
 #SBATCH --mem=48G
 #SBATCH --time=03:00:00
 #SBATCH --mail-type=END,FAIL
-#SBATCH --output=/storage/slurm/akid/logs/nfo_fusion-%A_%a.out
-#SBATCH --error=/storage/slurm/akid/logs/nfo_fusion-%A_%a.out
+#SBATCH --output=/storage/slurm/akid/logs/nfo_fusion-%j.out
+#SBATCH --error=/storage/slurm/akid/logs/nfo_fusion-%j.out
 
 PYTHON=${PYTHON:-/home/wiss/akid/miniconda3/envs/comp_vis/bin/python3}
 export NFO_SAM2_CKPT=${NFO_SAM2_CKPT:-/storage/user/akid/checkpoints/sam2.1_hiera_base_plus.pt}
 export AMP=$("$PYTHON" -c "import torch; print('fp16' if torch.cuda.get_device_capability() < (8, 0) else 'bf16')")
 echo "$(hostname) $(nvidia-smi --query-gpu=name --format=csv,noheader) AMP=$AMP"
-MODES=(${MODES:-token box})
-MODE=${MODES[$SLURM_ARRAY_TASK_ID]}
 
 pwd; hostname; date; nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
-echo "fusion adapter loss=${LOSS:-v34} mode=$MODE steps=${STEPS:-1500} seed=${SEED:-0} amp=${AMP:-bf16} ckpt=$NFO_SAM2_CKPT"
+echo "fusion adapter steps=${STEPS:-1500} seed=${SEED:-0} amp=${AMP:-bf16} ckpt=$NFO_SAM2_CKPT"
 export OMP_NUM_THREADS=2 PYTHONPATH=.
 # TEST=0: no seq2-4 test at the end (single held-out test is run separately on the selected checkpoint)
-srun "$PYTHON" -m benchmark.nfo_vos.adapter.fusion_adapter "$MODE" "${STEPS:-1500}" "${SEED:-0}" 100 32 12 "${TEST:-0}"
+srun "$PYTHON" -m benchmark.nfo_vos.adapter.fusion_adapter "${STEPS:-1500}" "${SEED:-0}" 100 32 12 "${TEST:-0}"
 date

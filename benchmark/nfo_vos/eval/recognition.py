@@ -98,18 +98,12 @@ def background(seq, w0, w1):
 
 def arm_masks(arm, t, gtb):
     """[T, H, W] bool masks of the window, plus avail [T] (False where the arm has no label for that frame), or None.
-    Label arms: 'sam2ceil' (SAM2-ceiling, *_sammask_native.png: SAM2.1-L, GT box at confirmed-clear frames, propagated
-    both ways: uses future frames and the GT) and 'pseudo' (frozen silhouette label, labels_sil_frozen, local 6..38)."""
+    Label arm 'sam2ceil' (SAM2-ceiling, *_sammask_native.png: SAM2.1-L, GT box at confirmed-clear frames, propagated
+    both ways: uses future frames and the GT)."""
     T = len(t['frames'])
     if arm == 'sam2ceil':
         ms = [TR.gt_mask_native(k, t['seq']) for k in t['frames']]
         return np.stack([m if m is not None else np.zeros((TR.NATIVE_H, TR.NATIVE_W), bool) for m in ms]), np.array([m is not None for m in ms])
-    if arm == 'pseudo':
-        L = np.load(f"results/benchmark/rr/labels_sil_frozen/{t['id']}.npz")
-        m = np.zeros((T, TR.NATIVE_H, TR.NATIVE_W), bool); av = np.zeros(T, bool)
-        for k in L.files:
-            m[int(k)], av[int(k)] = L[k], True
-        return m, av
     M = _arm_masks(arm, t, gtb)
     return None if M is None else (M, np.ones(T, bool))
 
@@ -219,50 +213,10 @@ def _montage(keep, arms, N, weights):
     cv2.imwrite(f'{BM.IMG}/composite_N{N}_{weights}_meanfill.jpg', np.vstack(rows), [cv2.IMWRITE_JPEG_QUALITY, 80])
 
 
-def label_montage(ids, j=30, N=7):
-    """Per window: frame t with SAM2-ceiling (red) and pseudo-GT (cyan) contours, then the nomask / sam2ceil / pseudo
-    composites with YOLO's top person box (magenta, its confidence) and the GT box (green)."""
-    from ultralytics import YOLO as Y
-    model = Y(YOLO)
-    trials = {x['id']: x for x in json.load(open('results/benchmark/rr/trials.json'))}
-    rows = []
-    for i in ids:
-        t = trials[i]; gtb, fr = BM.gt_boxes(t['seq']), t['frames']
-        bg = background(t['seq'], *t['warmup'])
-        idx = list(range(j - N + 1, j + 1))
-        sh = gt_shifts(gtb, [fr[k] for k in idx], fr[j])
-        fimg = frame(t['seq'], fr[j]).copy()
-        panes = []
-        for arm, col in (('sam2ceil', (0, 0, 255)), ('pseudo', (255, 255, 0))):
-            m = arm_masks(arm, t, gtb)[0][j].astype(np.uint8)
-            cs, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-            cv2.drawContours(fimg, cs, -1, col, 1)
-        cv2.putText(fimg, f'{i} t={fr[j]} red=SAM2-ceil cyan=pseudo', (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-        panes.append(fimg)
-        for arm in ('nomask', 'sam2ceil', 'pseudo'):
-            M = arm_masks(arm, t, gtb)[0]
-            C = masked_composite([frame(t['seq'], fr[k]) for k in idx], [M[k] for k in idx], sh, bg)
-            s_ = score_yolo(model, C, gtb[fr[j]])
-            v = C.copy(); g = gtb[fr[j]]
-            cv2.rectangle(v, tuple(int(x) for x in g[:2]), tuple(int(x) for x in g[2:]), (0, 255, 0), 2)
-            if s_['box'] is not None:
-                b_ = s_['box']; cv2.rectangle(v, tuple(int(x) for x in b_[:2]), tuple(int(x) for x in b_[2:]), (255, 0, 255), 2)
-            cv2.putText(v, f'{arm} conf@IoU.5 {s_["conf"]:.2f}', (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-            panes.append(v)
-        # crop around the GT box (2x its size) so the person is visible at poster scale
-        x0, y0, x1, y1 = gtb[fr[j]]; cx, cy, w, h = (x0 + x1) / 2, (y0 + y1) / 2, max(x1 - x0, 60) * 2.2, (y1 - y0) * 1.6
-        X0, Y0 = int(max(cx - w / 2, 0)), int(max(cy - h / 2, 0)); X1, Y1 = int(min(cx + w / 2, 800)), int(min(cy + h / 2, 600))
-        rows.append(np.hstack([cv2.resize(p_[Y0:Y1, X0:X1], (220, 300)) for p_ in panes]))
-    os.makedirs(BM.IMG, exist_ok=True)
-    cv2.imwrite(f'{BM.IMG}/labels_vs_composite.jpg', np.vstack(rows), [cv2.IMWRITE_JPEG_QUALITY, 85])
-
-
 if __name__ == '__main__':
     if sys.argv[1] == 'report':                      # re-report from the saved CSV, no YOLO
         rows = list(csv.DictReader(open(f'{BM.OUT}/recog_N7_uniform_meanfill.csv')))
         report(rows, None, list(dict.fromkeys(r['arm'] for r in rows))); sys.exit()
-    if sys.argv[1] == 'labels':
-        label_montage(sys.argv[2:]); sys.exit()
     trials = json.load(open('results/benchmark/rr/trials.json'))
     ids = {trials[0]['id']} | {next(x['id'] for x in trials if x['seq'] == s) for s in ('seq2', 'seq3')}
     main(sys.argv[1], sys.argv[2], tuple(sys.argv[3:]), montage_ids=ids)
