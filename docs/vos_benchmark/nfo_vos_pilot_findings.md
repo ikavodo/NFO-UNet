@@ -1,4 +1,4 @@
-# NFO video object segmentation under fragmented occlusion: findings (status 2026-10-20)
+# NFO video object segmentation under fragmented occlusion: findings (status 2026-10-21)
 
 > **Code paths (2026-10-21 cleanup):** the code moved to `benchmark/nfo_vos/{adapter,baselines,eval,synth,tools}/` (map: `CLAUDE.md`). Script paths cited below that no longer exist (`layers/…`, `downstream/…`, `run_t4.py`, `factorised_*.py`, …) are at git tag `archive/pre-cleanup-2026-10-21`.
 
@@ -65,34 +65,37 @@ the data below unless marked otherwise. CIs are 95% window-bootstrap (2,000 resa
 
 | method | hand J | P / R | box AUC | P@20 | recog AP50 | recog conf |
 |---|---|---|---|---|---|---|
-| B0 | 0.755 | 0.90 / 0.81 | 0.641 | 0.767 | — | — |
-| T1 | 0.750 | 0.89 / 0.82 | 0.646 | 0.778 | 0.916 | 0.664 |
-| trkbox | 0.250 | 0.25 / 0.96 | 0.709 | 0.840 | — | — |
-| trk | 0.716 | 0.82 / 0.85 | 0.693 | 0.833 | — | — |
-| **adapter-pf (ours)** | **0.761** | 0.86 / 0.86 | **0.717** | **0.848** | **0.926** | **0.678** |
-| **ours, 3 seeds (mean ± sd)** | **0.760 ± 0.003** | 0.87 / 0.85 | **0.718 ± 0.004** | — | **0.922 ± 0.006** | — |
+| B0 | 0.755 | 0.90 / 0.81 | 0.641 | 0.767 | 0.905 | 0.663 |
+| T1 | 0.750 | 0.89 / 0.82 | 0.646 | 0.778 | 0.909 | 0.662 |
+| trkbox | 0.250 | 0.25 / 0.96 | 0.709 | 0.840 | 0.755 | 0.461 |
+| trk | 0.716 | 0.82 / 0.85 | 0.693 | 0.833 | 0.813 | 0.571 |
+| **adapter-pf (ours)** | **0.761** | 0.86 / 0.86 | **0.717** | **0.848** | **0.927** | **0.679** |
+| **ours, 3 seeds (mean ± sd)** | **0.760 ± 0.003** | 0.87 / 0.85 | **0.718 ± 0.004** | — | **0.922 ± 0.006** | **0.682 ± 0.004** |
 | vid-prompts | 0.748 | 0.82 / 0.89 | 0.713 | 0.859 | — | — |
 | vid-adapter-pre | 0.718 | 0.76 / 0.93 | 0.735 | 0.871 | — | — |
 
-The empty recognition cells were scored on the 414-composite subset only: see §5 and
-`results/benchmark/rr/logs/recog_N7_meanfill_all.log`.
+All rows except vid-* come from ONE cluster run (2026-10-21, `eval/rescore.sbatch`, log
+`results/benchmark/rr/logs/nfo_rescore-1938081.out`): box AUC, hand J and recognition for every final arm in one
+environment and one YOLO run. Recognition values differ from the earlier laptop runs (T1 AP50 0.909 here vs 0.916)
+by environment drift; differences within the run are what count. vid-* rows are from 2026-10-17 (closed direction).
 
 **adapter-pf − T1:**
 - box AUC **+0.070 [+0.056, +0.086]**;
 - hand J +0.010 [−0.011, +0.034];
-- recognition conf +0.015 [−0.014, +0.042].
+- recognition conf +0.017 [−0.012, +0.044].
 
 **Over 3 training seeds** (seed 0 = adapter-pf; seeds 1, 2 = same loss, step 200; seed 2 trained in fp16 on a Turing
 node; all masks from the cluster), against T1:
 - box AUC **+0.072 ± 0.004**, and every seed's CI excludes 0;
 - hand J +0.010 ± 0.003;
-- recognition AP50 +0.006 ± 0.006, one YOLO run.
+- recognition AP50 +0.013 ± 0.006 and confidence +0.020 ± 0.004 (per seed +0.017 / +0.019 / +0.024, each
+  CI touching 0): positive for all three seeds, unresolved for any single one.
 
 Segment-cluster bootstrap for seed 0 (24 segments): box AUC +0.070 [+0.054, +0.088], with the adapter ahead in 24/24
 segments.
 
-**Runtime** (laptop RTX PRO 4000, per frame, `benchmark/nfo_vos/timing.py`):
-- **ours: 61 ms**, with `video_adapter.fast_masks` (one encode per frame plus one for the composite; composite and SAM2
+**Runtime** (laptop RTX PRO 4000, per frame, `benchmark/nfo_vos/tools/timing.py`):
+- **ours: 61 ms**, with `adapter/inference.fast_masks` (one encode per frame plus one for the composite; composite and SAM2
   preprocessing on the GPU);
 - **SAM2 video: 53 ms**.
 
@@ -106,10 +109,10 @@ segmentation and recognition.** No other method is at or above T1 on all three.
 
 | ingredient | comparison | hand J | box AUC | recog conf |
 |---|---|---|---|---|
-| motion prompt (tracker box + point every frame) | trk − T1 | −0.034 | **+0.046** | −0.080 |
+| motion prompt (tracker box + point every frame) | trk − T1 | −0.034 | **+0.046** | −0.091 |
 | empty-scene layer cue | adapter-pf without composite − trk | **+0.043 [+0.002, +0.099]** | +0.007 | — |
-| composite (past pixels, open-loop) | adapter-pf − adapter-pf-noC | +0.001 | **+0.018 [+0.013, +0.022]** | **+0.022 [+0.010, +0.033]** |
-| composite, **3 seeds** (mean ± sd) | adapter − adapter-noC, per seed | **+0.016 ± 0.013** | **+0.024 ± 0.005** | **+0.025 ± 0.004** (AP50 +0.016 ± 0.006) |
+| composite (past pixels, open-loop) | adapter-pf − adapter-pf-noC | +0.001 | **+0.018 [+0.013, +0.022]** | **+0.024 [+0.013, +0.035]** |
+| composite, **3 seeds** (mean ± sd) | adapter − adapter-noC, per seed | **+0.016 ± 0.013** | **+0.024 ± 0.005** | **+0.025 ± 0.003** (AP50 +0.018 ± 0.005) |
 | memory (SAM2 video loop) | vid-prompts − trk | +0.032 | +0.020 | — |
 | adapter inside memory | vid-adapter-pre − vid-prompts | **−0.031 [−0.053, −0.011]** | +0.022 | −0.001 |
 

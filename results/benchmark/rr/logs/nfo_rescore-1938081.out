@@ -1,0 +1,178 @@
+node8
+Quadro RTX 5000
+Wed Oct 21 02:35:35 PM CEST 2026
+ultralytics 8.4.75
+masks/b0-c2: 61 windows
+masks/t1-c2: 61 windows
+masks/trkbox: 61 windows
+masks/trk: 61 windows
+masks/adapter-pf: 61 windows
+masks/adapter-s1: 61 windows
+masks/adapter-s2: 61 windows
+masks/adapter-pf-noC: 61 windows
+masks/adapter-s1-noC: 61 windows
+masks/adapter-s2-noC: 61 windows
+
+seq1 (selection)
+arm            n_win   AUC    P@20   P_norm  fail    ΔAUC vs t1 [95% CI]
+b0-c2           15   0.565  0.683  0.647   0.033   
+t1-c2           15   0.587  0.732  0.697   0.033   
+trkbox          15   0.645  0.737  0.783   0.055   
+trk             15   0.598  0.673  0.702   0.053   
+adapter-pf      15   0.631  0.698  0.703   0.035   
+adapter-s1      15   0.625  0.623  0.640   0.002   
+adapter-s2      15   0.633  0.690  0.677   0.000   
+adapter-pf-noC  15   0.616  0.672  0.687   0.040   
+adapter-s1-noC  15   0.595  0.587  0.603   0.012   
+adapter-s2-noC  15   0.604  0.630  0.633   0.013   
+
+seq2-4 (test)
+arm            n_win   AUC    P@20   P_norm  fail    ΔAUC vs t1 [95% CI]
+b0-c2           46   0.641  0.767  0.893   0.000   
+t1-c2           46   0.646  0.778  0.896   0.000   
+trkbox          46   0.709  0.840  0.879   0.000   
+trk             46   0.693  0.833  0.885   0.000   
+adapter-pf      46   0.717  0.848  0.895   0.000   
+adapter-s1      46   0.723  0.856  0.895   0.000   
+adapter-s2      46   0.715  0.831  0.897   0.000   
+adapter-pf-noC  46   0.699  0.795  0.875   0.000   
+adapter-s1-noC  46   0.698  0.780  0.864   0.000   
+adapter-s2-noC  46   0.687  0.731  0.845   0.000   
+seq1_s0_t11
+seq1_s0_t51
+seq1_s0_t91
+seq1_s1_t317
+seq1_s1_t357
+seq1_s2_t617
+seq1_s3_t853
+seq1_s4_t1154
+seq1_s4_t1194
+seq1_s4_t1234
+seq1_s5_t1486
+seq1_s5_t1526
+seq1_s5_t1566
+seq1_s6_t1835
+seq1_s7_t2050
+seq2_s0_t32
+seq2_s0_t72
+seq2_s0_t112
+seq2_s1_t275
+seq2_s1_t315
+seq2_s1_t355
+seq2_s2_t477
+seq2_s2_t517
+seq2_s2_t557
+seq2_s3_t1103
+seq2_s3_t1143
+seq2_s3_t1183
+seq2_s4_t1318
+seq2_s5_t1520
+seq2_s6_t1702
+seq2_s7_t1901
+seq3_s0_t39
+seq3_s0_t79
+seq3_s1_t267
+seq3_s1_t307
+seq3_s1_t347
+seq3_s2_t555
+seq3_s2_t595
+seq3_s3_t813
+seq3_s3_t853
+seq3_s3_t893
+seq3_s4_t1090
+seq3_s5_t1283
+seq3_s6_t1478
+seq3_s7_t1674
+seq4_s0_t23
+seq4_s0_t63
+seq4_s0_t103
+seq4_s1_t233
+seq4_s1_t273
+seq4_s1_t313
+seq4_s2_t466
+seq4_s2_t506
+seq4_s2_t546
+seq4_s3_t657
+seq4_s3_t697
+seq4_s3_t737
+seq4_s4_t902
+seq4_s5_t1061
+seq4_s6_t1264
+seq4_s7_t1428
+
+seq1 (selection)
+arm               n_comp  AP50   conf   ΔAP50 vs t1 [95% CI]      Δconf vs t1 [95% CI]
+nomask              180  0.537  0.326
+gtbox               180  0.592  0.332
+sam2ceil            180  0.912  0.738
+b0-c2               180  0.844  0.693
+t1-c2               180  0.845  0.703
+trkbox              180  0.604  0.341
+trk                 180  0.758  0.581
+adapter-pf          180  0.796  0.639
+adapter-s1          180  0.822  0.641
+adapter-s2          180  0.827  0.631
+adapter-pf-noC      180  0.801  0.640
+adapter-s1-noC      180  0.771  0.610
+adapter-s2-noC      180  0.809  0.634
+
+seq2-4 (test)
+arm               n_comp  AP50   conf   ΔAP50 vs t1 [95% CI]      Δconf vs t1 [95% CI]
+nomask              552  0.795  0.540
+gtbox               552  0.759  0.434
+sam2ceil            552  0.907  0.674
+b0-c2               552  0.905  0.663
+t1-c2               552  0.909  0.662
+trkbox              552  0.755  0.461
+trk                 552  0.813  0.571
+adapter-pf          552  0.927  0.679
+adapter-s1          552  0.915  0.680
+adapter-s2          552  0.925  0.686
+adapter-pf-noC      552  0.907  0.654
+adapter-s1-noC      552  0.903  0.657
+adapter-s2-noC      552  0.903  0.657
+
+== seq1 (selection)
+arm                   hand J     hand P     hand R    box AUC recog conf
+b0-c2                  0.523      0.622      0.770      0.565      0.693
+t1-c2                  0.488      0.577      0.718      0.587      0.703
+trkbox                 0.245      0.248      0.950      0.645      0.341
+trk                    0.548      0.648      0.797      0.598      0.581
+adapter-pf             0.545      0.628      0.810      0.631      0.639
+adapter-s1             0.529      0.612      0.804      0.625      0.641
+adapter-s2             0.539      0.628      0.802      0.633      0.631
+adapter-pf-noC         0.530      0.633      0.765      0.616      0.640
+adapter-s1-noC         0.521      0.628      0.751      0.595      0.610
+adapter-s2-noC         0.527      0.625      0.771      0.604      0.634
+paired Δ (window bootstrap 95% CI):
+  trk − t1-c2:  hand J +0.060 [-0.017,+0.174] n3 | box AUC +0.011 [-0.094,+0.102] n15 | recog conf -0.122 [-0.205,-0.058] n15
+  adapter-pf − t1-c2:  hand J +0.057 [+0.000,+0.165] n3 | box AUC +0.044 [-0.054,+0.130] n15 | recog conf -0.064 [-0.135,-0.008] n15
+  adapter-s1 − t1-c2:  hand J +0.042 [-0.017,+0.139] n3 | box AUC +0.038 [-0.052,+0.117] n15 | recog conf -0.062 [-0.138,+0.003] n15
+  adapter-s2 − t1-c2:  hand J +0.051 [-0.008,+0.163] n3 | box AUC +0.046 [-0.043,+0.122] n15 | recog conf -0.072 [-0.147,-0.012] n15
+  adapter-pf − trk:  hand J -0.003 [-0.023,+0.023] n3 | box AUC +0.033 [+0.015,+0.051] n15 | recog conf +0.058 [+0.032,+0.087] n15
+  adapter-pf − adapter-pf-noC:  hand J +0.014 [-0.017,+0.046] n3 | box AUC +0.015 [+0.010,+0.021] n15 | recog conf -0.001 [-0.014,+0.011] n15
+  adapter-s1 − adapter-s1-noC:  hand J +0.008 [-0.034,+0.056] n3 | box AUC +0.030 [+0.011,+0.054] n15 | recog conf +0.031 [+0.009,+0.055] n15
+  adapter-s2 − adapter-s2-noC:  hand J +0.012 [-0.020,+0.052] n3 | box AUC +0.028 [+0.016,+0.044] n15 | recog conf -0.003 [-0.017,+0.011] n15
+
+== seq2-4 (test)
+arm                   hand J     hand P     hand R    box AUC recog conf
+b0-c2                  0.755      0.901      0.814      0.641      0.663
+t1-c2                  0.750      0.887      0.819      0.646      0.662
+trkbox                 0.250      0.253      0.958      0.709      0.461
+trk                    0.716      0.823      0.851      0.693      0.571
+adapter-pf             0.761      0.862      0.861      0.717      0.679
+adapter-s1             0.763      0.859      0.867      0.723      0.680
+adapter-s2             0.757      0.880      0.834      0.715      0.686
+adapter-pf-noC         0.759      0.874      0.844      0.699      0.654
+adapter-s1-noC         0.741      0.874      0.818      0.698      0.657
+adapter-s2-noC         0.731      0.896      0.793      0.687      0.657
+paired Δ (window bootstrap 95% CI):
+  trk − t1-c2:  hand J -0.034 [-0.078,+0.000] n23 | box AUC +0.046 [+0.030,+0.063] n46 | recog conf -0.091 [-0.121,-0.062] n46
+  adapter-pf − t1-c2:  hand J +0.010 [-0.011,+0.034] n23 | box AUC +0.070 [+0.056,+0.086] n46 | recog conf +0.017 [-0.012,+0.044] n46
+  adapter-s1 − t1-c2:  hand J +0.013 [-0.010,+0.039] n23 | box AUC +0.077 [+0.061,+0.092] n46 | recog conf +0.019 [-0.010,+0.046] n46
+  adapter-s2 − t1-c2:  hand J +0.007 [-0.011,+0.026] n23 | box AUC +0.069 [+0.054,+0.083] n46 | recog conf +0.024 [-0.003,+0.053] n46
+  adapter-pf − trk:  hand J +0.044 [+0.007,+0.096] n23 | box AUC +0.024 [+0.019,+0.030] n46 | recog conf +0.108 [+0.080,+0.137] n46
+  adapter-pf − adapter-pf-noC:  hand J +0.001 [-0.008,+0.009] n23 | box AUC +0.018 [+0.013,+0.022] n46 | recog conf +0.024 [+0.013,+0.035] n46
+  adapter-s1 − adapter-s1-noC:  hand J +0.022 [+0.006,+0.041] n23 | box AUC +0.025 [+0.021,+0.030] n46 | recog conf +0.023 [+0.013,+0.034] n46
+  adapter-s2 − adapter-s2-noC:  hand J +0.026 [+0.010,+0.045] n23 | box AUC +0.028 [+0.020,+0.036] n46 | recog conf +0.029 [+0.016,+0.043] n46
+Wed Oct 21 03:06:51 PM CEST 2026

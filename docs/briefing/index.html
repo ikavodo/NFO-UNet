@@ -86,7 +86,7 @@ svg .cross { stroke: var(--bad); stroke-width: 2; }
   <div class="nums">
     <div class="num"><b>+0.072 ± 0.004</b><span>box AUC over SAMURAI (0.646 → 0.718), 3 seeds; each seed's CI excludes 0; seed 0 is ahead in all 24 segments</span></div>
     <div class="num tie"><b>+0.010 ± 0.003</b><span>hand-label J over SAMURAI (0.750 → 0.760), 3 seeds; every CI includes 0 → on par</span></div>
-    <div class="num tie"><b id="rec-num">+0.006 ± 0.006</b><span id="rec-span">YOLO person AP50 on 7-frame composites over SAMURAI (0.916 → 0.922), 3 seeds; every CI includes 0 → on par</span></div>
+    <div class="num tie"><b id="rec-num">+0.013 ± 0.006</b><span id="rec-span">YOLO person AP50 on 7-frame composites over SAMURAI (0.909 → 0.922), 3 seeds; confidence +0.020 ± 0.004, positive for every seed but no seed's CI excludes 0 → on par</span></div>
   </div>
 </section>
 
@@ -287,21 +287,21 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
 </section>
 <div class="scroll"><table>
   <tr><th>method</th><th class="n">hand J</th><th class="n">P / R</th><th class="n">box AUC</th><th class="n">P@20</th><th class="n">recog AP50</th></tr>
-  <tr><td>B0 · SAM2.1 video</td><td class="n">0.755</td><td class="n">0.90 / 0.81</td><td class="n">0.641</td><td class="n">0.767</td><td class="n">0.908</td></tr>
-  <tr><td><span class="swatch" style="background:var(--samurai)"></span>T1 · SAMURAI</td><td class="n">0.750</td><td class="n">0.89 / 0.82</td><td class="n">0.646</td><td class="n">0.778</td><td class="n">0.916</td></tr>
-  <tr><td>trk · per-frame SAM2.1 + tracker</td><td class="n">0.716</td><td class="n">0.82 / 0.85</td><td class="n">0.693</td><td class="n">0.833</td><td class="n">0.814</td></tr>
+  <tr><td>B0 · SAM2.1 video</td><td class="n">0.755</td><td class="n">0.90 / 0.81</td><td class="n">0.641</td><td class="n">0.767</td><td class="n">0.905</td></tr>
+  <tr><td><span class="swatch" style="background:var(--samurai)"></span>T1 · SAMURAI</td><td class="n">0.750</td><td class="n">0.89 / 0.82</td><td class="n">0.646</td><td class="n">0.778</td><td class="n">0.909</td></tr>
+  <tr><td>trk · per-frame SAM2.1 + tracker</td><td class="n">0.716</td><td class="n">0.82 / 0.85</td><td class="n">0.693</td><td class="n">0.833</td><td class="n">0.813</td></tr>
   <tr class="ours"><td><span class="swatch" style="background:var(--ours)"></span>ours, 3 seeds (mean ± sd)</td><td class="n">0.760 ± 0.003</td><td class="n">0.87 / 0.85</td><td class="n">0.718 ± 0.004</td><td class="n">0.848<sup>s0</sup></td><td class="n" id="rec-cell">0.922 ± 0.006</td></tr>
 </table></div>
 <section class="col">
-  <p class="meta">All masks computed on the same cluster. Recognition numbers come from one YOLO run (absolute AP shifts between software versions, so compare within this table). Seeds 0–1 were trained in bf16, seed 2 in fp16. <sup>s0</sup> = seed 0 only.</p>
+  <p class="meta">All masks computed on the same cluster, and every number in this table from one scoring run there (2026-10-21): box AUC, hand J and one YOLO run over all arms. Absolute AP shifts between software versions, so compare within this table. Seeds 0–1 were trained in bf16, seed 2 in fp16. <sup>s0</sup> = seed 0 only.</p>
 
   <h3>What each ingredient does (one variable at a time)</h3>
 </section>
 <div class="scroll"><table>
   <tr><th>ingredient</th><th>comparison</th><th class="n">hand J</th><th class="n">box AUC</th><th class="n">recognition conf</th></tr>
-  <tr><td>motion prompt (tracker box + point every frame)</td><td>trk − SAMURAI</td><td class="n">−0.034</td><td class="n"><b>+0.046</b></td><td class="n">−0.080</td></tr>
+  <tr><td>motion prompt (tracker box + point every frame)</td><td>trk − SAMURAI</td><td class="n">−0.034</td><td class="n"><b>+0.046</b></td><td class="n">−0.091</td></tr>
   <tr><td>empty-scene cue in the adapter</td><td>adapter without composite − trk</td><td class="n"><b>+0.043</b> [+0.002, +0.099]</td><td class="n">+0.007</td><td class="n">—</td></tr>
-  <tr><td>motion-aligned composite (3 seeds, mean ± sd)</td><td>adapter − adapter without composite, per seed</td><td class="n"><b>+0.016 ± 0.013</b></td><td class="n"><b>+0.024 ± 0.005</b></td><td class="n"><b>+0.025 ± 0.004</b></td></tr>
+  <tr><td>motion-aligned composite (3 seeds, mean ± sd)</td><td>adapter − adapter without composite, per seed</td><td class="n"><b>+0.016 ± 0.013</b></td><td class="n"><b>+0.024 ± 0.005</b></td><td class="n"><b>+0.025 ± 0.003</b></td></tr>
 </table></div>
 <section class="col">
   <p>Reading: <b>the motion prompt buys tracking but costs precision; the empty-scene cue restores precision; the composite adds real person evidence</b>. Recognition goes up, not just box extent. Over 3 seeds every box-AUC and recognition-confidence CI excludes 0, and the composite also lifts hand J in two of three seeds (+0.022, +0.026; seed 0 +0.001).</p>
