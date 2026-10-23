@@ -57,7 +57,7 @@ Every result below falls into one of three classes by the label it was scored on
 
 
 Pilot: seq1 segments 4–5, 21 starts, 51-frame windows, SAM2-ceiling at 224 (spec
-`docs/superpowers/specs/2026-10-02-nfo-vos-benchmark-pilot-design.md`, rev. 4). Two segments: all
+`docs/vos_benchmark/2026-10-02-nfo-vos-benchmark-pilot-design.md`, rev. 4). Two segments: all
 numbers descriptive.
 
 ## The benchmark protocol works and the baselines are not straw men
@@ -240,7 +240,7 @@ numbers descriptive.
     did not predict this.
 
 ## Layered-memory option C on NFO: the static layer carries the visibility signal — 2026-10-12
-- Plan: `docs/layer_sam2/design/layered_memory_test_plan.md`, option C step 1. Score inside the GT box at t₀,
+- Plan: `docs/layer_sam2/archive/layered_memory_test_plan.md`, option C step 1. Score inside the GT box at t₀,
   14 hard starts. Features are frozen SAM2 stride-16 backbone features of t₀−6…t₀−1, aligned by the
   GT shift. Motion over the history is 1.5–5.4 cells. AUC, visible vs not:
 
@@ -781,7 +781,7 @@ Upload folders: `data/cvat/upload/<seq>_poly_<tier>/images` (file name = real fr
 
 Second annotator: the same tier-A frames, imported with tag `handpoly2`. Polygon protocol as for seq1.
 Import: `python -m benchmark.nfo_vos.cvat_io import data/cvat/exports/<task>/annotations.xml handpoly <seq>`.
-Related work for the method: `docs/layer_sam2/design/related_work_layered_sam2.md`.
+Related work for the method: `docs/layer_sam2/archive/related_work_layered_sam2.md`.
 
 ## First seq2–4 human labels (tier A, 23 frames) and a learned change threshold, 2026-10-14 (`learned_thresh.py`)
 Labels: user's brush masks, tier-A frames above, tag `handA` (exports `data/cvat/exports/seq{2,3,4}_poly_A_annot`).
@@ -811,7 +811,7 @@ Results:
   - logistic: −0.012 [−0.032, +0.004]. Its σ_B weight changes sign between folds (−1.2 / +3.2), so frame-level
     covariates are not identifiable from 4 sequences.
 - Conclusion: a single in-frame-normalised parameter transfers; anything that learns the normalisation needs many
-  more scenes (synthetic, `docs/layer_sam2/design/layered_sam2_architecture.md`).
+  more scenes (synthetic, `docs/layer_sam2/archive/layered_sam2_architecture.md`).
 
 **H2 replicates on independent labels, but carries no area on seq2–4:**
 - Hand-label components below half a stride-16 cell: n = 52, T1 recall 0.01.
@@ -1065,7 +1065,7 @@ candidate set MC ∧ ¬B0 and its anchor μ_P are B0's. GT-free.
 
 ## Energy-aligned / LP-blended silhouettes vs the frozen label on seq2–4, 2026-10-16 (`energy_blend.py seq234`)
 
-docs/gt_conditioned_blend_plan.md stages 1–3, plan defaults, G := P; scored vs handAv (modal, void ignored, 23 frames).
+docs/vos_benchmark/gt_conditioned_blend_plan.md stages 1–3, plan defaults, G := P; scored vs handAv (modal, void ignored, 23 frames).
 
 | arm | J | P | R | F2 | boundary F |
 |---|---|---|---|---|---|

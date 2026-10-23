@@ -4,7 +4,7 @@
   feature differences F_X − F_C, F_X − F_B; evidence mass a) and the extra encoder pass for the pixel composite C,
   without losing performance?
 - **Run by:** research-companion:brainstormer subagent, about 9 web lookups, ~2 min.
-- **Checked against:** `docs/briefing/index.html` §3 (architecture) and `benchmark/nfo_vos/layers/fusion_adapter.py`
+- **Checked against:** `../briefing/index.html` §3 (architecture) and `benchmark/nfo_vos/layers/fusion_adapter.py`
   (`Fusion.z`, `Fusion.forward`).
 
 ## Verdict

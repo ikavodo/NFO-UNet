@@ -1,4 +1,4 @@
-"""Per-clip online batches for approach A (design: docs/layer_sam2/training/plan_fusion_prompt_adapter.md §11). Nothing is
+"""Per-clip online batches for approach A (design: docs/layer_sam2/plan_fusion_prompt_adapter.md §11). Nothing is
 cached: each clip is regenerated from its seed in a DataLoader worker; SAM2 encodes on the GPU (encode()).
 
 Per clip (sample_occlusion): person/scene scale s ~ U[0.5, 1] (zoom-out; GPJATK person 0.53 of frame height, NFO

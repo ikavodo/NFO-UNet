@@ -1,6 +1,6 @@
 # NFO VOS benchmark pilot: implementation plan
 
-Spec: `docs/superpowers/specs/2026-10-02-nfo-vos-benchmark-pilot-design.md` (rev. 3). The spec is
+Spec: `docs/vos_benchmark/2026-10-02-nfo-vos-benchmark-pilot-design.md` (rev. 3). The spec is
 binding. This plan only orders the work.
 
 ## Global constraints

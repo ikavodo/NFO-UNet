@@ -1,5 +1,5 @@
 #!/bin/bash
-# Approach A (docs/layer_sam2/training/plan_fusion_prompt_adapter.md §11–12): residual fusion adapter on frozen SAM2.
+# Approach A (docs/layer_sam2/plan_fusion_prompt_adapter.md §11–12): residual fusion adapter on frozen SAM2.
 # One training run; override STEPS / SEED (the reported seeds: STEPS=1000 SEED=0|1|2, checkpoint step 200).
 #   STEPS=1000 SEED=1 sbatch --export=ALL benchmark/nfo_vos/adapter/fusion_adapter.sbatch
 # Writes results/benchmark/rr/layers_fusion_adapter/token_seed<seed>/{log.json,fusion_it*.pt} (≈ 3 MB per checkpoint)

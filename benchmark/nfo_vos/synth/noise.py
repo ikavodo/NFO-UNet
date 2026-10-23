@@ -1,4 +1,4 @@
-"""Input nuisance model for the feature-layer training plan (docs/layer_sam2/training/plan_feature_layers_training.md §2).
+"""Input nuisance model for the feature-layer training plan (docs/layer_sam2/archive/plan_feature_layers_training.md §2).
 
 Applied to the input frames only, never to the targets (clean frame, S, V). Per clip:
   sway     scene B and occluder matte a translated by d_t = A·sin(2π t / P + φ)·(cos θ, sin θ), A ∈ U[0, A_max] px

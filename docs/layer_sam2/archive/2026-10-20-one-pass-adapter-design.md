@@ -1,6 +1,6 @@
 # One-pass adapter: feature-space composite with a learned gate (design, 2026-10-20)
 
-**Status (2026-10-20): not pursued (user decision).** Kept as a record; the plan in `docs/superpowers/plans/2026-10-20-one-pass-adapter.md` is not executed.
+**Status (2026-10-20): not pursued (user decision).** Kept as a record; the plan in `docs/layer_sam2/archive/2026-10-20-one-pass-adapter.md` is not executed.
 
 ## Intent
 
@@ -89,7 +89,7 @@ z^s = [P^s(F^s_t), Ĉ^s, P^s(F^s_B), m^s].
 
 - Then the same blocks as today: coarse-to-fine 16 → 8 → 4, GroupNorm/GELU, then the zero-init output.
 - Dropped: the explicit differences F_X − F_C and F_X − F_B. They are linear in the concatenation after the shared 1×1
-  projection, so no information is lost (`docs/related_work_minimal_adapter.md`).
+  projection, so no information is lost (`../related_work_minimal_adapter.md`).
 - P^s stays the shared 1×1 projection per stride.
 
 ### 3. Token correction

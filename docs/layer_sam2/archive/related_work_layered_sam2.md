@@ -1,6 +1,6 @@
 # Related work: learned layered refinement for SAM2 under fragmented occlusion
 
-2026-10-14. Novelty pass for `docs/layer_sam2/design/layered_sam2_architecture.md`, run by the research-companion brainstormer
+2026-10-14. Novelty pass for `docs/layer_sam2/archive/layered_sam2_architecture.md`, run by the research-companion brainstormer
 (about 20 searches). Question: which components of the proposed method (frozen SAM2 + learned empty-scene comparison
 + person-aligned feature composite + reliability gate + zero-init stride-4/8 residuals, trained on layered synthetic
 data) already exist, and what is defensible as new.

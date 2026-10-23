@@ -1,6 +1,6 @@
 # DeepSORT-style scoring for the classical blob tracker - compatibility and scale-robustness assessment
 
-> **Read `docs/blob_tracker/scale_generalization_plan.md` first.** That file is the standing conclusion
+> **Read `docs/archive/blob_tracker/scale_generalization_plan.md` first.** That file is the standing conclusion
 > and the plan; this one is the chronological log of how the results were arrived at,
 > including the wrong turns (a non-equivariant scale proxy, two distractor designs that
 > measured nothing). Useful for *why*, not for *what to do*.

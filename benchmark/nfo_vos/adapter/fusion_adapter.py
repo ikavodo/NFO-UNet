@@ -1,4 +1,4 @@
-"""Approach A (docs/layer_sam2/training/plan_fusion_prompt_adapter.md §11): residual fusion of the frame, the
+"""Approach A (docs/layer_sam2/plan_fusion_prompt_adapter.md §11): residual fusion of the frame, the
 tracker-aligned composite and the empty scene on the three SAM2 feature levels the frozen decoder reads.
 
   per level ℓ ∈ {16, 8, 4}:  z^ℓ = [P F_t, P F_C, P F_B, P F_t − P F_C, P F_t − P F_B, a^ℓ]   (P shared 1×1 conv)

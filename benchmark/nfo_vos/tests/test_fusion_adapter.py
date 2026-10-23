@@ -1,4 +1,4 @@
-"""Tests for approach A (docs/layer_sam2/training/plan_fusion_prompt_adapter.md §11). Plain asserts (the SAMURAI venv
+"""Tests for approach A (docs/layer_sam2/plan_fusion_prompt_adapter.md §11). Plain asserts (the SAMURAI venv
 has no pytest):      PYTHONPATH=. ../samurai/.venv/bin/python -m benchmark.nfo_vos.tests.test_fusion_adapter
 """
 import numpy as np

@@ -18,7 +18,7 @@ It is trained on the existing synthetic pipeline and evaluated on NFO seq2–4 a
 **Tech Stack:** PyTorch (bf16/fp16 autocast), SAM2.1-b+ image predictor (frozen), numpy/scipy (Theil–Sen), pytest.
 Interpreter: `../samurai/.venv/bin/python`; tests use `TC_BATCH=1 PYTHONPATH=.`.
 
-**Spec:** `docs/superpowers/specs/2026-10-20-one-pass-adapter-design.md`, including its "Expert pipeline review" section.
+**Spec:** `docs/layer_sam2/archive/2026-10-20-one-pass-adapter-design.md`, including its "Expert pipeline review" section.
 
 ## Global Constraints
 

@@ -48,7 +48,7 @@
 
 **Tech Stack:** Python 3, NumPy, OpenCV, SciPy. No new dependencies. Detector is OpenCV's built-in HOG people detector, which needs no model download and returns confidences directly.
 
-**Spec:** `docs/blob_tracker/streaming_minimal_start.md` (the dependency closure and the three things needed), `docs/blob_tracker/scale_generalization_plan.md` (evidence behind every constant).
+**Spec:** `docs/archive/blob_tracker/streaming_minimal_start.md` (the dependency closure and the three things needed), `docs/archive/blob_tracker/scale_generalization_plan.md` (evidence behind every constant).
 
 > **ALIGNMENT BUG FOUND AND FIXED 2026-08-31 — the integration results quoted below were
 > computed on a DE-ALIGNED stack and must not be reused.** `align_frames` cropped each frame

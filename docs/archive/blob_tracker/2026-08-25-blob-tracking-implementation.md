@@ -8,7 +8,7 @@
 
 **Tech Stack:** numpy, opencv-python (already in `requirements.txt`), `scipy.optimize.linear_sum_assignment` (not yet in `requirements.txt` — added in Task 1).
 
-**Spec:** `docs/superpowers/specs/2026-08-25-blob-tracking-design.md`
+**Spec:** `docs/archive/blob_tracker/2026-08-25-blob-tracking-design.md`
 
 ## Global Constraints
 
@@ -271,7 +271,7 @@ Add blob-tracking preprocessing + Kalman/Hungarian tracker core
 
 Ports the validated tracker math from master_thesis (numpy/scipy, no torch)
 and reimplements its preprocessing natively rather than importing across
-repos. See docs/superpowers/specs/2026-08-25-blob-tracking-design.md.
+repos. See docs/archive/blob_tracker/2026-08-25-blob-tracking-design.md.
 EOF
 )"
 ```
@@ -308,7 +308,7 @@ def track_window(frames: np.ndarray, bg_frames: int = 5, var_threshold: float = 
 
     max_dist/max_dist default (12.5px) is rescaled from master_thesis's 1024x1024-tuned
     value (80px) to KTH's native 160x120 resolution by width ratio - see
-    docs/superpowers/specs/2026-08-25-blob-tracking-design.md, "Hyperparameters". Retune
+    docs/archive/blob_tracker/2026-08-25-blob-tracking-design.md, "Hyperparameters". Retune
     empirically per dataset resolution, don't assume this transfers as-is.
 
     Returns a dict with keys 'x', 'y', 'vx', 'score', 'resid_std', or None if no track of

@@ -1,7 +1,7 @@
 # Implementation plan: GPJATK + foliage testbed for Layer-SAM2 (written 2026-10-14 for a fresh session)
 
 Read first:
-- `docs/layer_sam2/layered_sam2_architecture.md`, section "v2": the architecture and its ablation table.
+- `docs/layer_sam2/archive/layered_sam2_architecture.md`, section "v2": the architecture and its ablation table.
 - `docs/vos_benchmark/nfo_vos_pilot_findings.md`, last three sections: the NFO numbers this testbed must reproduce.
 - `docs/vos_benchmark/nfo_failure_log.md`: what not to retry.
 

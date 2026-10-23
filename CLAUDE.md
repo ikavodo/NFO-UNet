@@ -47,7 +47,7 @@ vs 0.646; hand J 0.761 / 0.763 / 0.757 vs 0.750; recognition AP50 0.926 / 0.915 
 
 Closed directions (do not reopen without new evidence): SAM2 memory variants (the oracle bound is +0.012 J), the
 balanced loss, the one-pass feature-space adapter (designed, not pursued:
-`docs/superpowers/specs/2026-10-20-one-pass-adapter-design.md`).
+`docs/layer_sam2/archive/2026-10-20-one-pass-adapter-design.md`).
 
 ## Layout of `benchmark/nfo_vos/`
 

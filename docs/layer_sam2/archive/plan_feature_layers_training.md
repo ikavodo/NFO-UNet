@@ -1,7 +1,7 @@
 # Training plan: learned static / dynamic feature layers for SAM2 (written 2026-10-15 for a fresh session)
 
 Read first:
-- `docs/layer_sam2/design/layered_sam2_architecture.md`, section **v3**, including the oracle result and the cell-size
+- `docs/layer_sam2/archive/layered_sam2_architecture.md`, section **v3**, including the oracle result and the cell-size
   correction;
 - `docs/layer_sam2/data/synthetic_nfo_design.md`, last two sections: the data generator and why the perlin arm is used;
 - `docs/vos_benchmark/nfo_failure_log.md`.

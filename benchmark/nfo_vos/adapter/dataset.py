@@ -1,4 +1,4 @@
-"""On-the-fly clips for the feature-layer plan (docs/layer_sam2/training/plan_feature_layers_training.md §2).
+"""On-the-fly clips for the feature-layer plan (docs/layer_sam2/archive/plan_feature_layers_training.md §2).
 
 Clip = gpjatk_foliage.make_layered_clip(mode='perlin', occluder ≡ background, clump 24, ρ ~ U[0.35, 0.55]) with the
 noise.py nuisance (sway on the scene, then gain / white noise / JPEG on the frames). Targets are nuisance-free:
