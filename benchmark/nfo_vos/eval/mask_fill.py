@@ -127,21 +127,33 @@ def main():
     for a, label, col in PLOT:
         if a not in S:
             continue
+        if len(set(lens)) > 1:
+            # clips of different length (pass run): the drop is front-loaded (≈ 20% within 30 frames, then level), so
+            # a straight-line trend misdescribes it; draw the median over the clips still running, 5-frame smoothed
+            med = np.array([np.median([f[j] / f[K0] for f in F[a].values() if len(f) > j]) for j in k])
+            y = np.convolve(np.pad(med, 2, mode='edge'), np.ones(5) / 5, mode='valid')
+            ax.plot(k, y, color=col, lw=2.5, label=label)
+            ax.annotate(f'{y[-1]:.2f}', (k[-1], y[-1]), xytext=(6, 0), textcoords='offset points', va='center',
+                        fontsize=9, color=col, annotation_clip=False)
+            continue
         m, lo, hi, *_ = boot_mean(S[a], list(S[a]))
         y = lambda s: np.exp(s / 10 * (k - K0))
         ax.fill_between(k, y(lo), y(hi), color=col, alpha=0.15, lw=0)
         ax.plot(k, y(m), color=col, lw=2.5, label=label)
-        if len(set(lens)) > 1:
-            med = [np.median([f[j] / f[K0] for f in F[a].values() if len(f) > j]) for j in k]
-            ax.plot(k, med, color=col, lw=1, alpha=0.6)
         ax.annotate(f'{pct(m)} per 10 frames', (k[-1], y(m)[-1]), xytext=(6, 0), textcoords='offset points',
                     va='center', fontsize=9, color=col, annotation_clip=False)
+    if len(set(lens)) > 1:
+        for j in (K0, 40, 60, 80, kmax):
+            ax.annotate(f'n={sum(L > j for L in lens)}', (j, 0.02), xycoords=('data', 'axes fraction'), fontsize=7.5,
+                        color='#52514e', ha='center')
     ax.axhline(1, color='#52514e', lw=0.6, ls=':')
     ax.set_xlim(K0, kmax); ax.set_xlabel('frame in the clip')
     ax.set_ylabel(f'mask size relative to frame {K0}\n(mask area / person box area)')
-    what = (f'{len(lens)} clips of 40 frames' if len(set(lens)) == 1 else
-            f'{len(lens)} clips of {min(lens)}–{max(lens)} frames; thin: median, ≥ {MIN_N} clips')
-    ax.set_title(f'Fitted trend of mask size, NFO seq1–4 ({what}, 95% CI)', fontsize=9, loc='left')
+    if len(set(lens)) == 1:
+        ax.set_title(f'Fitted trend of mask size, NFO seq1–4 ({len(lens)} clips of 40 frames, 95% CI)', fontsize=9, loc='left')
+    else:
+        ax.set_title(f'Mask size over whole passes, NFO seq1–4 (median of {len(lens)} clips; n = clips still running)',
+                     fontsize=9, loc='left')
     ax.legend(loc='lower left', fontsize=8.5, frameon=False)
     for s in ('top', 'right'):
         ax.spines[s].set_visible(False)

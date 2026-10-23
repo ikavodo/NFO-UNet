@@ -7,6 +7,26 @@ video segmentation, so no field jargon on the poster (see Vocabulary). Source of
 **Takeaway under the title:** *A memory built from the model's own guesses compounds its mistakes, while evidence
 taken straight from pixels can't.*
 
+## Punches (one sentence + one figure each; everything else on the poster supports these)
+
+| # | sentence | figure | backed by |
+|---|---|---|---|
+| 0 | **Title:** Seeing people through foliage, without memory | — | — |
+| 1 | Behind branches, a walking person is visible only in pieces. The task: mark exactly the visible pieces. | seq4 00293: frame, crop, human label (7 separate visible pieces) | hand label |
+| 2 | Even people can't do this reliably: the annotator marked 79% of this body "unsure". | seq3 00287: crop + label, grey = unsure | hand label |
+| 3 | Video models remember their own answers, so their caution sticks: within 30 frames their masks lose about a fifth of the person and never get it back. Ours keep their size. | `mask_fill_trend_pass.png` (whole passes; y axis from 0 on the poster) | `eval/mask_fill.py`, NFO_RUN=pass: from frame 30 to the end of the pass, SAM2.1 video 0.79× and SAMURAI 0.82× our mask size (CIs 0.70–0.89, 0.74–0.92), 61 clips |
+| 4 | Branches stay still, the person moves: stacking the last frames, aligned to the person, blurs the foliage and builds up the person. | one row of `nfo_inputs.jpg`: frame, empty scene, integral image, our mask | method |
+| 5 | We score what masks are for: following the person, and keeping them recognisable. | three icons | benchmark |
+| 6 | Clearly better at following the person (0.70 vs 0.63), as good as the best video models on everything else, with no memory at all. | three result bars | rescore 1945844 |
+| 7 | Every ingredient earns its place: the position hint buys tracking, the empty scene removes false pixels, the integral image adds real person evidence. | ablation bars | rescore 1945844 |
+| 8 | Next: how far do two annotators agree, and does our lead grow over whole crossings? | — | open |
+
+Takeaway line under the title (punch 3 in one sentence): *A memory built from the model's own guesses compounds
+its mistakes, while evidence taken straight from pixels can't.*
+
+Example frames chosen 2026-10-23: seq4 00293 (task), seq3 00287 (annotation). Contact sheets:
+`images/benchmark/downstream/modal_candidates_seq{2,34}.jpg`.
+
 ## Structure: three columns, six panels
 
 Panel titles are the questions a non-specialist would ask.
@@ -56,9 +76,26 @@ Panel titles are the questions a non-specialist would ask.
   - prompting with the person's position every frame: better tracking, more false pixels;
   - the empty-scene reference: removes the false pixels;
   - the stacked past frames: real person evidence (a detector recognises the person more often), not just bigger masks.
-- One headline line: tracking clearly better than SAMURAI (+0.07 box AUC), segmentation on par, at similar speed
-  (61 vs 53 ms per frame).
+- One headline line: tracking clearly better than SAMURAI, segmentation and recognition on par, at similar speed
+  (61 vs 53 ms per frame), without memory.
 - Figure: horizontal "adds / costs" bars instead of the ablation table (new).
+
+Numbers (rescore job 1945844, 2026-10-23, recognition at N = 5; ours = mean of 3 seeds):
+
+| question | ours | SAMURAI | SAM2.1 video | verdict |
+|---|---|---|---|---|
+| follows the person (box AUC, all 61 clips) | 0.70 | 0.63 | 0.62 | better, +0.065, every seed's CI excludes 0 |
+| visible pixels right (hand J, 23 labelled test frames, seq2–4) | 0.76 | 0.75 | 0.76 | on par |
+| cut-out recognisable (detector confidence, 5-frame stacks, all clips) | 0.68 | 0.69 | 0.68 | on par |
+
+| ingredient (all clips) | tracking | recognition conf | hand J |
+|---|---|---|---|
+| position hint every frame (trk − SAMURAI) | +0.04 | −0.06 | −0.02 |
+| empty-scene reference (adapter without integral image − trk) | +0.00 | +0.03 | +0.02 |
+| integral image (ours − without it, 3 seeds) | +0.024 | +0.022 | +0.016 |
+
+Recognition robustness as the stack grows: `images/benchmark/downstream/recog_vs_N.png` (seed 0); keep the no-mask
+line in, beyond ~11 frames plain averaging beats every masked stack.
 
 ### 6. Where this is going
 - Second annotator: the human ceiling for segmentation; tells whether "on par" is already at that ceiling.
