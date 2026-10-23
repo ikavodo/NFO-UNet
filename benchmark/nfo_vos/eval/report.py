@@ -1,8 +1,12 @@
 """The benchmark table (design: docs/vos_benchmark/plan_downstream_benchmark.md, Task 5).
 
-Hand-label J / P / R per arm: every (window, hand frame inside the window) pair; seq1 brush masks (selection), seq2–4
-handAv with void (value 2) ignored (single test). Paired window-bootstrap Δ for the named pairs, on box AUC
-(results/benchmark/rr/downstream/box_gt.csv), recognition confidence (recog_N7_uniform_meanfill.csv) and hand J.
+Hand-label J / P / R per arm: every (window, hand frame inside the window) pair; seq1 brush masks (no void class),
+seq2–4 handAv with void (value 2) ignored. Paired window-bootstrap Δ for the named pairs, on box AUC
+(results/benchmark/rr/downstream/box_gt.csv), recognition confidence (recog_N<NFO_RECOG_N>_uniform_meanfill.csv) and
+hand J. Groups: all sequences (the headline since 2026-10-23), seq1 (where step 200 was selected, so not independent)
+and seq2–4 (the clean held-out check).
+Recognition N = 5 frames per composite (NFO_RECOG_N): the N at which SAM2.1 video and SAMURAI score highest in the
+N sweep (eval/recog_vs_N.py), i.e. the baselines' best case. It replaced the a-priori N = 7 on 2026-10-23.
 
   python -m benchmark.nfo_vos.eval.report
 """
@@ -20,7 +24,8 @@ from benchmark.nfo_vos.eval import box_metrics as BM
 SEEDS = ('adapter-pf', 'adapter-s1', 'adapter-s2')
 ARMS = ('b0-c2', 't1-c2', 'trkbox', 'trk', *SEEDS, *(f'{a}-noC' for a in SEEDS))
 PAIRS = (('trk', 't1-c2'), *((a, 't1-c2') for a in SEEDS), ('adapter-pf', 'trk'), *((a, f'{a}-noC') for a in SEEDS))
-GROUPS = (('seq1 (selection)', ('seq1',)), ('seq2-4 (test)', ('seq2', 'seq3', 'seq4')))
+GROUPS = (('seq1-4 (all)', TR.ALL_SEQS), ('seq1 (selection)', ('seq1',)), ('seq2-4 (test)', ('seq2', 'seq3', 'seq4')))
+RECOG_N = int(os.environ.get('NFO_RECOG_N', 5))
 
 
 def hand_rows(arms=ARMS):
@@ -68,7 +73,7 @@ def delta(win, a, b, ids, B=2000):
 def main():
     hr = hand_rows()
     box = list(csv.DictReader(open(f'{BM.OUT}/box_gt.csv')))
-    rec = list(csv.DictReader(open(f"{BM.OUT}/recog_N7_uniform_meanfill{os.environ.get('NFO_RECOG_TAG', '')}.csv")))
+    rec = list(csv.DictReader(open(f"{BM.OUT}/recog_N{RECOG_N}_uniform_meanfill{os.environ.get('NFO_RECOG_TAG', '')}.csv")))
     sq = {**seq_of(box), **seq_of(rec), **seq_of(hr)}
     W = {'hand J': per_window(hr, 'J'), 'hand P': per_window(hr, 'P'), 'hand R': per_window(hr, 'R'),
          'box AUC': per_window(box, 'auc'), 'recog conf': per_window(rec, 'conf')}

@@ -13,6 +13,7 @@ W = 40 is the largest W with 3W/4 + W ≤ (4/7)·L_min(74), i.e. every segment k
 
     NFO_RUN=rr python -m benchmark.nfo_vos.trials --seqs seq1            # pilot
     NFO_RUN=rr python -m benchmark.nfo_vos.trials --seqs seq1 seq2 seq3 seq4   # full run
+    NFO_RUN=pass python -m benchmark.nfo_vos.trials --to-pass-end      # the windows run to the end of the pass
 Writes results/benchmark/$NFO_RUN/trials.json. The old overlapping-window pilot lives in
 results/benchmark/pilot (its trials.json is kept; this module no longer generates it).
 """
@@ -210,10 +211,25 @@ def build_trials(seqs=('seq1',)):
     return trials
 
 
+def to_pass_end(src='results/benchmark/rr/trials.json'):
+    """The admissible benchmark windows with frames extended from t0 to the end of their pass (segment): same t0,
+    prompt and warm-up, so a window's 40 benchmark frames are the prefix of its long clip. For eval/mask_fill only."""
+    trials = [dict(t, frames=list(range(t['t0'], t['seg_end'] + 1))) for t in json.load(open(src)) if t['admissible']]
+    return trials
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--seqs', nargs='+', default=['seq1'])
+    ap.add_argument('--to-pass-end', action='store_true', help='NFO_RUN=pass: benchmark windows run to the end of the pass')
     a = ap.parse_args()
+    if a.to_pass_end:
+        assert RUN != 'rr', 'set NFO_RUN (e.g. pass): this must not overwrite the benchmark trials'
+        trials = to_pass_end()
+        os.makedirs(RES, exist_ok=True)
+        json.dump(trials, open(OUT, 'w'), indent=1)
+        L = [len(t['frames']) for t in trials]
+        return print(f'{len(trials)} clips, {min(L)}–{max(L)} frames ({sum(L)} in total) -> {OUT}')
     trials = build_trials(tuple(a.seqs))
     os.makedirs(RES, exist_ok=True)
     with open(OUT, 'w') as f:

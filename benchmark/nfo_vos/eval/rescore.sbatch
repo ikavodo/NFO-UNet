@@ -1,9 +1,9 @@
 #!/bin/bash
-# Final table in ONE environment: box AUC (box_metrics) and recognition (YOLO11m, N = 7, mean fill) for all final arms
+# Final table in ONE environment: box AUC (box_metrics) and recognition (YOLO11m, N = 5, mean fill) for all final arms
 # in one run each, then report.py. Earlier seeds were scored into separate CSVs; this puts them side by side.
 #   sbatch benchmark/nfo_vos/eval/rescore.sbatch
 # Writes results/benchmark/rr/downstream/box_gt.csv (the previous one is kept as box_gt_before_rescore.csv),
-# recog_N7_uniform_meanfill_final.csv, hand_rows.csv; the table goes to the log.
+# recog_N5_uniform_meanfill_final.csv, hand_rows.csv; the table goes to the log.
 # Needs: masks/<arm>/ for every arm below (cluster dumps), data/yolo11m.pt, ultralytics in $PYTHON's env.
 #SBATCH --job-name=nfo_rescore
 #SBATCH --nodes=1
@@ -25,6 +25,6 @@ hostname; nvidia-smi --query-gpu=name --format=csv,noheader; date
 for a in $ARMS; do n=$(ls results/benchmark/rr/masks/$a 2>/dev/null | wc -l); echo "masks/$a: $n windows"; [ "$n" -ge 61 ] || { echo "MISSING masks for $a"; exit 1; }; done
 [ -f $D/box_gt.csv ] && [ ! -f $D/box_gt_before_rescore.csv ] && cp $D/box_gt.csv $D/box_gt_before_rescore.csv
 "$PYTHON" -m benchmark.nfo_vos.eval.box_metrics score $ARMS
-"$PYTHON" -m benchmark.nfo_vos.eval.recognition 7 uniform nomask gtbox sam2ceil $ARMS
+"$PYTHON" -m benchmark.nfo_vos.eval.recognition 5 uniform nomask gtbox sam2ceil $ARMS
 "$PYTHON" -m benchmark.nfo_vos.eval.report
 date

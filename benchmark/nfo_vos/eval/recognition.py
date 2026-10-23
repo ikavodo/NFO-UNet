@@ -125,7 +125,7 @@ def main(N=7, weights='uniform', arms=('nomask', 'gtbox', 't1'), stride=None, mo
     """stride: frames between composites; default ⌊N/2⌋ (half-overlapping windows, every frame still covered)."""
     from ultralytics import YOLO as Y
     model = Y(YOLO)
-    N, trials = int(N), json.load(open('results/benchmark/rr/trials.json'))
+    N, trials = int(N), json.load(open(TR.OUT))
     stride = stride or max(1, N // 2)
     rows, dets, keep = [], {}, {}
     for t in trials:
@@ -169,7 +169,7 @@ def main(N=7, weights='uniform', arms=('nomask', 'gtbox', 't1'), stride=None, mo
 def report(rows, dets, arms, base=os.environ.get('NFO_BASE', 't1'), B=1000):
     """Group AP50 and mean conf; paired window-bootstrap Δ vs base for both (AP recomputed on each resample of windows)."""
     rng = np.random.default_rng(0)
-    for name, sel in [('seq1 (selection)', ('seq1',)), ('seq2-4 (test)', ('seq2', 'seq3', 'seq4'))]:
+    for name, sel in [('seq1-4 (all)', TR.ALL_SEQS), ('seq1 (selection)', ('seq1',)), ('seq2-4 (test)', ('seq2', 'seq3', 'seq4'))]:
         print(f'\n{name}\n{"arm":17s} n_comp  AP50   conf   ΔAP50 vs {base} [95% CI]      Δconf vs {base} [95% CI]')
         win = {a: {} for a in arms}
         for r in rows:
@@ -217,6 +217,6 @@ if __name__ == '__main__':
     if sys.argv[1] == 'report':                      # re-report from the saved CSV, no YOLO
         rows = list(csv.DictReader(open(f'{BM.OUT}/recog_N7_uniform_meanfill.csv')))
         report(rows, None, list(dict.fromkeys(r['arm'] for r in rows))); sys.exit()
-    trials = json.load(open('results/benchmark/rr/trials.json'))
+    trials = json.load(open(TR.OUT))
     ids = {trials[0]['id']} | {next(x['id'] for x in trials if x['seq'] == s) for s in ('seq2', 'seq3')}
     main(sys.argv[1], sys.argv[2], tuple(sys.argv[3:]), montage_ids=ids)

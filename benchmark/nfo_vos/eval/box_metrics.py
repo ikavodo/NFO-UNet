@@ -10,7 +10,7 @@ protocol as ported below from samurai@76ba195 lib/test/analysis/extract_results.
 A window (40 frames) is one sequence; group scores are means over windows.
 
   python -m benchmark.nfo_vos.eval.box_metrics ceiling            # hand-mask box vs GT box, 43 hand frames
-  python -m benchmark.nfo_vos.eval.box_metrics score b0 t1 ...   # results/benchmark/rr/downstream/box_gt.csv
+  python -m benchmark.nfo_vos.eval.box_metrics score b0 t1 ...   # results/benchmark/$NFO_RUN/downstream/box_gt.csv (NFO_RUN default rr)
 """
 import csv
 import functools
@@ -23,8 +23,8 @@ import numpy as np
 from benchmark.nfo_vos import trials as TR
 from gen_data.nfo_pseudo_masks.gen_nfo_pseudo_masks import gt_to_native
 
-MASKS = 'results/benchmark/rr/masks'
-OUT = 'results/benchmark/rr/downstream'
+MASKS = f'{TR.RES}/masks'
+OUT = f'{TR.RES}/downstream'
 IMG = 'images/benchmark/downstream'
 # samurai@76ba195 lib/test/analysis/extract_results.py:115-117 (plot_bin_gap 0.05); P / P_norm read at index 20
 TH_OVERLAP = np.arange(0.0, 1.0 + 0.05, 0.05)
@@ -133,7 +133,7 @@ def _ceiling_montage(rows):
 
 def score(arms, ref='gt'):
     """Per window × arm scores vs the reference boxes; prints group means and window-bootstrap Δ vs t1."""
-    trials = json.load(open('results/benchmark/rr/trials.json'))
+    trials = json.load(open(TR.OUT))
     os.makedirs(OUT, exist_ok=True)
     rows = []
     for t in trials:

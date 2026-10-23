@@ -15,6 +15,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 
+from benchmark.nfo_vos import trials as TR
 from benchmark.nfo_vos.eval import box_metrics as BM
 from benchmark.nfo_vos.eval.recognition import ap50
 
@@ -84,7 +85,7 @@ def montage(Ns=(7, 21), arms=(('nomask', 'no mask'), ('adapter-pf', 'adapter'), 
     from benchmark.nfo_vos.eval.recognition import YOLO, arm_masks, background, frame, gt_shifts, \
         masked_composite, score_yolo
     model = Y(YOLO)
-    trials = json.load(open('results/benchmark/rr/trials.json'))
+    trials = json.load(open(TR.OUT))
     rows = []
     for seq in ('seq2', 'seq3', 'seq4'):
         t = next(x for x in trials if x['seq'] == seq)

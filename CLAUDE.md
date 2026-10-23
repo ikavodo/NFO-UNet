@@ -42,7 +42,7 @@ Frozen SAM2.1-b+ **image** predictor, per frame, no memory. Per frame t of an NF
 Things that mattered (each measured; details in the findings doc): the kernel-f16 tracker for composite alignment
 (v3), the adaptive gate threshold (train/test parity), loss v3.4 over the balanced and simple variants, step 200,
 and the composite itself (vs the `-noC` control, over 3 seeds: box AUC +0.024 ± 0.005, recognition conf
-+0.025 ± 0.004, hand J +0.016 ± 0.013). Main result vs SAMURAI over 3 seeds on seq2–4: box AUC 0.717 / 0.723 / 0.715
++0.025 ± 0.004, hand J +0.016 ± 0.013). Main result vs SAMURAI over 3 seeds on seq2–4 (recognition at N = 7; to be rescored at N = 5 on all sequences): box AUC 0.717 / 0.723 / 0.715
 vs 0.646; hand J 0.761 / 0.763 / 0.757 vs 0.750; recognition AP50 0.926 / 0.915 / 0.926 vs 0.916.
 
 Closed directions (do not reopen without new evidence): SAM2 memory variants (the oracle bound is +0.012 J), the
@@ -76,8 +76,10 @@ $PY -m benchmark.nfo_vos.tools.remote_smoke                            # before 
 $PY -m benchmark.nfo_vos.adapter.fusion_adapter 1000 0                 # train (steps, seed); cluster: adapter/fusion_adapter.sbatch
 $PY -m benchmark.nfo_vos.eval.dump_arms adapter-pf 0                   # masks of one arm, one window; cluster: eval/dump_arms.sbatch
 $PY -m benchmark.nfo_vos.eval.box_metrics score b0-c2 t1-c2 trk adapter-pf ...   # -> results/benchmark/rr/downstream/box_gt.csv
-$PY -m benchmark.nfo_vos.eval.recognition ...                          # see its docstring; -> recog_N7_*.csv
-$PY -m benchmark.nfo_vos.eval.report                                   # the table
+$PY -m benchmark.nfo_vos.eval.recognition 5 uniform ARMS...             # see its docstring; -> recog_N5_*.csv (N = 5 since 2026-10-23)
+$PY -m benchmark.nfo_vos.eval.report                                   # the table: seq1-4 (headline), seq1, seq2-4
+$PY -m benchmark.nfo_vos.eval.mask_fill [score]                        # mask-size trend per clip (NFO_RUN=pass: clips to the end of the pass)
+bash benchmark/nfo_vos/eval/pass_run.sh                                # cluster: the pass run's trials + mask arrays
 TC_BATCH=1 $PY -m benchmark.nfo_vos.tools.timing ours|b0|t1
 sbatch benchmark/nfo_vos/eval/rescore.sbatch                            # cluster: final table (box AUC + recognition for all final arms, one env, then report)
 ```
