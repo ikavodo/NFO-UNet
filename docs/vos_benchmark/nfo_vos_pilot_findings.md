@@ -239,6 +239,9 @@ it **ranks methods like the hand masks**.
   retraining; arms `adapter-<seed>-h4` / `-h5`, `eval/dump_arms.py`). Decided on **seq1 only**: take the shortest
   history that is not worse than 6 in both box AUC and recognition confidence (N = 5), each averaged over the 3 seeds;
   otherwise keep 6. All sequences are then reported with the chosen history.
+  **Outcome (2026-10-23): keep 6.** seq1 box AUC, 3-seed mean: 6 frames 0.630, 5 frames 0.624 (Δ −0.005
+  [−0.009, −0.002]), 4 frames 0.620 (Δ −0.009 [−0.015, −0.004]); every seed lower with a shorter history, so both fail
+  the box-AUC half of the rule and recognition does not enter the decision. Not revisited on other data.
 - **Full-pass protocol** (second protocol, next to the 40-frame windows): one clip per pass from its earliest benchmark
   start to the end of the pass (32 clips, 44–155 frames, every frame once; `trials --to-pass-end --first-per-pass`,
   NFO_RUN=fullpass). Motivation: following a person through a whole crossing is the realistic use, and memory drift
