@@ -24,6 +24,9 @@ from benchmark.nfo_vos.eval import box_metrics as BM
 SEEDS = ('adapter-pf', 'adapter-s1', 'adapter-s2')
 ARMS = ('b0-c2', 't1-c2', 'trkbox', 'trk', *SEEDS, *(f'{a}-noC' for a in SEEDS))
 PAIRS = (('trk', 't1-c2'), *((a, 't1-c2') for a in SEEDS), ('adapter-pf', 'trk'), *((a, f'{a}-noC') for a in SEEDS))
+# extra arms (e.g. history variants adapter-pf-h4): appended to the table, paired with their base arm
+EXTRA = tuple(os.environ.get('NFO_EXTRA_ARMS', '').split())
+ARMS, PAIRS = ARMS + EXTRA, PAIRS + tuple((a, a.rsplit('-h', 1)[0]) for a in EXTRA if '-h' in a)
 GROUPS = (('seq1-4 (all)', TR.ALL_SEQS), ('seq1 (selection)', ('seq1',)), ('seq2-4 (test)', ('seq2', 'seq3', 'seq4')))
 RECOG_N = int(os.environ.get('NFO_RECOG_N', 5))
 

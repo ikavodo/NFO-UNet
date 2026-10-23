@@ -228,6 +228,22 @@ it **ranks methods like the hand masks**.
 5. **Not pursued:**
    - Diffusion-VAS (amodal completion, a different task and non-causal).
 
+## 9. Protocol changes of 2026-10-23 (fixed before the new runs)
+
+- **Recognition at N = 5** frames per composite (was N = 7, chosen a priori). N = 5 is where SAM2.1 video and SAMURAI
+  score highest in the N sweep (`eval/recog_vs_N.py`), i.e. the baselines' best case. The sweep stays as a supplement.
+- **Reporting over all sequences** (seq1–4) as the headline, with seq1 and seq2–4 alongside. Step 200 was selected on
+  seq1, so seq1 is not independent; seq2–4 remains the clean held-out check. Hand-label scores stay per group (seq1
+  brush masks have no void class).
+- **Composite history** (pre-registered rule): candidates 4, 5, 6 past frames (all inside the training range 4–8; no
+  retraining; arms `adapter-<seed>-h4` / `-h5`, `eval/dump_arms.py`). Decided on **seq1 only**: take the shortest
+  history that is not worse than 6 in both box AUC and recognition confidence (N = 5), each averaged over the 3 seeds;
+  otherwise keep 6. All sequences are then reported with the chosen history.
+- **Full-pass protocol** (second protocol, next to the 40-frame windows): one clip per pass from its earliest benchmark
+  start to the end of the pass (32 clips, 44–155 frames, every frame once; `trials --to-pass-end --first-per-pass`,
+  NFO_RUN=fullpass). Motivation: following a person through a whole crossing is the realistic use, and memory drift
+  (§`eval/mask_fill.py`: masks of the memory methods shrink ≈ 10% per 10 frames, ours ≈ 1%) is hidden by short clips.
+
 ## Code map
 
 - `benchmark/nfo_vos/downstream/`:

@@ -34,12 +34,13 @@ def _shift_x(x, dx):
 
 
 @torch.no_grad()
-def fast_masks(pred, net, t, tau=3.5, noC=False):
+def fast_masks(pred, net, t, tau=3.5, noC=False, hist=6):
     """Adapter masks of one NFO window. Each frame is encoded ONCE (shared by tracker, adapter and decoder), the empty
     scene once per window, each frame's gate once, the composite on the GPU (61 ms/frame vs 445 ms for the original
     path that re-encoded frame / composite / empty scene per frame; same box AUC and hand J, 2026-10-20).
     net None: the 'trk' arm (per-frame SAM2, tracker box + point, every frame). noC: the composite removed
-    (C := empty scene, a := 0). Frames j < 6 have no history and use the tracker prompts alone.
+    (C := empty scene, a := 0). hist: past frames in the composite (training drew 4..8). Frames j < hist have no history
+    and use the tracker prompts alone.
     Returns ([T, H, W] bool, s / frame)."""
     seq, fr = t['seq'], t['frames']
     w0, w1 = t['warmup']
@@ -72,7 +73,7 @@ def fast_masks(pred, net, t, tau=3.5, noC=False):
     wh = (g[2] - g[0], g[3] - g[1])
     Xg = torch.as_tensor(np.stack(Xn), device='cuda', dtype=torch.float32)
     Gg = torch.stack(G)
-    wk = torch.as_tensor(np.exp(-np.arange(5, -1, -1) / tau), device='cuda', dtype=torch.float32)
+    wk = torch.as_tensor(np.exp(-np.arange(hist - 1, -1, -1) / tau), device='cuda', dtype=torch.float32)
     wk = (wk / wk.sum())[:, None, None]
     out = np.zeros((len(fr), TR.NATIVE_H, TR.NATIVE_W), bool)
     for j in range(len(fr)):
@@ -82,13 +83,13 @@ def fast_masks(pred, net, t, tau=3.5, noC=False):
         f['box'] = f['box_trk'] = torch.as_tensor(box[None], device='cuda')
         f['pt'] = f['trk'] = torch.as_tensor(pt[None], device='cuda')
         with torch.autocast('cuda', dtype=torch.bfloat16):
-            if j < 6 or net is None:                                     # no history yet / trk arm: tracker prompts only
+            if j < hist or net is None:                                     # no history yet / trk arm: tracker prompts only
                 low = decode(pred.model, f, point=True)
             else:
                 cs = list(range(max(0, j - 12), j + 1))
-                fx = theil_at(cs, [kc[l, 0] for l in cs], [j] + list(range(j - 6, j)))
-                dx = torch.tensor([fx[j] - fx[l] for l in range(j - 6, j)], device='cuda', dtype=torch.float32)
-                A, Gw = _shift_x(Xg[j - 6:j], dx), _shift_x(Gg[j - 6:j], dx)
+                fx = theil_at(cs, [kc[l, 0] for l in cs], [j] + list(range(j - hist, j)))
+                dx = torch.tensor([fx[j] - fx[l] for l in range(j - hist, j)], device='cuda', dtype=torch.float32)
+                A, Gw = _shift_x(Xg[j - hist:j], dx), _shift_x(Gg[j - hist:j], dx)
                 mass = (wk * Gw).sum(0)
                 C = torch.where(mass > 1e-6, (wk * Gw * A).sum(0) / mass.clamp(min=1e-6), (wk * A).sum(0))
                 if noC:

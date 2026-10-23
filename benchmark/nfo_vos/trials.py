@@ -14,6 +14,7 @@ W = 40 is the largest W with 3W/4 + W ≤ (4/7)·L_min(74), i.e. every segment k
     NFO_RUN=rr python -m benchmark.nfo_vos.trials --seqs seq1            # pilot
     NFO_RUN=rr python -m benchmark.nfo_vos.trials --seqs seq1 seq2 seq3 seq4   # full run
     NFO_RUN=pass python -m benchmark.nfo_vos.trials --to-pass-end      # the windows run to the end of the pass
+    NFO_RUN=fullpass python -m benchmark.nfo_vos.trials --to-pass-end --first-per-pass   # one clip per pass
 Writes results/benchmark/$NFO_RUN/trials.json. The old overlapping-window pilot lives in
 results/benchmark/pilot (its trials.json is kept; this module no longer generates it).
 """
@@ -211,10 +212,19 @@ def build_trials(seqs=('seq1',)):
     return trials
 
 
-def to_pass_end(src='results/benchmark/rr/trials.json'):
+def to_pass_end(first_only=False, src='results/benchmark/rr/trials.json'):
     """The admissible benchmark windows with frames extended from t0 to the end of their pass (segment): same t0,
-    prompt and warm-up, so a window's 40 benchmark frames are the prefix of its long clip. For eval/mask_fill only."""
+    prompt and warm-up, so a window's 40 benchmark frames are the prefix of its long clip. All 61 (overlapping within a
+    pass; eval/mask_fill) or first_only: the earliest start of each pass, 32 clips, every frame used once (the
+    full-pass scoring protocol; its clips are a subset of the former, same ids and masks)."""
     trials = [dict(t, frames=list(range(t['t0'], t['seg_end'] + 1))) for t in json.load(open(src)) if t['admissible']]
+    if first_only:
+        first = {}
+        for t in trials:
+            k = (t['seq'], t['seg_idx'])
+            if k not in first or t['t0'] < first[k]['t0']:
+                first[k] = t
+        trials = [t for t in trials if first[(t['seq'], t['seg_idx'])] is t]
     return trials
 
 
@@ -222,10 +232,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--seqs', nargs='+', default=['seq1'])
     ap.add_argument('--to-pass-end', action='store_true', help='NFO_RUN=pass: benchmark windows run to the end of the pass')
+    ap.add_argument('--first-per-pass', action='store_true', help='with --to-pass-end: one clip per pass (NFO_RUN=fullpass)')
     a = ap.parse_args()
     if a.to_pass_end:
         assert RUN != 'rr', 'set NFO_RUN (e.g. pass): this must not overwrite the benchmark trials'
-        trials = to_pass_end()
+        trials = to_pass_end(a.first_per_pass)
         os.makedirs(RES, exist_ok=True)
         json.dump(trials, open(OUT, 'w'), indent=1)
         L = [len(t['frames']) for t in trials]

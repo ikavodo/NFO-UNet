@@ -18,7 +18,7 @@
 set -e
 PYTHON=${PYTHON:-/home/wiss/akid/miniconda3/envs/comp_vis/bin/python3}
 export OMP_NUM_THREADS=8 PYTHONPATH=. NFO_RECOG_TAG=_final
-ARMS="b0-c2 t1-c2 trkbox trk adapter-pf adapter-s1 adapter-s2 adapter-pf-noC adapter-s1-noC adapter-s2-noC"
+ARMS="b0-c2 t1-c2 trkbox trk adapter-pf adapter-s1 adapter-s2 adapter-pf-noC adapter-s1-noC adapter-s2-noC $NFO_EXTRA_ARMS"   # extra: e.g. history variants
 D=results/benchmark/rr/downstream
 hostname; nvidia-smi --query-gpu=name --format=csv,noheader; date
 "$PYTHON" -c "import ultralytics; print('ultralytics', ultralytics.__version__)"

@@ -6,11 +6,13 @@ Writes results/benchmark/rr/masks/<arm>/<trial_id>.npz in the B0/T1 schema (mask
   adapter-pf      per-frame adapter, v3.4 loss, step 200, seed 0 (frames < 6 have no composite -> trk)
   adapter-s1/-s2  the same, seeds 1 / 2
   <arm>-noC       the adapter with the composite removed at inference (C := empty scene, a := 0)
+  <arm>-h<n>      the adapter with n past frames in the composite instead of 6 (n in the training range 4..8)
 
     PYTHONPATH=. ../samurai/.venv/bin/python -m benchmark.nfo_vos.eval.dump_arms ARM TRIAL_INDEX
 """
 import json
 import os
+import re
 import sys
 
 import numpy as np
@@ -48,8 +50,10 @@ def main(arm, idx):
             m[j, max(b[1], 0):b[3] + 1, max(b[0], 0):b[2] + 1] = True
         np.savez_compressed(path, masks=m, frames=np.array(t['frames']), boxes=boxes)
         return print(arm, t['id'], 'saved', path)
-    net = None if arm == 'trk' else load_net(pred, ARM_CKPT[arm.removesuffix('-noC')])
-    m, sec = fast_masks(pred, net, t, noC=arm.endswith('-noC'))
+    h = re.search(r'-h(\d+)$', arm)
+    base = arm.removesuffix(h.group(0)) if h else arm
+    net = None if base == 'trk' else load_net(pred, ARM_CKPT[base.removesuffix('-noC')])
+    m, sec = fast_masks(pred, net, t, noC=base.endswith('-noC'), hist=int(h.group(1)) if h else 6)
     np.savez_compressed(path, masks=m, frames=np.array(t['frames']))
     print(arm, t['id'], 'saved', path, f'{1000 * sec:.0f} ms/frame', 'mean area px', int(m.sum((1, 2)).mean()))
 
