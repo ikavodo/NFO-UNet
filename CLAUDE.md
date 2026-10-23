@@ -71,6 +71,7 @@ All commands from the repo root, `PYTHONPATH=.`; `$PY` = the benchmark env (see 
 
 ```bash
 $PY -m pytest benchmark/nfo_vos/tests -q                               # 29 tests, GPU ones skip without CUDA
+$PY -m pytest benchmark/nfo_vos/tests/test_trials.py::test_each_frame_used_at_most_once   # one test
 $PY -m benchmark.nfo_vos.tools.remote_smoke                            # before any cluster job
 $PY -m benchmark.nfo_vos.adapter.fusion_adapter 1000 0                 # train (steps, seed); cluster: adapter/fusion_adapter.sbatch
 $PY -m benchmark.nfo_vos.eval.dump_arms adapter-pf 0                   # masks of one arm, one window; cluster: eval/dump_arms.sbatch
@@ -78,6 +79,7 @@ $PY -m benchmark.nfo_vos.eval.box_metrics score b0-c2 t1-c2 trk adapter-pf ...  
 $PY -m benchmark.nfo_vos.eval.recognition ...                          # see its docstring; -> recog_N7_*.csv
 $PY -m benchmark.nfo_vos.eval.report                                   # the table
 TC_BATCH=1 $PY -m benchmark.nfo_vos.tools.timing ours|b0|t1
+sbatch benchmark/nfo_vos/eval/rescore.sbatch                            # cluster: final table (box AUC + recognition for all final arms, one env, then report)
 ```
 
 Refactor guard: `parity_snapshot save before.pkl`, change code, `save after.pkl`, `diff before.pkl after.pkl` must
