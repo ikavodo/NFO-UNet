@@ -104,6 +104,24 @@ def late_ratio(F, a, ids):
     return {i: np.mean(rel(F[a][i]) - rel(F['ours'][i])) for i in ids if len(F['ours'][i]) > K1}
 
 
+def median_curve(F_a, k, B=1000):
+    """Median of f(j) / f(K0) over the clips still running at j, 5-frame smoothed, for j in k; 95% band from resampling
+    passes (all clips of a drawn pass enter together)."""
+    ids = sorted(F_a)
+    R = np.full((len(ids), len(k)), np.nan)
+    for r, i in enumerate(ids):
+        f = F_a[i]; n = min(len(f) - K0, len(k))
+        R[r, :n] = f[K0:K0 + n] / f[K0]
+    smooth = lambda m: np.convolve(np.pad(m, 2, mode='edge'), np.ones(5) / 5, mode='valid')
+    rows = {}
+    for r, i in enumerate(ids):
+        rows.setdefault(pass_of(i), []).append(r)
+    g = [rows[p] for p in sorted(rows)]
+    draws = np.random.default_rng(0).integers(0, len(g), (B, len(g)))
+    bs = np.array([smooth(np.nanmedian(R[[r for j in d for r in g[j]]], 0)) for d in draws])
+    return smooth(np.nanmedian(R, 0)), np.quantile(bs, .025, 0), np.quantile(bs, .975, 0)
+
+
 def pct(v):
     return f'{(np.exp(v) - 1) * 100:+.0f}%'
 
@@ -147,8 +165,8 @@ def main():
         if len(set(lens)) > 1:
             # clips of different length (pass run): the drop is front-loaded (≈ 20% within 30 frames, then level), so
             # a straight-line trend misdescribes it; draw the median over the clips still running, 5-frame smoothed
-            med = np.array([np.median([f[j] / f[K0] for f in F[a].values() if len(f) > j]) for j in k])
-            y = np.convolve(np.pad(med, 2, mode='edge'), np.ones(5) / 5, mode='valid')
+            y, lo, hi = median_curve(F[a], k)
+            ax.fill_between(k, lo, hi, color=col, alpha=0.15, lw=0)
             ax.plot(k, y, color=col, lw=2.5, label=label)
             ax.annotate(f'{y[-1]:.2f}', (k[-1], y[-1]), xytext=(6, 0), textcoords='offset points', va='center',
                         fontsize=9, color=col, annotation_clip=False)
@@ -169,7 +187,8 @@ def main():
     if len(set(lens)) == 1:
         ax.set_title(f'Fitted trend of mask size, NFO seq1–4 ({len(lens)} clips of 40 frames, 95% CI)', fontsize=9, loc='left')
     else:
-        ax.set_title(f'Mask size over whole passes, NFO seq1–4 (median of {len(lens)} clips; n = clips still running)',
+        ax.set_title(f'Mask size over whole passes, NFO seq1–4 (median of {len(lens)} clips, 95% CI over passes;\n'
+                     f'n = clips still running)',
                      fontsize=9, loc='left')
     ax.legend(loc='lower left', fontsize=8.5, frameon=False)
     for s in ('top', 'right'):
