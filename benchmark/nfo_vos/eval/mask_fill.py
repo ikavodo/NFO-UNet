@@ -18,6 +18,7 @@ per k. trk keeps a fixed-size tracker box prompt, so its flat trend is partly by
 
   python -m benchmark.nfo_vos.eval.mask_fill score   # results/benchmark/$NFO_RUN/downstream/mask_fill.csv (≈ 3 min for rr)
   python -m benchmark.nfo_vos.eval.mask_fill         # trends + images/benchmark/downstream/mask_fill_trend[_<run>].png
+                                                     # (pass run also mask_fill_ratio_pass.png: memory arm / ours)
 Pass run on the cluster: eval/pass_run.sh.
 """
 import csv
@@ -122,6 +123,37 @@ def median_curve(F_a, k, B=1000):
     return smooth(np.nanmedian(R, 0)), np.quantile(bs, .025, 0), np.quantile(bs, .975, 0)
 
 
+def plot_ratio(F, kmax, lens):
+    """Pass run: per clip and frame, the memory arm's size / ours (both relative to frame K0); median over the clips
+    still running with its 95% band over passes. Paired, so the pass-to-pass difficulty shared by all arms cancels."""
+    k = np.arange(K0, kmax + 1)
+    fig, ax = plt.subplots(figsize=(6.4, 3.8), dpi=150)
+    for a, label, col in PLOT[:2]:
+        if a not in F:
+            continue
+        y, lo, hi = median_curve({i: F[a][i] / F['ours'][i] for i in F['ours'] if i in F[a]}, k)
+        ax.fill_between(k, lo, hi, color=col, alpha=0.18, lw=0)
+        ax.plot(k, y, color=col, lw=2.5, label=label.split(' (')[0] + ' / ours')
+    for j in (K0, 40, 60, 80, kmax):
+        ax.annotate(f'n={sum(L > j for L in lens)}', (j, 0.02), xycoords=('data', 'axes fraction'), fontsize=7.5,
+                    color='#52514e', ha='center')
+    ax.axhline(1, color='#2a78d6', lw=1.2, ls='--')
+    ax.annotate('same size as ours', (K0 + 1, 1), xytext=(0, 4), textcoords='offset points', va='bottom', fontsize=8.5,
+                color='#2a78d6')
+    ax.set_xlim(K0, kmax); ax.set_ylim(0, 1.25); ax.set_xlabel('frame in the clip')
+    ax.set_ylabel(f'mask size relative to ours\n(each relative to frame {K0})')
+    ax.set_title(f'Memory models vs ours over whole passes, NFO seq1–4\n(median of {len(lens)} clips, '
+                 '95% CI over passes; n = clips still running)', fontsize=9, loc='left')
+    ax.legend(loc='lower left', bbox_to_anchor=(0, 0.06), fontsize=8.5, frameon=False)
+    for s in ('top', 'right'):
+        ax.spines[s].set_visible(False)
+    ax.grid(axis='y', color='#e6e5e0', lw=0.8); ax.set_axisbelow(True)
+    fig.tight_layout()
+    out = OUT.replace('mask_fill_trend', 'mask_fill_ratio')
+    fig.savefig(out)
+    print('wrote', out)
+
+
 def pct(v):
     return f'{(np.exp(v) - 1) * 100:+.0f}%'
 
@@ -197,6 +229,8 @@ def main():
     fig.tight_layout(); fig.subplots_adjust(right=0.78)
     fig.savefig(OUT)
     print('wrote', OUT)
+    if len(set(lens)) > 1:
+        plot_ratio(F, kmax, lens)
 
 
 if __name__ == '__main__':
