@@ -4,6 +4,7 @@
 # Writes results/benchmark/{pass,fullpass}/; fullpass/masks is a link to pass/masks. The benchmark run (rr) is untouched.
 #   bash benchmark/nfo_vos/eval/pass_run.sh baselines                 # trials + B0/T1 arrays (independent of our arms)
 #   bash benchmark/nfo_vos/eval/pass_run.sh ours trk adapter-pf ...   # our arms (e.g. adapter-pf-h4 once chosen)
+#   bash benchmark/nfo_vos/eval/pass_run.sh fullpass adapter-pf-noC ...  # arms needed only on the 32 fullpass clips
 # Then (cluster or locally after copying results/benchmark/pass/masks back):
 #   NFO_RUN=pass  python -m benchmark.nfo_vos.eval.mask_fill score && NFO_RUN=pass python -m benchmark.nfo_vos.eval.mask_fill
 #   NFO_RUN=fullpass python -m benchmark.nfo_vos.eval.box_metrics score <arms>; ...eval.recognition 5 uniform <arms>; ...eval.report
@@ -25,6 +26,10 @@ if [ "$STAGE" = baselines ]; then
   NFO_TAG=-c2 sbatch --export=ALL --array=0-$((2 * N - 1)) benchmark/nfo_vos/baselines/run_sam2_video.sbatch
 elif [ "$STAGE" = ours ]; then
   for A in "$@"; do ARM=$A sbatch --export=ALL --array=0-$((N - 1)) --time=01:00:00 benchmark/nfo_vos/eval/dump_arms.sbatch; done
+elif [ "$STAGE" = fullpass ]; then
+  # writes through fullpass/masks -> pass/masks; the fullpass clips are a subset of the pass clips (same ids)
+  N=$("$PYTHON" -c "import json; print(len(json.load(open('results/benchmark/fullpass/trials.json'))))")
+  for A in "$@"; do NFO_RUN=fullpass ARM=$A sbatch --export=ALL --array=0-$((N - 1)) --time=01:00:00 benchmark/nfo_vos/eval/dump_arms.sbatch; done
 else
-  echo "usage: $0 baselines | ours ARM..."; exit 1
+  echo "usage: $0 baselines | ours ARM... | fullpass ARM..."; exit 1
 fi
