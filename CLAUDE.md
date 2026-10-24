@@ -41,7 +41,7 @@ Frozen SAM2.1-b+ **image** predictor, per frame, no memory. Per frame t of an NF
 
 Things that mattered (each measured; details in the findings doc): the kernel-f16 tracker for integral image alignment
 (v3), the adaptive gate threshold (train/test parity), loss v3.4 over the balanced and simple variants, step 200,
-and the stack itself (vs the `-noC` control, over 3 seeds: box AUC +0.024 ± 0.005, recognition conf
+and the integral image itself (vs the `-noC` control, over 3 seeds: box AUC +0.024 ± 0.005, recognition conf
 +0.025 ± 0.004, hand J +0.016 ± 0.013). Main result vs SAMURAI over 3 seeds on seq2–4 (recognition at N = 7; to be rescored at N = 5 on all sequences): box AUC 0.717 / 0.723 / 0.715
 vs 0.646; hand J 0.761 / 0.763 / 0.757 vs 0.750; recognition AP50 0.926 / 0.915 / 0.926 vs 0.916.
 
