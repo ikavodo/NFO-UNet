@@ -112,7 +112,7 @@ length curve (the stacking picture carries the same point).
 
 ## Vocabulary
 Replace rather than define. Visible-part segmentation (not *modal*), memory of its own past answers (not *memory
-bank*), unchanged (not *frozen*), stack of aligned past frames (not *composite*), position hint (not *prompt*).
+bank*), unchanged (not *frozen*), integral image, i.e. stack of aligned past frames (not *composite*); the recognition metric's frames are a "5-frame stack", position hint (not *prompt*).
 A small glossary box for what cannot be avoided: IoU (overlap of two regions, 0–1), SAM2, precision / recall.
 
 ## Figures

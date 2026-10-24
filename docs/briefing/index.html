@@ -75,7 +75,7 @@ svg .cross { stroke: var(--bad); stroke-width: 2; }
 <header class="col">
   <div class="eyebrow">Research status · NFO person segmentation · 20 October 2026</div>
   <h1>Seeing people through foliage with a frozen SAM2</h1>
-  <p class="lede">A small adapter that gives SAM2's image model an empty-scene reference and a motion-aligned composite of the last six frames. It tracks people behind dense foliage clearly better than SAMURAI and segments their visible parts as well.</p>
+  <p class="lede">A small adapter that gives SAM2's image model an empty-scene reference and a motion-aligned integral image of the last six frames. It tracks people behind dense foliage clearly better than SAMURAI and segments their visible parts as well.</p>
   <p class="meta">Branch <span class="mono">vos-benchmark-pilot</span> · numbers measured on the data below unless marked otherwise · 95% CIs are paired window-bootstrap (2,000 resamples).</p>
 </header>
 
@@ -86,7 +86,7 @@ svg .cross { stroke: var(--bad); stroke-width: 2; }
   <div class="nums">
     <div class="num"><b>+0.072 ± 0.004</b><span>box AUC over SAMURAI (0.646 → 0.718), 3 seeds; each seed's CI excludes 0; seed 0 is ahead in all 24 segments</span></div>
     <div class="num tie"><b>+0.010 ± 0.003</b><span>hand-label J over SAMURAI (0.750 → 0.760), 3 seeds; every CI includes 0 → on par</span></div>
-    <div class="num tie"><b id="rec-num">+0.013 ± 0.006</b><span id="rec-span">YOLO person AP50 on 7-frame composites over SAMURAI (0.909 → 0.922), 3 seeds; confidence +0.020 ± 0.004, positive for every seed but no seed's CI excludes 0 → on par</span></div>
+    <div class="num tie"><b id="rec-num">+0.013 ± 0.006</b><span id="rec-span">YOLO person AP50 on 7-frame recognition stacks over SAMURAI (0.909 → 0.922), 3 seeds; confidence +0.020 ± 0.004, positive for every seed but no seed's CI excludes 0 → on par</span></div>
   </div>
 </section>
 
@@ -100,13 +100,13 @@ svg .cross { stroke: var(--bad); stroke-width: 2; }
 </section>
 
 <figure>
-  <img src="figs/nfo_inputs.jpg" alt="Three NFO frames (seq2, seq3, seq4). Columns: frame with tracker box, empty scene, motion-aligned composite, evidence mass, hand label, SAMURAI mask, our mask.">
+  <img src="figs/nfo_inputs.jpg" alt="Three NFO frames (seq2, seq3, seq4). Columns: frame with tracker box, empty scene, motion-aligned integral image, evidence mass, hand label, SAMURAI mask, our mask.">
   <figcaption><b>What the adapter sees, and what comes out</b>, one hand-labelled frame from each test sequence, cropped around the person.
   Columns 1–4 are the inputs:
   (1) frame <i>t</i>, with our feature tracker's box in magenta and the GT box in green;
   (2) the empty scene, the median of person-free frames;
-  (3) the composite: frames <i>t</i>−6…<i>t</i>−1 shifted onto <i>t</i> by the tracker's motion and weighted by how much each pixel differs from the empty scene. Foliage blurs out and the person accumulates;
-  (4) the composite's evidence mass <i>a</i>.
+  (3) the integral image: frames <i>t</i>−6…<i>t</i>−1 shifted onto <i>t</i> by the tracker's motion and weighted by how much each pixel differs from the empty scene. Foliage blurs out and the person accumulates;
+  (4) the integral image's evidence mass <i>a</i>.
   Columns 5–7 are the hand label (grey = void, ignored), SAMURAI's mask and ours. J is the single-frame IoU against the hand label.</figcaption>
 </figure>
 
@@ -142,7 +142,7 @@ svg .cross { stroke: var(--bad); stroke-width: 2; }
 
   <!-- inputs -->
   <rect x="20" y="70" width="150" height="54" class="input"/><text x="32" y="93" class="lbl">frame t</text><text x="32" y="112" class="small">current image X</text>
-  <rect x="20" y="150" width="150" height="70" class="input"/><text x="32" y="173" class="lbl">composite C</text><text x="32" y="191" class="small">frames t−6…t−1, tracker-</text><text x="32" y="205" class="small">aligned, change-gated</text>
+  <rect x="20" y="150" width="150" height="70" class="input"/><text x="32" y="173" class="lbl">integral image C</text><text x="32" y="191" class="small">frames t−6…t−1, tracker-</text><text x="32" y="205" class="small">aligned, change-gated</text>
   <rect x="20" y="246" width="150" height="54" class="input"/><text x="32" y="269" class="lbl">empty scene B</text><text x="32" y="288" class="small">median of person-free frames</text>
   <rect x="20" y="326" width="150" height="54" class="input"/><text x="32" y="349" class="lbl">evidence mass a</text><text x="32" y="368" class="small">per-pixel Σ w·gate</text>
   <rect x="20" y="420" width="150" height="70" class="input"/><text x="32" y="443" class="lbl">feature tracker</text><text x="32" y="461" class="small">box + point at t</text><text x="32" y="476" class="small">(kernel on SAM2 features)</text>
@@ -216,20 +216,20 @@ svg .cross { stroke: var(--bad); stroke-width: 2; }
 </div>
 
 <section class="col">
-  <h3>The composite and its evidence mass</h3>
+  <h3>The integral image and its evidence mass</h3>
   <p>For target frame <i>t</i>, the six previous frames A<sub>i</sub> are shifted onto <i>t</i> by the tracker's horizontal motion. Each pixel gets a soft gate G<sub>i</sub> saying whether it differs from the empty scene B; the recent frames weigh more:</p>
   <div class="eq">z_i(x) = robust z-score of |A_i(x) − B(x)|          (median / 1.4826·MAD over the frame)
 G_i(x) = σ( z_i(x) − θ_i ),  θ_i = max(3, 90th percentile of z_i)
 w_i    ∝ exp(−age_i / τ),  τ = 3.5 frames
 C(x)   = Σ w_i G_i(x) A_i(x) / Σ w_i G_i(x)        (plain weighted mean where Σ w_i G_i ≈ 0)
 a(x)   = Σ w_i G_i(x) ∈ [0, 1]                       (evidence mass)</div>
-  <p>Code: <span class="mono">adapter/composite.py: composite_and_mass</span>. The composite is <b>open-loop</b>: it is built from pixels and the empty scene, never from the model's own past masks. That is the key difference from SAM2's memory. Section 6 explains why it matters.</p>
+  <p>Code: <span class="mono">adapter/composite.py: composite_and_mass</span> (the code calls it the composite). The integral image is <b>open-loop</b>: it is built from pixels and the empty scene, never from the model's own past masks. That is the key difference from SAM2's memory. Section 6 explains why it matters.</p>
 
   <h3>Adapter internals</h3>
   <ul>
     <li><b>Feature fusion.</b> SAM2's encoder runs on X, C and B (same frozen weights). At each of the three strides (16, 8, 4) the adapter sees the three feature maps, their two differences and the evidence mass. Two conv layers per stride run coarse to fine, and a <b>zero-initialised</b> 1×1 conv outputs a residual R added to the frame's features. At step 0 the adapter is therefore exactly SAM2 (ControlNet-style initialisation; Zhang et al. 2023, arXiv 2302.05543).</li>
-    <li><b>Prompt correction.</b> The decoder gets the tracker box and SAM2's own point embedding at the tracker position. A zero-initialised MLP adds a correction δ computed from the composite's feature prototype under <i>a</i>, scaled by 1 − exp(−Σa/κ). With no evidence there is no correction.</li>
-    <li><b>Size.</b> 730,401 trained parameters. The image encoder, prompt encoder and mask decoder are frozen. Inference cost per frame is up to three encoder passes (frame, composite, empty scene; the last is the same for every frame of a sequence).</li>
+    <li><b>Prompt correction.</b> The decoder gets the tracker box and SAM2's own point embedding at the tracker position. A zero-initialised MLP adds a correction δ computed from the integral image's feature prototype under <i>a</i>, scaled by 1 − exp(−Σa/κ). With no evidence there is no correction.</li>
+    <li><b>Size.</b> 730,401 trained parameters. The image encoder, prompt encoder and mask decoder are frozen. Inference cost per frame is up to three encoder passes (frame, integral image, empty scene; the last is the same for every frame of a sequence).</li>
   </ul>
 </section>
 
@@ -240,7 +240,7 @@ a(x)   = Σ w_i G_i(x) ∈ [0, 1]                       (evidence mass)</div>
     <li><b>People:</b> GPJATK walking sequences (person silhouettes S), with held-out subjects for validation.</li>
     <li><b>Occluders:</b> foliage layers cut from a tree photograph and Perlin-noise clumps. Occlusion density ρ ~ U[0.2, 0.6] (10% of clips unoccluded); clump size 12/24 px; per-frame flutter.</li>
     <li><b>Backgrounds:</b> the template photo or CanaTree100 images (every 5th held out). Scenes zoomed out at random (scale 0.5–1) towards NFO's smaller person (GPJATK person 0.53 of frame height, NFO 0.33).</li>
-    <li><b>Exactly the test-time path:</b> the same tracker, composite and encoder run on each synthetic clip. Composite parameters (history 4–8 frames, τ, gate) are randomised per clip. Clips are generated online, so the model never sees the same clip twice.</li>
+    <li><b>Exactly the test-time path:</b> the same tracker, integral image and encoder run on each synthetic clip. Integral-image parameters (history 4–8 frames, τ, gate) are randomised per clip. Clips are generated online, so the model never sees the same clip twice.</li>
   </ul>
 </section>
 <figure>
@@ -278,7 +278,7 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
   <tr><th>metric</th><th>question</th><th>how</th><th>blind spot</th></tr>
   <tr><td>hand J / P / R</td><td>are the visible pixels right?</td><td>IoU against the 23 seq2–4 hand masks, void ignored</td><td>only 23 frames</td></tr>
   <tr><td>box AUC, P@20, P<sub>norm</sub></td><td>does it track?</td><td>LaSOT one-pass protocol, ported from SAMURAI's evaluation code; mask → tight box, as SAMURAI does; against the GT boxes</td><td>rewards extent: the tracker box alone scores 0.709</td></tr>
-  <tr><td>recognition AP50</td><td>does the mask keep the evidence a detector needs?</td><td>7-frame composites aligned by GT-box motion (identical for all methods); masked mean, unmasked pixels filled with the plain mean; YOLO11m person AP50</td><td>uses GT motion; see the N sweep below</td></tr>
+  <tr><td>recognition AP50</td><td>does the mask keep the evidence a detector needs?</td><td>7-frame recognition stacks aligned by GT-box motion (identical for all methods); masked mean, unmasked pixels filled with the plain mean; YOLO11m person AP50</td><td>uses GT motion; see the N sweep below</td></tr>
 </table></div>
 
 <section class="col">
@@ -300,20 +300,20 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
 <div class="scroll"><table>
   <tr><th>ingredient</th><th>comparison</th><th class="n">hand J</th><th class="n">box AUC</th><th class="n">recognition conf</th></tr>
   <tr><td>motion prompt (tracker box + point every frame)</td><td>trk − SAMURAI</td><td class="n">−0.034</td><td class="n"><b>+0.046</b></td><td class="n">−0.091</td></tr>
-  <tr><td>empty-scene cue in the adapter</td><td>adapter without composite − trk</td><td class="n"><b>+0.043</b> [+0.002, +0.099]</td><td class="n">+0.007</td><td class="n">—</td></tr>
-  <tr><td>motion-aligned composite (3 seeds, mean ± sd)</td><td>adapter − adapter without composite, per seed</td><td class="n"><b>+0.016 ± 0.013</b></td><td class="n"><b>+0.024 ± 0.005</b></td><td class="n"><b>+0.025 ± 0.003</b></td></tr>
+  <tr><td>empty-scene cue in the adapter</td><td>adapter without integral image − trk</td><td class="n"><b>+0.043</b> [+0.002, +0.099]</td><td class="n">+0.007</td><td class="n">—</td></tr>
+  <tr><td>motion-aligned integral image (3 seeds, mean ± sd)</td><td>adapter − adapter without integral image, per seed</td><td class="n"><b>+0.016 ± 0.013</b></td><td class="n"><b>+0.024 ± 0.005</b></td><td class="n"><b>+0.025 ± 0.003</b></td></tr>
 </table></div>
 <section class="col">
-  <p>Reading: <b>the motion prompt buys tracking but costs precision; the empty-scene cue restores precision; the composite adds real person evidence</b>. Recognition goes up, not just box extent. Over 3 seeds every box-AUC and recognition-confidence CI excludes 0, and the composite also lifts hand J in two of three seeds (+0.022, +0.026; seed 0 +0.001).</p>
+  <p>Reading: <b>the motion prompt buys tracking but costs precision; the empty-scene cue restores precision; the integral image adds real person evidence</b>. Recognition goes up, not just box extent. Over 3 seeds every box-AUC and recognition-confidence CI excludes 0, and the integral image also lifts hand J in two of three seeds (+0.022, +0.026; seed 0 +0.001).</p>
 
   <h3>Runtime</h3>
-  <p>Per frame, laptop RTX PRO 4000. <b>Ours: 61 ms. SAM2 video: 53 ms.</b> Each frame is encoded once and shared by the tracker, the adapter and the decoder; the composite takes a second encoder pass; the empty scene is encoded once per sequence. The composite and SAM2's preprocessing run on the GPU. SAM2 video spends its extra time on memory attention and the memory encoder instead, so the two designs cost about the same. Code: <span class="mono">adapter/inference.py: fast_masks</span>, <span class="mono">benchmark/nfo_vos/tools/timing.py</span>.</p>
+  <p>Per frame, laptop RTX PRO 4000. <b>Ours: 61 ms. SAM2 video: 53 ms.</b> Each frame is encoded once and shared by the tracker, the adapter and the decoder; the integral image takes a second encoder pass; the empty scene is encoded once per sequence. The integral image and SAM2's preprocessing run on the GPU. SAM2 video spends its extra time on memory attention and the memory encoder instead, so the two designs cost about the same. Code: <span class="mono">adapter/inference.py: fast_masks</span>, <span class="mono">benchmark/nfo_vos/tools/timing.py</span>.</p>
 
   <h3>Recognition vs. the number of integrated frames</h3>
 </section>
 <figure>
-  <img src="figs/recog_vs_N.png" alt="YOLO person AP50 against frames per composite N for five methods." style="max-width:760px">
-  <figcaption><b>Temporal integration is what makes the person recognisable</b> (raw frame AP50 0.33). Masks help most at short integration. Per-frame SAM2 stops improving after N = 5, because its masks change shape from frame to frame and the average smears. Our adapter keeps pace with the video methods <i>without memory</i>. Beyond N ≈ 7 every masked composite falls, while the unmasked mean keeps rising (0.95 at N = 21). With GT-aligned motion and long integration, plain averaging wins. N = 7 was fixed before any results; this sweep is an ablation, not a selection.</figcaption>
+  <img src="figs/recog_vs_N.png" alt="YOLO person AP50 against frames per recognition stack N for five methods." style="max-width:760px">
+  <figcaption><b>Temporal integration is what makes the person recognisable</b> (raw frame AP50 0.33). Masks help most at short integration. Per-frame SAM2 stops improving after N = 5, because its masks change shape from frame to frame and the average smears. Our adapter keeps pace with the video methods <i>without memory</i>. Beyond N ≈ 7 every masked recognition stack falls, while the unmasked mean keeps rising (0.95 at N = 21). With GT-aligned motion and long integration, plain averaging wins. N = 7 was fixed before any results; this sweep is an ablation, not a selection.</figcaption>
 </figure>
 
 <section class="col">
@@ -338,7 +338,7 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
     <li><b>SAM2-ceiling labels as a dense evaluation proxy:</b> they reverse the main ranking (SAMURAI 0.781 vs ours 0.718 against the proxy), because they share SAM2's bias. Usable only for non-SAM2 comparisons.</li>
     <li><b>Frozen pseudo-GT and composite-based labels</b> as stand-ins for the hand masks: J 0.62–0.69 against hand labels, too far off to rank methods.</li>
     <li><b>Depth cues</b> (gating by empty-scene disparity): raise precision ≤ 0.05 but cost more recall.</li>
-    <li><b>Background fill in the recognition composite:</b> re-inserted sharp foliage. Replaced by the mean fill.</li>
+    <li><b>Background fill in the recognition stack:</b> re-inserted sharp foliage. Replaced by the mean fill.</li>
   </ul>
 </section>
 
@@ -347,7 +347,7 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
   <ol>
     <li><b>Second annotator</b> (CVAT tasks ready, seq2–4). This gives human agreement: if two people agree at J ≈ 0.78, both methods sit at the ceiling and "on par" is the strongest possible segmentation claim.</li>
     <li><b>Recognition with each method's own motion</b> instead of GT motion. With a real tracker, long-N averaging inherits tracking drift. That is where our +0.07 box AUC should turn into a recognition gain. This is the most promising next experiment.</li>
-    <li><b>Why masked composites fall beyond N = 7:</b> seams between masked and filled regions, or misaligned limbs. A visual check is under way; if it's seams, a soft blend is a one-line change, tested on seq1 first.</li>
+    <li><b>Why masked recognition stacks fall beyond N = 7:</b> seams between masked and filled regions, or misaligned limbs. A visual check is under way; if it's seams, a soft blend is a one-line change, tested on seq1 first.</li>
     <li><b>Memory only if new evidence demands it:</b> split the real frames by visible fraction and see whether the chooser's +0.012 concentrates in the most-occluded ones. This needs the second annotator's frames to have any power.</li>
   </ol>
 </section>
@@ -362,8 +362,8 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
   <tr><td>adapter model, loss, training</td><td class="mono">benchmark/nfo_vos/adapter/fusion_adapter.py (+ .sbatch)</td></tr>
   <tr><td>synthetic training batches, loss weights</td><td class="mono">benchmark/nfo_vos/adapter/fusion_data.py, synth/</td></tr>
   <tr><td>feature tracker</td><td class="mono">benchmark/nfo_vos/adapter/tracker.py</td></tr>
-  <tr><td>composite + evidence mass</td><td class="mono">benchmark/nfo_vos/adapter/composite.py</td></tr>
-  <tr><td>NFO per-frame inference (tracker, composite, adapter)</td><td class="mono">benchmark/nfo_vos/adapter/inference.py</td></tr>
+  <tr><td>integral image + evidence mass</td><td class="mono">benchmark/nfo_vos/adapter/composite.py</td></tr>
+  <tr><td>NFO per-frame inference (tracker, integral image, adapter)</td><td class="mono">benchmark/nfo_vos/adapter/inference.py</td></tr>
   <tr><td>baselines SAM2.1 video / SAMURAI</td><td class="mono">benchmark/nfo_vos/baselines/run_sam2_video.py (+ .sbatch)</td></tr>
   <tr><td>mask dumps for our arms</td><td class="mono">benchmark/nfo_vos/eval/dump_arms.py (+ .sbatch)</td></tr>
   <tr><td>box metrics / recognition / results table</td><td class="mono">benchmark/nfo_vos/eval/{box_metrics, recognition, report}.py</td></tr>

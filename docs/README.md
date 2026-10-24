@@ -10,7 +10,7 @@ superseded work goes to the topic's `archive/`, kept for its results and reasoni
   - `nfo_vos_pilot_findings.md`, `nfo_failure_log.md` — results and dead ends
   - `2026-10-02-nfo-vos-benchmark-pilot-design.md`, `2026-10-05-nfo-vos-benchmark-pilot.md` — protocol (rev. 5) and
     its implementation plan
-  - `plan_downstream_benchmark.md` — box AUC + composite recognition (`benchmark/nfo_vos/eval/`)
+  - `plan_downstream_benchmark.md` — box AUC + recognition on masked stacks (`benchmark/nfo_vos/eval/`)
   - `hand_annotation_plan.md`, `annotator_cvat_setup.md`, `label_generators_design.md` — how hand labels were made;
     the second annotator's guide; automatic label generators
   - `nfo_pseudo_segmentation_approach.md` — the SAM2-ceiling (former pseudo-GT) generator

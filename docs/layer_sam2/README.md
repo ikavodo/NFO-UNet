@@ -7,7 +7,7 @@ for its results and reasoning (all closed docs are in `archive/`).
 - `plan_fusion_prompt_adapter.md` — **live.** Composite/background fusion adapter → gated dense prompt for a frozen,
   memory-free SAM2 with the tracker point. Gate O1 (GT-prompt oracle) first. This is the method in
   `benchmark/nfo_vos/adapter/`.
-- `related_work_minimal_adapter.md` — related work for the composite (AOS ancestor) and slimmer adapter variants.
+- `related_work_minimal_adapter.md` — related work for the integral image (AOS ancestor) and slimmer adapter variants.
 - `2026-10-05-gpjatk-feature-fusion-tolerance.md` — GPJATK test: where frames should be fused for SAM2 under
   fragmented occlusion.
 

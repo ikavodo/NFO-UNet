@@ -34,11 +34,16 @@ the data below unless marked otherwise. CIs are 95% window-bootstrap (2,000 resa
 | vid-prompts | SAM2 video (memory) + tracker box/point every frame (prompts enter the decoder only) |
 | vid-adapter-pre | vid-prompts + the same adapter, residual added before memory attention |
 
+**Terminology (2026-10-24).** Two different temporal stacks, two names. *Integral image*: our method's input, the
+6 past frames t−6…t−1 (code and older docs: "composite", `adapter/composite.py`, arm suffix `-noC`). *Recognition
+stack*: the evaluation's N = 5 masked frames aligned by GT motion, the same construction for every method (code:
+`recognition.py`; older docs: "recognition composite"). Dated records (failure log, plans, archive) keep the old word.
+
 **Layer adapter.**
 - **Inputs:** SAM2 encoder features at strides 16/8/4 of three images:
   - the frame;
-  - a **composite**: frames t−6…t−1, aligned to t by the tracker's motion and change-gated against the empty scene,
-    plus an evidence mass a;
+  - an **integral image** (code: `composite`): frames t−6…t−1 (6 past frames, not frame t), aligned to t by the
+    tracker's motion, change-gated against the empty scene and recency-weighted, plus an evidence mass a;
   - the **empty scene** (median of person-free frames).
 - **Outputs:**
   - zero-initialised residuals (ControlNet-style) added to the frame features;
@@ -61,7 +66,7 @@ the data below unless marked otherwise. CIs are 95% window-bootstrap (2,000 resa
 - The first design filled unmasked pixels with the empty scene. It re-inserted sharp foliage, and masks then lost to
   no-mask (0.48 vs 0.80). Replaced.
 
-## 4. Main result (seq2–4, 46 windows; recognition on all 552 composites)
+## 4. Main result (seq2–4, 46 windows; recognition on all 552 stacks)
 
 | method | hand J | P / R | box AUC | P@20 | recog AP50 | recog conf |
 |---|---|---|---|---|---|---|
@@ -95,7 +100,7 @@ Segment-cluster bootstrap for seed 0 (24 segments): box AUC +0.070 [+0.054, +0.0
 segments.
 
 **Runtime** (laptop RTX PRO 4000, per frame, `benchmark/nfo_vos/tools/timing.py`):
-- **ours: 61 ms**, with `adapter/inference.fast_masks` (one encode per frame plus one for the composite; composite and SAM2
+- **ours: 61 ms**, with `adapter/inference.fast_masks` (one encode per frame plus one for the integral image; integral image and SAM2
   preprocessing on the GPU);
 - **SAM2 video: 53 ms**.
 
@@ -110,21 +115,21 @@ segmentation and recognition.** No other method is at or above T1 on all three.
 | ingredient | comparison | hand J | box AUC | recog conf |
 |---|---|---|---|---|
 | motion prompt (tracker box + point every frame) | trk − T1 | −0.034 | **+0.046** | −0.091 |
-| empty-scene layer cue | adapter-pf without composite − trk | **+0.043 [+0.002, +0.099]** | +0.007 | — |
-| composite (past pixels, open-loop) | adapter-pf − adapter-pf-noC | +0.001 | **+0.018 [+0.013, +0.022]** | **+0.024 [+0.013, +0.035]** |
-| composite, **3 seeds** (mean ± sd) | adapter − adapter-noC, per seed | **+0.016 ± 0.013** | **+0.024 ± 0.005** | **+0.025 ± 0.003** (AP50 +0.018 ± 0.005) |
+| empty-scene layer cue | adapter-pf without integral image − trk | **+0.043 [+0.002, +0.099]** | +0.007 | — |
+| integral image (past pixels, open-loop) | adapter-pf − adapter-pf-noC | +0.001 | **+0.018 [+0.013, +0.022]** | **+0.024 [+0.013, +0.035]** |
+| integral image, **3 seeds** (mean ± sd) | adapter − adapter-noC, per seed | **+0.016 ± 0.013** | **+0.024 ± 0.005** | **+0.025 ± 0.003** (AP50 +0.018 ± 0.005) |
 | memory (SAM2 video loop) | vid-prompts − trk | +0.032 | +0.020 | — |
 | adapter inside memory | vid-adapter-pre − vid-prompts | **−0.031 [−0.053, −0.011]** | +0.022 | −0.001 |
 
 The −0.031 row is over-segmentation: P 0.76, R 0.93.
 
-Related work for the composite (AOS ancestor) and for slimmer adapter variants (feature-space composite, learned
+Related work for the integral image (AOS ancestor) and for slimmer adapter variants (feature-space integral image, learned
 gate): `../layer_sam2/related_work_minimal_adapter.md`.
 
 **Reading:**
 - **The motion prompt buys tracking and costs precision.**
 - **The empty-scene cue restores the precision.**
-- **The composite adds recall that is real person evidence** (recognition up), not just extent.
+- **The integral image adds recall that is real person evidence** (recognition up), not just extent.
   Over 3 seeds it also raises hand J (+0.016 ± 0.013): seed 0's +0.001 was the low seed (seeds 1, 2: +0.022, +0.026,
   CIs excluding 0). Every seed's box AUC and recognition-confidence CI excludes 0.
 - **Memory propagates extent:** in the video loop, precision falls and over-extension grows.
@@ -137,14 +142,14 @@ gate): `../layer_sam2/related_work_minimal_adapter.md`.
 | frozen pseudo-GT (extent-leaning) | 0.726 | 0.78 / 0.90 | — | — |
 | *for reference: adapter-pf, no memory* | 0.761 | 0.86 / 0.86 | 0.717 | 0.709 |
 
-The recognition figures here are on the 414-composite subset. **Scope of this bound:** it is only as good as the
+The recognition figures here are on the 414-stack subset. **Scope of this bound:** it is only as good as the
 content written in. SAM2-ceiling matches the hand masks at J 0.716, *below* the per-frame adapter's own masks (0.761).
 So the result is: memory filled with SAM2-ceiling-quality masks does not beat the memory-free adapter, and memory
 transmits the precision/recall balance of what is written in. Whether better-than-SAM2-ceiling content (e.g. the
 adapter's own masks, or a trained write path) makes memory useful is open; see §8.
 
 **Write-path correction, causal, no training (`vid-write-pf`).** SAM2 video + tracker prompts produces the output, but
-the memory encoder is fed the per-frame adapter's mask of the same frame. Seq2–4, recognition on all 552 composites:
+the memory encoder is fed the per-frame adapter's mask of the same frame. Seq2–4, recognition on all 552 stacks:
 
 | arm | hand J | P / R | box AUC | recog conf |
 |---|---|---|---|---|
@@ -230,12 +235,12 @@ it **ranks methods like the hand masks**.
 
 ## 9. Protocol changes of 2026-10-23 (fixed before the new runs)
 
-- **Recognition at N = 5** frames per composite (was N = 7, chosen a priori). N = 5 is where SAM2.1 video and SAMURAI
+- **Recognition at N = 5** frames per recognition stack (was N = 7, chosen a priori). N = 5 is where SAM2.1 video and SAMURAI
   score highest in the N sweep (`eval/recog_vs_N.py`), i.e. the baselines' best case. The sweep stays as a supplement.
 - **Reporting over all sequences** (seq1–4) as the headline, with seq1 and seq2–4 alongside. Step 200 was selected on
   seq1, so seq1 is not independent; seq2–4 remains the clean held-out check. Hand-label scores stay per group (seq1
   brush masks have no void class).
-- **Composite history** (pre-registered rule): candidates 4, 5, 6 past frames (all inside the training range 4–8; no
+- **Integral-image history** (pre-registered rule): candidates 4, 5, 6 past frames (all inside the training range 4–8; no
   retraining; arms `adapter-<seed>-h4` / `-h5`, `eval/dump_arms.py`). Decided on **seq1 only**: take the shortest
   history that is not worse than 6 in both box AUC and recognition confidence (N = 5), each averaged over the 3 seeds;
   otherwise keep 6. All sequences are then reported with the chosen history.
@@ -264,7 +269,7 @@ it **ranks methods like the hand masks**.
 
 - `benchmark/nfo_vos/downstream/`:
   - `box_metrics.py`: OPE metrics, hand-vs-GT box ceiling;
-  - `recognition.py`: masked composites + YOLO;
+  - `recognition.py`: masked recognition stacks + YOLO;
   - `dump_arms.py` + `.sbatch`: masks per method;
   - `report.py`: paired table;
   - `composite_label.py`: §6 label test.

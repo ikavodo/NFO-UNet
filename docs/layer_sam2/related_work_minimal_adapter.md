@@ -1,7 +1,7 @@
 # Related work: fewer inputs and encoder passes for the per-frame adapter (2026-10-20)
 
 - **Question searched:** can the per-frame layer adapter on frozen SAM2.1-b+ drop its hand-made inputs (explicit
-  feature differences F_X − F_C, F_X − F_B; evidence mass a) and the extra encoder pass for the pixel composite C,
+  feature differences F_X − F_C, F_X − F_B; evidence mass a) and the extra encoder pass for the pixel integral image C (code: composite),
   without losing performance?
 - **Run by:** research-companion:brainstormer subagent, about 9 web lookups, ~2 min.
 - **Checked against:** `../briefing/index.html` §3 (architecture) and `benchmark/nfo_vos/layers/fusion_adapter.py`
@@ -11,7 +11,7 @@
 
 - **Most threatening prior work:** Airborne Optical Sectioning, especially *Inverse AOS* (static camera, occluded
   walkers; arXiv 2207.13344). It integrates pixels before detection to see people through foliage, which is the
-  principle behind our composite. Cite it as the ancestor of the composite.
+  principle behind our integral image. Cite it as the ancestor of the integral image.
 - **Defensible contribution:** open-loop pixel integration (AOS-style) injected into a frozen promptable segmenter,
   against SAM2's closed-loop feature memory.
 - **Open gap:** no paper found shows whether **feature-space** aggregation matches **pixel-space** aggregation when
@@ -22,7 +22,7 @@
 
 | our component | closest prior work | what it does | how close |
 |---|---|---|---|
-| pixel composite C (aligned, change-gated) | Nathan, Kurmi, Schedl, Bimber, *Through-Foliage Tracking with Airborne Optical Sectioning*, J. Remote Sensing 2022, arXiv 2111.06959; *Inverse Airborne Optical Sectioning*, arXiv 2207.13344 | integrate many views/frames before detection; precision ~42% → ~97% for people in forest | ancestor (same principle, no segmenter) |
+| pixel integral image C (aligned, change-gated) | Nathan, Kurmi, Schedl, Bimber, *Through-Foliage Tracking with Airborne Optical Sectioning*, J. Remote Sensing 2022, arXiv 2111.06959; *Inverse Airborne Optical Sectioning*, arXiv 2207.13344 | integrate many views/frames before detection; precision ~42% → ~97% for people in forest | ancestor (same principle, no segmenter) |
 | multi-frame obstruction removal | Liu et al., *Learning to See Through Obstructions*, CVPR 2020, arXiv 2004.01180 | pixel-level flow + layer decomposition for fences and reflections | partial |
 | feature-space alternative to C | Zhu et al., *Deep Feature Flow*, CVPR 2017, arXiv 1611.07715; *FGFA*, ICCV 2017, arXiv 1703.10025; Gadde et al., *NetWarp*, ICCV 2017, arXiv 1708.03088; *MEGA*, CVPR 2020, arXiv 2003.00063 | warp and weight past CNN features; each frame there holds a degraded but **whole** object | partial |
 | alignment level | Tian et al., *TDAN*, CVPR 2020, arXiv 1812.02898 | argues feature-level alignment beats image-level warping (flow errors propagate) | partial |
@@ -46,21 +46,21 @@
 ## Possibly novel
 
 - **Open-loop pixel integration as conditioning for a frozen promptable segmenter, against closed-loop memory.** To
-  claim it: the existing ablations (composite +0.018 box AUC, +0.022 recognition conf; memory arms ≤ +0.012 J bound)
+  claim it: the existing ablations (integral image +0.018 box AUC, +0.022 recognition conf; memory arms ≤ +0.012 J bound)
   plus the variant (c) test below.
-- **Pixel vs feature aggregation under fragmented occlusion.** To claim it: variant (c) against the pixel composite,
+- **Pixel vs feature aggregation under fragmented occlusion.** To claim it: variant (c) against the pixel integral image,
   ≥ 2 seeds, same synthetic data.
 
 ## Analysis of the three reduced-input variants
 
-The argument for keeping the pixel composite: the encoder f is nonlinear, so f(Σ wᵢ gᵢ xᵢ) ≠ Σ wᵢ gᵢ f(xᵢ) in general.
+The argument for keeping the pixel integral image: the encoder f is nonlinear, so f(Σ wᵢ gᵢ xᵢ) ≠ Σ wᵢ gᵢ f(xᵢ) in general.
 Under fragmented occlusion each xᵢ holds only slivers, so the encoder never sees a contiguous person in any single frame.
 
 | variant | change | information lost? | risk | verdict |
 |---|---|---|---|---|
 | (a) | drop the explicit differences, concatenate [F_X, F_C, F_B] | none: after the shared 1×1 projection, the differences are linear in the concatenation, so the first conv can represent them exactly | slower or worse convergence from zero-init on synthetic data | conceptual tidiness only; not worth a run on its own |
 | (b) | drop a, learn a gate gᵢ = σ(conv(\|Fᵢ − F_B\|)) | a gate on F_X, F_B alone cannot recover a, because a summarises **past** frames | slivers < 16 px vanish at stride 16; gate at stride 4 | only meaningful inside (c) |
-| (c) | feature-space composite: cache past F at strides 16/8/4, shift by tracker motion, learned gates from (b), recency weights, normalised sum. One encoder pass per frame | the encoder never sees integrated pixels | box AUC and recognition, the metrics where the composite matters | the decisive experiment |
+| (c) | feature-space integral image: cache past F at strides 16/8/4, shift by tracker motion, learned gates from (b), recency weights, normalised sum. One encoder pass per frame | the encoder never sees integrated pixels | box AUC and recognition, the metrics where the integral image matters | the decisive experiment |
 
 ## Baselines a reviewer will demand
 
@@ -71,10 +71,10 @@ Under fragmented occlusion each xᵢ holds only slivers, so the encoder never se
 ## Cheapest kill test
 
 - **Run:** retrain with variant (c)+(b), same synthetic data, ≥ 2 seeds.
-- **Compare against:** the full adapter and the no-composite arm, on the synthetic val clips and on the seq2–4 downstream metrics.
-- **Adopt if:** (c) recovers ≥ half of the composite's gap (box AUC 0.018, recognition conf 0.022), outside the seed spread.
+- **Compare against:** the full adapter and the no-integral-image arm (`-noC`), on the synthetic val clips and on the seq2–4 downstream metrics.
+- **Adopt if:** (c) recovers ≥ half of the integral image's gap (box AUC 0.018, recognition conf 0.022), outside the seed spread.
 - **Resolution check:** the gap is resolvable. The 3-seed sd of box AUC is 0.004 and of recognition AP50 is 0.006 (measured 2026-10-20).
-- **Don't:** swap feature composites into the current adapter without retraining. The input distribution changes, which confounds the test.
+- **Don't:** swap feature-space integral images into the current adapter without retraining. The input distribution changes, which confounds the test.
 
 ## Citation status
 
