@@ -10,6 +10,9 @@ Two runs (NFO_RUN):
   pass   the same 61 starts (t0, prompt, warm-up) run to the end of their pass: 41–155 frames. Support shrinks with k
          (only clips longer than k count at k); the median curve is drawn while ≥ MIN_N clips remain.
 
+Late size ratio (pass run): per clip, mean over k = K1…end of log(f_arm(k) / f_arm(K0)) − log(f_ours(k) / f_ours(K0)),
+reported as exp(mean) = the memory arm's mask size relative to ours once the early drop is over; same CI over passes.
+
 Area is not recall: a shrinking mask may lose person or background pixels; the hand frames are too sparse to tell
 per k. trk keeps a fixed-size tracker box prompt, so its flat trend is partly by construction.
 
@@ -33,6 +36,7 @@ from benchmark.nfo_vos.eval.report import SEEDS
 
 ARMS = ('b0-c2', 't1-c2', 'trk', *SEEDS)
 K0 = 6                       # first steady-state frame (adapter composite history)
+K1 = 30                      # late-ratio start: the memory arms' drop is over by then (pass run)
 MIN_N = 15                   # median curve drawn while at least this many clips are still running
 CSV = f'{BM.OUT}/mask_fill.csv'
 OUT = f"{BM.IMG}/mask_fill_trend{'' if TR.RUN == 'rr' else '_' + TR.RUN}.png"
@@ -94,6 +98,12 @@ def boot_mean(per_clip, ids, B=2000):
     return np.mean([x for v in g for x in v]), np.quantile(bs, .025), np.quantile(bs, .975), len(ids), len(g)
 
 
+def late_ratio(F, a, ids):
+    """{id: mean over k = K1…end of the log size ratio arm / ours, each relative to frame K0}, clips longer than K1."""
+    rel = lambda f: np.log(f[K1:] / f[K0])
+    return {i: np.mean(rel(F[a][i]) - rel(F['ours'][i])) for i in ids if len(F['ours'][i]) > K1}
+
+
 def pct(v):
     return f'{(np.exp(v) - 1) * 100:+.0f}%'
 
@@ -119,6 +129,13 @@ def main():
                 both = [i for i in ids if i in S[a]]
                 m, lo, hi, n, g = boot_mean({i: S[a][i] - S['ours'][i] for i in both}, both)
                 print(f'  {a} − ours: {m:+.3f} [{lo:+.3f}, {hi:+.3f}] log fill / 10 frames, {n} clips, {g} passes')
+        if len(set(lens)) > 1:
+            for a in ('b0-c2', 't1-c2'):
+                if a in F:
+                    r = late_ratio(F, a, [i for i in ids if i in F[a]])
+                    m, lo, hi, n, g = boot_mean(r, list(r))
+                    print(f'  {a} / ours mask size, k = {K1}…end: ×{np.exp(m):.2f} [{np.exp(lo):.2f}, {np.exp(hi):.2f}]'
+                          f'  ({n} clips, {g} passes)')
     # fitted trend (mean slope, band = CI) relative to frame K0; with clips of different length (pass run) also the
     # median of f(k) / f(K0) over the clips still running at k, while at least MIN_N remain
     kmax = max(k for k in range(K0, max(lens)) if sum(L > k for L in lens) >= MIN_N)
