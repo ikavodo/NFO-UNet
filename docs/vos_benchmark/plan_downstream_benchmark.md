@@ -1,4 +1,4 @@
-# Downstream NFO benchmark (tracking boxes + composite recognition) Implementation Plan
+# Downstream NFO benchmark (tracking boxes + stack recognition) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -6,7 +6,7 @@
 - hand-label J/P/R;
 - one-pass tracking metrics (AUC, P, P_norm, failure rate) against the dense GT boxes and against depth-restricted
   "visible" boxes;
-- YOLO person recognition on masked temporal composites built with GT-box motion.
+- YOLO person recognition on masked temporal stacks built with GT-box motion.
 
 **Architecture:**
 - **Arms produce masks.** Every arm writes `results/benchmark/rr/masks/<arm>/<trial_id>.npz`, using the B0/T1 schema
@@ -42,7 +42,7 @@
     masks.
   - (b) is used only if it beats (a) on that test.
 
-**D4. Recognition composite.**
+**D4. Recognition stack.**
 - N = 7 frames, aligned to frame t by the GT-box centre shift.
 - Uniform masked mean Σ M_i·I_i / Σ M_i, filled with the empty-scene background where Σ M_i = 0.
 - YOLO11m, person class.
@@ -69,12 +69,12 @@
 ## Review Focus
 
 1. **Empty mask** (the target is lost). `mask_box` returns None. It scores IoU 0 and center error ∞, counts as a
-   failure, and adds nothing to the composite.
+   failure, and adds nothing to the integral image.
 2. **Fragments far from the body** (a FP leaf blob at the image edge). The tight box inflates. Report that as is (the
    metric is meant to penalise it); do not clean it.
-3. **Composite frames before the window start** (t−6 < first frame). Skip t; don't pad.
+3. **Integral image frames before the window start** (t−6 < first frame). Skip t; don't pad.
 4. **Visible-box trimming that removes everything.** Fall back to the GT box and count the fallbacks.
-5. **YOLO returns no person.** The composite counts as a miss: confidence 0, still included in AP as a FN.
+5. **YOLO returns no person.** The stack counts as a miss: confidence 0, still included in AP as a FN.
 
 ---
 
@@ -171,7 +171,7 @@
   - `adapter-pf`: per-frame adapter v3.4 it200;
   - `vid-prompts`;
   - `vid-adapter-pre`;
-  - `vid-adapter-noC`: adapter-pre with the composite input zeroed, the −composite ablation.
+  - `vid-adapter-noC`: adapter-pre with the integral image input zeroed, the −integral image ablation.
 - CLI: `python -m benchmark.nfo_vos.downstream.dump_arms --arm A --trial-index I` (the slurm array index = trial
   index 0..60). It skips the window if the npz exists.
 
@@ -189,9 +189,9 @@
   rsync, which is tiny.
 - [ ] **Step 4: Diffusion-VAS on all window frames.** Currently it only exists on hand frames (`amodal_dvas*/`, 3
   seeds). It is a separate array job using the existing DVAS script with a frame-list argument. Without it, DVAS can't
-  be scored on boxes or composites. Report it on hand frames only if it doesn't finish this week.
+  be scored on boxes or integral images. Report it on hand frames only if it doesn't finish this week.
 
-### Task 4: Masked composite + YOLO recognition (lane L build, run where the GPU is free; ~4 h)
+### Task 4: Masked stack + YOLO recognition (lane L build, run where the GPU is free; ~4 h)
 
 **Files:**
 - Create `benchmark/nfo_vos/downstream/recognition.py`.
@@ -202,16 +202,16 @@
   `video_adapter.per_frame_inputs` (median over the warm-up).
 - Produces:
   - `gt_shifts(boxes: dict, frames: list[int], t: int) -> list[(dx, dy)]` (GT-box centre of t minus centre of i);
-  - `masked_composite(imgs: list[HxWx3], masks: list[HxW bool], shifts, bg: HxWx3, weights: list[float] | None) -> HxWx3 uint8`;
+  - `masked_stack(imgs: list[HxWx3], masks: list[HxW bool], shifts, bg: HxWx3, weights: list[float] | None) -> HxWx3 uint8`;
   - `score_yolo(model, img, gt_box) -> dict(conf, iou, box)` (person class 0, conf threshold 0.01, top person by
     confidence);
   - `main(arms, N=7, weights='uniform')` → `results/benchmark/rr/downstream/recog_<N>_<weights>.csv`.
-- AP50: ultralytics `ultralytics.utils.metrics.ap_per_class`, over all composites of a sequence group.
+- AP50: ultralytics `ultralytics.utils.metrics.ap_per_class`, over all stacks of a sequence group.
 
 - [ ] **Step 1: Write the failing tests.**
-  - `test_composite_no_mask_is_bg`: all-False masks → output == bg.
-  - `test_composite_shift`: a single bright pixel at x = 10 in frame i with dx = +5 lands at x = 15.
-  - `test_composite_uniform_mean`: two frames, values 0 and 100 under full masks → 50.
+  - `test_stack_no_mask_is_bg`: all-False masks → output == bg.
+  - `test_stack_shift`: a single bright pixel at x = 10 in frame i with dx = +5 lands at x = 15.
+  - `test_stack_uniform_mean`: two frames, values 0 and 100 under full masks → 50.
   - `test_gt_shifts_zero_at_t`.
 - [ ] **Step 2: Run the tests.** Expected: FAIL.
 - [ ] **Step 3: Implement.** Use cv2.warpAffine with an integer-free sub-pixel shift, INTER_LINEAR, applied to both

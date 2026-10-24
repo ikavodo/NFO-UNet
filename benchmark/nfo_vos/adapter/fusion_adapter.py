@@ -1,5 +1,5 @@
 """Approach A (docs/layer_sam2/plan_fusion_prompt_adapter.md §11): residual fusion of the frame, the
-tracker-aligned composite and the empty scene on the three SAM2 feature levels the frozen decoder reads.
+tracker-aligned integral image and the empty scene on the three SAM2 feature levels the frozen decoder reads.
 
   per level ℓ ∈ {16, 8, 4}:  z^ℓ = [P F_t, P F_C, P F_B, P F_t − P F_C, P F_t − P F_B, a^ℓ]   (P shared 1×1 conv)
   top-down (FPN-style): x16 = block(z16); x8 = block(z8 ⊕ ↑x16); x4 = block(z4 ⊕ ↑x8);  R^ℓ = 1×1 conv(x^ℓ)
@@ -7,7 +7,7 @@ tracker-aligned composite and the empty scene on the three SAM2 feature levels t
   arXiv 2302.05543; replaces a scalar α, under which R received no gradient until α moved)
   F̂^16 is the decoder's image embedding; F̂^8, F̂^4 its high-res features (mask_decoder.py:205, 224-225)
   sparse prompt (v3.2): SAM2 prompt embedding of the kernel tracker's box (t0 size) + its point, the
-  point token corrected by w·zero-init MLP(composite prototype); at step 0 = SAM2 with the GT-free tracker box + point. Without a track (f['trk'] absent): w·[point embedding at the a-weighted composite centroid + zero-init
+  point token corrected by w·zero-init MLP(integral-image prototype); at step 0 = SAM2 with the GT-free tracker box + point. Without a track (f['trk'] absent): w·[point embedding at the a-weighted integral image centroid + zero-init
   MLP(Σ a F_C^16 / Σ a)] + (1 − w)·learned fallback token, w = 1 − exp(−Σa / κ), κ learned (init 500 cells of 256²):
   a point prompt at step 0 when there is evidence, a learned prompt when there is none (PerSAM-style, arXiv 2305.03048).
 Frozen SAM2.1 b+; loss 20·focal + Dice vs V on the decoder's 256² logits.
@@ -83,8 +83,8 @@ class Fusion(nn.Module):
         for l, x in (('16', x16), ('8', x8), ('4', x4)):
             o[f'X{l}'] = f[f'X{l}'] + self.out[l](x)
         if sam is not None:
-            # token = SAM2's own positive-point embedding at the evidence-weighted centroid of the composite (a working
-            # prompt at step 0) + a zero-initialised learned correction from the composite's prototype feature
+            # token = SAM2's own positive-point embedding at the evidence-weighted centroid of the integral image (a working
+            # prompt at step 0) + a zero-initialised learned correction from the integral image's prototype feature
             a = f['a']
             n = a.shape[0]
             g = (torch.arange(256, device=a.device, dtype=a.dtype) + 0.5) * 4          # 256² grid → 1024 input frame
@@ -104,7 +104,7 @@ class Fusion(nn.Module):
             proto = (f['C16'] * a16).sum((2, 3)) / a16.sum((2, 3)).clamp(min=1e-3)
             delta = self.tok(proto)[:, None]
             w = (1 - torch.exp(-m / self.log_kappa.exp()))[:, None, None]
-            if 'trk' in f:                       # location always known: no fallback; the composite only corrects (δ ∝ w)
+            if 'trk' in f:                       # location always known: no fallback; the integral image only corrects (δ ∝ w)
                 corr = torch.zeros_like(sp); corr[:, ip] = (w * delta)[:, 0]
                 o['token'] = sp + corr
             else:
@@ -206,7 +206,7 @@ def fmt(d, arms):
 def main(steps=1500, seed=0, eval_every=100, max_targets=32, n_val_fast=12, test=True):
     """One clip per step (≤ max_targets frames), built with the test-time path (fusion_data.build). Fast validation every
     `eval_every` steps: 12 synthetic val clips + the seq1 brush SELECTION set, with the parity statistics and the
-    composite-removal sanity arm; best checkpoint by seq1 adapter J. At the end: full synthetic val (30 clips) and ONE
+    integral-image-removal sanity arm; best checkpoint by seq1 adapter J. At the end: full synthetic val (30 clips) and ONE
     evaluation of the selected checkpoint on the seq2–4 handAv TEST set.
     Printed J/P/R triples; 'GAP' = (adapter − trk-box) on synthetic vs on seq1: the domain gap in the quantity that matters."""
     from benchmark.nfo_vos.adapter import fusion_nfo

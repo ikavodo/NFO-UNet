@@ -1,4 +1,4 @@
-# Plan: composite/background fusion adapter → dense prompt for a frozen, memory-free SAM2 (2026-10-16)
+# Plan: integral image/background fusion adapter → dense prompt for a frozen, memory-free SAM2 (2026-10-16)
 
 Status: **live**, not started. Written for an implementing session. Data generation is out of scope: §3 lists only
 what the data must provide; another session builds it.
@@ -6,24 +6,24 @@ what the data must provide; another session builds it.
 Read first: `docs/vos_benchmark/archive/nfo_vos_pilot_findings_full.md` (last four sections) and
 `docs/vos_benchmark/nfo_failure_log.md` (2026-10-16 lines).
 
-## 0. Why (measured, 2026-10-16, NFO seq1, 11 windows with composite history)
+## 0. Why (measured, 2026-10-16, NFO seq1, 11 windows with integral image history)
 
-- **Composite as SAMURAI init fails.** Two variants were tried:
+- **Integral image as SAMURAI init fails.** Two variants were tried:
   - planted prepend frame: ΔJ −0.073 [−0.170, −0.004];
-  - composite mask inserted as the t₀ memory: ΔF2 −0.001 [−0.072, +0.050].
+  - integral image mask inserted as the t₀ memory: ΔF2 −0.001 [−0.072, +0.050].
   - Even the oracle t₀ mask (SAM2-ceiling) gives only ΔJ +0.036.
 - **Why (`cp_vbar.show_logits`).** Under the box + p* prompt, SAM2 segments 3,600–6,900 px *in the empty scene*. This
   is the box's prompt prior latching onto background structure. A median 53% (up to 86%) of SAM2's mask on the
-  composite is that same background object. Multiplying the two (σ(l_C)·(1 − σ(l_B))) cancels the leak only when
+  integral image is that same background object. Multiplying the two (σ(l_C)·(1 − σ(l_B))) cancels the leak only when
   SAM2 picks the same object in both images, so it is not a general cleaner.
 - **What works is per-frame and per-pixel against the empty scene.** V̂_anch raises recall in all 61 windows on
   both bases: ΔR +0.019 … +0.080 vs the silhouette label.
-- **The tracker's point, not a box, is the right sparse prompt (user, 2026-10-16).** A wrongly tracked composite
+- **The tracker's point, not a box, is the right sparse prompt (user, 2026-10-16).** A wrongly tracked integral image
   then cannot drag the mask, because the point anchors it to the tracker's position at t.
 
-**Hypothesis.** A small trained adapter that *fuses the composite's and the background's SAM2 features* can produce
-the dense mask prompt that a hand rule could not. That prompt should say where the person is (from the composite),
-where background structure is (from B, the cause of the leak), and how far to trust the composite. A frozen,
+**Hypothesis.** A small trained adapter that *fuses the integral image's and the background's SAM2 features* can produce
+the dense mask prompt that a hand rule could not. That prompt should say where the person is (from the integral image),
+where background structure is (from B, the cause of the leak), and how far to trust the integral image. A frozen,
 memory-free SAM2 decoder, given that prompt plus the tracker point, then segments each frame. No memory attention
 is involved.
 
@@ -32,7 +32,7 @@ is involved.
 Per frame t (GT-free at test time), the inputs are:
 - the frame I_t;
 - the tracker point p_t (the blob tracker's merged centre, as in V̂);
-- the composite C_t (V̂'s GT-free weighted-temporal composite of t−6 … t−1, aligned onto t by the tracker's
+- the integral image C_t (V̂'s GT-free weighted-temporal integral image of t−6 … t−1, aligned onto t by the tracker's
   Theil–Sen motion; `factorised_gtfree.composite`);
 - the empty scene B (warm-up median).
 
@@ -50,16 +50,16 @@ SAM2.1 b+ is frozen throughout: image encoder, prompt encoder and mask decoder. 
 Enc(B) is computed once per segment. Enc(C_t) costs one extra encoder pass per frame (0.074 s measured on NFO), the
 same cost as V̂.
 
-**Remove the composite's background noise at the source (added 2026-10-16).**
+**Remove the integral image's background noise at the source (added 2026-10-16).**
 - `composite_frames` (`factorised_gtfree.py:62-71`) normalises the person gate G per pixel: Σ w G A / Σ w G. Wherever
-  G is small but non-zero, the result is still a weighted average of the *shifted* history. So the composite's
+  G is small but non-zero, the result is still a weighted average of the *shifted* history. So the integral image's
   background is the scene blurred along the person's motion, and F_C − F_B ≠ 0 there even though no person is
   present.
-- **Default input: background-consistent composite.**
+- **Default input: background-consistent integral image.**
   C̃ = a·C + (1 − a)·B, with a = clip(Σ_i w_i G_i, 0, 1), the gate mass, i.e. the evidence that something
   non-static was seen at that pixel. Outside the person, a → 0, so C̃ → B and F_C̃ − F_B → 0 by construction. It costs
   nothing.
-- **Ablation: null composite.** B̃ = Σ_i w_i shift(B, Δ_i), the same alignment applied to the empty scene; then use
+- **Ablation: null integral image.** B̃ = Σ_i w_i shift(B, Δ_i), the same alignment applied to the empty scene; then use
   F_C − F_B̃. Anything B̃ produces is alignment-induced and not person (a control variate). It costs one more encoder
   pass per frame.
 - What remains is gait blur and alignment error on the person. These are learned away by the targets (§4), not
@@ -84,9 +84,9 @@ Here P^ℓ is a 1×1 projection to d = 32, with one shared P^ℓ for all three t
   On the synthetic clips no *hand-made* template beat the energy detector, because template error ‖e‖² was large.
   A learned fusion can down-weight unreliable template parts. That is the bet.
 
-**Conditioning (the bad-composite mitigation).**
+**Conditioning (the bad-integral image mitigation).**
 - **Point map.** h_t is a Gaussian at p_t (σ = 1 stride-16 cell), concatenated at stride 16. With it the adapter can
-  test whether the composite's person lies where the tracker is now. A composite built from the wrong history
+  test whether the integral image's person lies where the tracker is now. A integral image built from the wrong history
   (C ≈ B) or the wrong motion does not.
 - **Reliability scalars** r, injected by FiLM (Perez et al., AAAI 2018, arXiv 1709.07871; id not re-verified this
   session): number of tracked history frames out of 6, and the Theil–Sen residual of the tracker chain. These are
@@ -128,10 +128,10 @@ Here P^ℓ is a 1×1 projection to d = 32, with one shared P^ℓ for all three t
 - AutoSAM (Shaharabany, Dahan, Giryes, Wolf, BMVC 2023, arXiv 2306.06370):
   - What it does: a trained network replaces SAM's prompt encoder, takes the image as input, and is trained by
     gradients through frozen SAM (BCE + Dice). This is the training scheme used here.
-  - Difference: our adapter conditions on a *composite/background pair from the same video* and keeps the point.
+  - Difference: our adapter conditions on a *integral image/background pair from the same video* and keeps the point.
 - PerSAM (Zhang et al., ICLR 2024, arXiv 2305.03048): a training-free one-shot reference prior for SAM (location prior
   and target-guided attention).
-  - Difference: our reference is the tracker-aligned composite of the same object, plus an explicit
+  - Difference: our reference is the tracker-aligned integral image of the same object, plus an explicit
     background-negative cue.
 - No novelty pass has been run (deferred by the user). Do not claim novelty before one.
 
@@ -143,8 +143,8 @@ Per clip (GPJATK walkers, foliage occluder ≡ background, the `data/synthetic_n
 - S_t (full silhouette), V_t (modal visible), O_t (observable in ≥ 1 aligned history frame);
 - GT box;
 - the tracker outputs used at test time: p_t, the chain, and the shifts. Simulated or real, but **from the same
-  composite code path** (`factorised_gtfree.composite` with tracker-derived shifts), so that train and test
-  composites match.
+  integral image code path** (`factorised_gtfree.composite` with tracker-derived shifts), so that train and test
+  integral images match.
 
 Required corruption modes, each flagged per frame, at a total rate of about 25%:
 - (a) shift error beyond the tracker's measured error;
@@ -229,7 +229,7 @@ V_t, overall and on the corruption strata.
 ## 7. Cost per frame (NFO, measured components)
 
 - frame encoder 0.074 s (needed anyway);
-- composite 0.081 s;
+- integral image 0.081 s;
 - Enc(C_t) 0.074 s;
 - adapter (not measured; expected ms);
 - decoder 0.047 s;
@@ -306,7 +306,7 @@ F_B, two decoder calls), and the point and box maps.
 - Default: one learned prototype token, MLP(Σ a·F_C^16 / Σ a). No hand prompt; the tracker is used for alignment only.
 - Ablation: the tracker box (jittered GT box), with exact box-only SAM2 at init (α = 0).
 
-**Data.** Pixel composite C + evidence mass a (V̂'s construction, test-time consistent); feature-space composite is
+**Data.** Pixel integral image C + evidence mass a (V̂'s construction, test-time consistent); feature-space integral image is
 approach B, later. Occlusion sampler per clip: ρ ~ U[0.2, 0.6], clump ∈ {12, 24, 12 ∪ 24}, flutter ~ U[0, 2]·NFO
 calibration; the corruption modes kept. Per-clip batches: every target frame of a clip shares one empty-scene encode.
 
@@ -323,7 +323,7 @@ and exact box-only equivalence at init; (3) training/eval loop; smoke run; (4) f
 1. **Target consistency.** Training target = synthetic V (exact, modal). Real-frame reference = the user's modal seq2–4
    handAv labels, void ignored (`layers/fusion_nfo.py`, every validation). The extent-leaning silhouette label and the
    seq1 polygons are *not* used to judge the adapter.
-2. **Encoded composite out of distribution.** `fusion_nfo.feature_diff_montage` saves ‖F_t − F_C‖ and ‖F_t − F_B‖ per
+2. **Encoded integral image out of distribution.** `fusion_nfo.feature_diff_montage` saves ‖F_t − F_C‖ and ‖F_t − F_B‖ per
    level on NFO frames (`images/benchmark/gpjatk_foliage/fusion_nfo_featdiff.png`). Ablation queued: F_C removed, a only.
 3. **Token without evidence.** token = w·(point embedding at the a-centroid + zero-init MLP correction) + (1 − w)·learned
    fallback, w = 1 − exp(−Σa/κ), κ learned (init 500 cells). Test: empty a gives exactly the fallback.
@@ -335,7 +335,7 @@ and exact box-only equivalence at init; (3) training/eval loop; smoke run; (4) f
 6. **Zero init.** Scalar α replaced by zero-initialised final 1×1 convs (ControlNet zero conv). Test: features unchanged
    at init, and the zero convs receive gradient.
 7. **Cost.** F_B is encoded once per clip in training and once per segment at test (static camera). Test-time cost:
-   2 encoder passes per frame (frame + composite). A moving camera would need F_B aligned: out of scope.
+   2 encoder passes per frame (frame + integral image). A moving camera would need F_B aligned: out of scope.
 8. **Scaling of a.** a = Σ w G ∈ [0, 1] by construction (w sums to 1, G ∈ [0, 1]), with a fixed 6-frame history;
    resampled by area to 256² and avg-pooled to 128² / 64². Its dependence on foliage density is signal, not scale drift.
 9. **Synthetic-only training.** 10% unoccluded clips (ρ = 0). Real-frame validation from step 0 (item 1).
@@ -350,7 +350,7 @@ and exact box-only equivalence at init; (3) training/eval loop; smoke run; (4) f
 - v1, old data: synthetic val J 0.75; NFO seq2–4 adapter J 0.575, R 0.59 (vs GT-box SAM2 0.722).
 - v2, blob tracker in training: seq1 selection adapter J 0.326, R 0.34 (vs box + point 0.566).
 - Diagnosis of v2:
-  - the blob tracker covered only 48% of synthetic frames, so 35% of training targets had no composite (a = 0);
+  - the blob tracker covered only 48% of synthetic frames, so 35% of training targets had no integral image (a = 0);
     on NFO 0% do;
   - NFO evidence mass is about 4× lower (median Σa 6,265 vs 23,293 cells).
 
@@ -360,14 +360,14 @@ alignment code path.
   On NFO: 0.105.
 - Whole-clip batches.
 - Backgrounds: CanaTree100 50/50 with the template, every 5th image held out for val.
-- Composite parameters randomised per clip: n_h 4–8, τ 2–6, z0 2–4, widening the evidence-mass range.
+- Integral image parameters randomised per clip: n_h 4–8, τ 2–6, z0 2–4, widening the evidence-mass range.
 
 **Sanity checks, printed at every validation (every 100 steps):**
 1. **Tracker parity.** Kernel-tracker error on synthetic vs NFO (above). If synthetic is much easier, the adapter
-   learns to trust a composite that NFO cannot deliver.
+   learns to trust a integral image that NFO cannot deliver.
 2. **Input parity.** Median Σa and mean a on the labelled person, synthetic val vs seq1. Large mismatch means
    out-of-distribution inputs at test.
-3. **Composite use.** The `adapter-noC` arm (C := B, a := 0) on seq1. If it scores like `adapter`, the composite is
+3. **Integral image use.** The `adapter-noC` arm (C := B, a := 0) on seq1. If it scores like `adapter`, the integral image is
    ignored and any gain is not our idea.
 4. **GT-free control.** `trk-box`: SAM2 with the kernel tracker's box, the fair comparison for the box-free token
    adapter. GT-box SAM2 remains the oracle reference.
@@ -377,4 +377,4 @@ alignment code path.
 **Pre-registered "gap closed" (TEST, seq2–4 handAv, touched once, checkpoint chosen on seq1):**
 - adapter J − trk-box SAM2 J > 0, with a frame-bootstrap CI excluding 0;
 - adapter R ≥ trk-box R − 0.02;
-- `adapter-noC` J < adapter J − 0.02, i.e. the composite matters.
+- `adapter-noC` J < adapter J − 0.02, i.e. the integral image matters.

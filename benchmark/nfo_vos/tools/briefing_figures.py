@@ -1,7 +1,7 @@
 """Figures for the collaborator briefing (docs/briefing/, 2026-10-20).
 
   nfo_inputs.jpg      one seq2 / seq3 / seq4 hand frame per row: what the adapter sees (frame + tracker box, empty
-                      scene, aligned change-gated composite C, evidence mass a) and what comes out (hand label,
+                      scene, aligned change-gated integral image C, evidence mass a) and what comes out (hand label,
                       SAMURAI, ours), cropped around the GT box
   synth_example.jpg   synthetic GPJATK-behind-foliage clips: frame, full person S, visible V, and the loss weight
                       classes (fusion_data.loss_weights) drawn on the frame
@@ -76,7 +76,7 @@ def nfo_inputs():
             ms[arm] = m[[int(x) for x in f_].index(k)]
         J = lambda m: ((m & hand & keep).sum() / max(((m | hand) & keep).sum(), 1))
         panes = [(fr, f'{seq} frame {k}: tracker box'), (_rgb(it['bg']), 'empty scene B'),
-                 (_rgb(C), 'composite C (t-6..t-1)'), (heat, 'evidence mass a'),
+                 (_rgb(C), 'integral image C (t-6..t-1)'), (heat, 'evidence mass a'),
                  (_overlay(X, hand, (0, 200, 0), keep), 'hand label (grey: void)'),
                  (_overlay(X, ms['t1-c2'], (40, 110, 235)), f'SAMURAI  J {J(ms["t1-c2"]):.2f}'),
                  (_overlay(X, ms['adapter-pf'], (214, 120, 42)), f'ours  J {J(ms["adapter-pf"]):.2f}')]

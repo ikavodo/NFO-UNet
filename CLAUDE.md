@@ -25,7 +25,7 @@ Frozen SAM2.1-b+ **image** predictor, per frame, no memory. Per frame t of an NF
 - **Tracker** (`adapter/tracker.py`): kernel-f16. A fixed-size box kernel matched on 1 − cos(F_t, F_B) (SAM2 stride-16
   features of frame t and of the empty scene B = warm-up median), Theil–Sen constant-velocity search window.
   Replaced the MOG2 blob tracker on 2026-10-16: it locates the person in 100% of synthetic frames vs 48%.
-- **Composite** (`adapter/composite.py`): frames t−6..t−1, each shifted by the x-only Theil–Sen fit of the tracker
+- **Integral image** (`adapter/integral_image.py`): frames t−6..t−1, each shifted by the x-only Theil–Sen fit of the tracker
   track, change-gated against B (robust z-score, adaptive threshold max(3, q90)), recency-weighted (τ = 3.5):
   C = Σ w G A / Σ w G, evidence mass a = Σ w G. Ancestor: Airborne Optical Sectioning (arXiv 2111.06959, 2207.13344).
 - **Adapter** (`adapter/fusion_adapter.py`, `Fusion`, 730k parameters): zero-initialised residuals at strides 16/8/4
@@ -39,9 +39,9 @@ Frozen SAM2.1-b+ **image** predictor, per frame, no memory. Per frame t of an NF
 - **Inference** (`adapter/inference.py`, `fast_masks`): one encoder pass per frame shared by tracker, adapter and
   decoder: 61 ms/frame vs B0 53 ms (RTX PRO 4000 laptop). Frames with < 6 frames of history use the tracker prompts.
 
-Things that mattered (each measured; details in the findings doc): the kernel-f16 tracker for composite alignment
+Things that mattered (each measured; details in the findings doc): the kernel-f16 tracker for integral image alignment
 (v3), the adaptive gate threshold (train/test parity), loss v3.4 over the balanced and simple variants, step 200,
-and the composite itself (vs the `-noC` control, over 3 seeds: box AUC +0.024 ± 0.005, recognition conf
+and the stack itself (vs the `-noC` control, over 3 seeds: box AUC +0.024 ± 0.005, recognition conf
 +0.025 ± 0.004, hand J +0.016 ± 0.013). Main result vs SAMURAI over 3 seeds on seq2–4 (recognition at N = 7; to be rescored at N = 5 on all sequences): box AUC 0.717 / 0.723 / 0.715
 vs 0.646; hand J 0.761 / 0.763 / 0.757 vs 0.750; recognition AP50 0.926 / 0.915 / 0.926 vs 0.916.
 
@@ -55,15 +55,15 @@ balanced loss, the one-pass feature-space adapter (designed, not pursued:
 |---|---|
 | `trials.py` | the test set: 61 admissible 40-frame windows over seq1–4 (`results/benchmark/rr/trials.json`, in git), GT boxes, native frames (`native`), hand labels (`hand_label`, `hand_frames`) |
 | `baselines/run_sam2_video.py` (+ sbatch) | B0 (SAM2.1 video) and T1 (SAMURAI), same t0 box + point prompt |
-| `adapter/` | the method: `tracker`, `composite`, `fusion_adapter` (model, loss, training `main`, `image_predictor`), `fusion_data` (synthetic batches), `dataset` (clip specs), `fusion_nfo` (NFO hand frames for checkpoint selection/test), `inference` (`fast_masks`), `fusion_adapter.sbatch` |
+| `adapter/` | the method: `tracker`, `integral_image`, `fusion_adapter` (model, loss, training `main`, `image_predictor`), `fusion_data` (synthetic batches), `dataset` (clip specs), `fusion_nfo` (NFO hand frames for checkpoint selection/test), `inference` (`fast_masks`), `fusion_adapter.sbatch` |
 | `synth/` | synthetic training clips: `gpjatk_foliage`, `occluders` (vendored), `noise`, `photo_depth` (one-off: depth map of the foliage photo) |
-| `eval/` | `dump_arms` (+ sbatch: masks of our arms), `box_metrics` (LaSOT one-pass AUC from masks), `recognition` (YOLO11m on GT-motion masked composites), `recog_vs_N`, `report` (the table + paired window bootstrap) |
+| `eval/` | `dump_arms` (+ sbatch: masks of our arms), `box_metrics` (LaSOT one-pass AUC from masks), `recognition` (YOLO11m on GT-motion masked stacks), `recog_vs_N`, `report` (the table + paired window bootstrap) |
 | `tools/` | `remote_smoke` (cluster doctor: paths, GPU, one training step; run before long jobs), `timing`, `briefing_figures`, `cvat_io` (CVAT round trip for hand labels; the second annotator) |
 | `tests/` | pytest suite; `parity_snapshot.py` = refactor guard (bit-exact before/after diff of the live paths) |
 
 Arms (mask dirs under `results/benchmark/rr/masks/`): `b0-c2`, `t1-c2` (baselines, cluster rerun), `trk` (SAM2 +
 tracker prompts), `trkbox` (the tracker box itself), `adapter-pf` / `adapter-s1` / `adapter-s2` (seeds 0/1/2),
-`<arm>-noC` (composite removed at inference).
+`<arm>-noC` (integral image removed at inference).
 
 ## Running
 

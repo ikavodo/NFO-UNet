@@ -14,7 +14,7 @@ superseded work goes to the topic's `archive/`, kept for its results and reasoni
   - `hand_annotation_plan.md`, `annotator_cvat_setup.md`, `label_generators_design.md` — how hand labels were made;
     the second annotator's guide; automatic label generators
   - `nfo_pseudo_segmentation_approach.md` — the SAM2-ceiling (former pseudo-GT) generator
-  - `gtfree_clean_composite.md` — construction of the GT-free composite C, with equations
+  - `gtfree_clean_integral_image.md` — construction of the GT-free integral image C, with equations
   - `gt_conditioned_blend_plan.md` — GT-conditioned exemplar blending
   - `archive/` — full chronological findings log, the A/4 port
 - `layer_sam2/` — the learned adapter on frozen SAM2 (code: `benchmark/nfo_vos/adapter/`); see `layer_sam2/README.md`

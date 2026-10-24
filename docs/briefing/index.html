@@ -223,7 +223,7 @@ G_i(x) = σ( z_i(x) − θ_i ),  θ_i = max(3, 90th percentile of z_i)
 w_i    ∝ exp(−age_i / τ),  τ = 3.5 frames
 C(x)   = Σ w_i G_i(x) A_i(x) / Σ w_i G_i(x)        (plain weighted mean where Σ w_i G_i ≈ 0)
 a(x)   = Σ w_i G_i(x) ∈ [0, 1]                       (evidence mass)</div>
-  <p>Code: <span class="mono">adapter/composite.py: composite_and_mass</span> (the code calls it the composite). The integral image is <b>open-loop</b>: it is built from pixels and the empty scene, never from the model's own past masks. That is the key difference from SAM2's memory. Section 6 explains why it matters.</p>
+  <p>Code: <span class="mono">adapter/integral_image.py: integral_image_and_mass</span>. The integral image is <b>open-loop</b>: it is built from pixels and the empty scene, never from the model's own past masks. That is the key difference from SAM2's memory. Section 6 explains why it matters.</p>
 
   <h3>Adapter internals</h3>
   <ul>
@@ -336,7 +336,7 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
     <li><b>Adapter inside SAM2's memory loop</b> (residual before memory attention): over-segments, hand J −0.031.</li>
     <li><b>Balanced / unweighted losses:</b> better synthetic J, worse real J (table in §4).</li>
     <li><b>SAM2-ceiling labels as a dense evaluation proxy:</b> they reverse the main ranking (SAMURAI 0.781 vs ours 0.718 against the proxy), because they share SAM2's bias. Usable only for non-SAM2 comparisons.</li>
-    <li><b>Frozen pseudo-GT and composite-based labels</b> as stand-ins for the hand masks: J 0.62–0.69 against hand labels, too far off to rank methods.</li>
+    <li><b>Frozen pseudo-GT and integral-image-based labels</b> as stand-ins for the hand masks: J 0.62–0.69 against hand labels, too far off to rank methods.</li>
     <li><b>Depth cues</b> (gating by empty-scene disparity): raise precision ≤ 0.05 but cost more recall.</li>
     <li><b>Background fill in the recognition stack:</b> re-inserted sharp foliage. Replaced by the mean fill.</li>
   </ul>
@@ -362,7 +362,7 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
   <tr><td>adapter model, loss, training</td><td class="mono">benchmark/nfo_vos/adapter/fusion_adapter.py (+ .sbatch)</td></tr>
   <tr><td>synthetic training batches, loss weights</td><td class="mono">benchmark/nfo_vos/adapter/fusion_data.py, synth/</td></tr>
   <tr><td>feature tracker</td><td class="mono">benchmark/nfo_vos/adapter/tracker.py</td></tr>
-  <tr><td>integral image + evidence mass</td><td class="mono">benchmark/nfo_vos/adapter/composite.py</td></tr>
+  <tr><td>integral image + evidence mass</td><td class="mono">benchmark/nfo_vos/adapter/integral_image.py</td></tr>
   <tr><td>NFO per-frame inference (tracker, integral image, adapter)</td><td class="mono">benchmark/nfo_vos/adapter/inference.py</td></tr>
   <tr><td>baselines SAM2.1 video / SAMURAI</td><td class="mono">benchmark/nfo_vos/baselines/run_sam2_video.py (+ .sbatch)</td></tr>
   <tr><td>mask dumps for our arms</td><td class="mono">benchmark/nfo_vos/eval/dump_arms.py (+ .sbatch)</td></tr>

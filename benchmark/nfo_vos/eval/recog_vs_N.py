@@ -1,9 +1,9 @@
-"""Recognition vs composite length N (seq2–4 test): YOLO11m person AP50 on masked GT-motion composites of N frames,
+"""Recognition vs stack length N (seq2–4 test): YOLO11m person AP50 on masked GT-motion stacks of N frames,
 N ∈ {1, 3, 5, 7, 11, 15, 21}, uniform masked mean, stride max(1, ⌊N/2⌋). All three CSVs from one interpreter (NFO_RECOG_TAG=_ablN,
 2026-10-20); absolute AP is only comparable within that set. 95% CI: window bootstrap (AP recomputed per resample, as
 recognition.report).
 N = 1 is the same for every arm by construction: unmasked pixels are filled with the plain aligned mean, which for a
-single frame is the frame itself, so every composite is the raw frame (the no-integration reference point).
+single frame is the frame itself, so every stack is the raw frame (the no-integration reference point).
 
     python3 -m benchmark.nfo_vos.eval.recog_vs_N
 """
@@ -31,7 +31,7 @@ def ap_ci(rows, arm, B=1000):
     win = {}
     for r in rows:
         if r['arm'] == arm and r['seq'] != 'seq1':
-            win.setdefault(r['id'], []).append([tuple(x) for x in json.loads(r['dets'])])   # one det list per composite
+            win.setdefault(r['id'], []).append([tuple(x) for x in json.loads(r['dets'])])   # one det list per stack
     ids = sorted(win)
     boot = np.random.default_rng(0).integers(0, len(ids), (B, len(ids)))
     bs = [ap50([d for i in b for d in win[ids[i]]]) for b in boot]
@@ -62,8 +62,8 @@ def main():
     ax.set_xticks(NS); ax.set_xlim(0.5, NS[-1] + 0.5)
     ax.annotate('N = 1: raw frame,\nidentical for all arms', (1, res['nomask', 1][0]), xytext=(1.25, res['nomask', 1][0] - 0.06),
                 fontsize=8, color='#52514e')
-    ax.set_xlabel('frames per composite N'); ax.set_ylabel('YOLO11m person AP50')
-    ax.set_title('Recognition on masked temporal composites (NFO seq2–4, 95% CI)', fontsize=10, loc='left')
+    ax.set_xlabel('frames per stack N'); ax.set_ylabel('YOLO11m person AP50')
+    ax.set_title('Recognition on masked temporal stacks (NFO seq2–4, 95% CI)', fontsize=10, loc='left')
     for s in ('top', 'right'):
         ax.spines[s].set_visible(False)
     ax.grid(axis='y', color='#e6e5e0', lw=0.8); ax.set_axisbelow(True)
@@ -77,13 +77,13 @@ if __name__ == '__main__':
 
 
 def montage(Ns=(7, 21), arms=(('nomask', 'no mask'), ('adapter-pf', 'adapter'), ('t1-c2', 'SAMURAI'))):
-    """Composites ending at the last frame of the first seq2 / seq3 / seq4 window, rows = window × N, columns = arm,
+    """Stacks ending at the last frame of the first seq2 / seq3 / seq4 window, rows = window × N, columns = arm,
     cropped around the GT box (green); YOLO's best-matching person box in magenta with its confidence. For judging
-    why masked composites lose to the plain mean at long N (seams vs ghost limbs)."""
+    why masked stacks lose to the plain mean at long N (seams vs ghost limbs)."""
     import cv2
     from ultralytics import YOLO as Y
     from benchmark.nfo_vos.eval.recognition import YOLO, arm_masks, background, frame, gt_shifts, \
-        masked_composite, score_yolo
+        masked_stack, score_yolo
     model = Y(YOLO)
     trials = json.load(open(TR.OUT))
     rows = []
@@ -100,7 +100,7 @@ def montage(Ns=(7, 21), arms=(('nomask', 'no mask'), ('adapter-pf', 'adapter'), 
             panes = []
             for a, name in arms:
                 M, _ = arm_masks(a, t, gtb)
-                C = masked_composite([frame(seq, fr[i]) for i in idx], [M[i] for i in idx],
+                C = masked_stack([frame(seq, fr[i]) for i in idx], [M[i] for i in idx],
                                      gt_shifts(gtb, [fr[i] for i in idx], fr[j]), bg)
                 s = score_yolo(model, C, g)
                 v = C.copy()
@@ -112,6 +112,6 @@ def montage(Ns=(7, 21), arms=(('nomask', 'no mask'), ('adapter-pf', 'adapter'), 
                 cv2.putText(p, f'conf {s["conf"]:.2f}', (4, 312), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 255), 1)
                 panes.append(p)
             rows.append(np.hstack(panes))
-    path = f'{BM.IMG}/composite_N7_vs_N21.jpg'
+    path = f'{BM.IMG}/stack_N7_vs_N21.jpg'
     cv2.imwrite(path, np.vstack(rows), [cv2.IMWRITE_JPEG_QUALITY, 85])
     print('wrote', path)

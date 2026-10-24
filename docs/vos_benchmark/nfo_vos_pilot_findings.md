@@ -35,14 +35,15 @@ the data below unless marked otherwise. CIs are 95% window-bootstrap (2,000 resa
 | vid-adapter-pre | vid-prompts + the same adapter, residual added before memory attention |
 
 **Terminology (2026-10-24).** Two different temporal stacks, two names. *Integral image*: our method's input, the
-6 past frames t−6…t−1 (code and older docs: "composite", `adapter/composite.py`, arm suffix `-noC`). *Recognition
-stack*: the evaluation's N = 5 masked frames aligned by GT motion, the same construction for every method (code:
-`recognition.py`; older docs: "recognition composite"). Dated records (failure log, plans, archive) keep the old word.
+6 past frames t−6…t−1, not frame t itself (`adapter/integral_image.py`; arm suffix `-noC` = without it). *Recognition
+stack*: the evaluation's N = 5 masked frames aligned by GT motion, the same construction for every method
+(`recognition.py`, `masked_stack`). Both were called "composite" before 2026-10-24; that word survives only in
+`archive/`, in names of code removed in the 2026-10-21 cleanup, and as "composited" (pasted onto a background).
 
 **Layer adapter.**
 - **Inputs:** SAM2 encoder features at strides 16/8/4 of three images:
   - the frame;
-  - an **integral image** (code: `composite`): frames t−6…t−1 (6 past frames, not frame t), aligned to t by the
+  - an **integral image** (`adapter/integral_image.py`): frames t−6…t−1 (6 past frames, not frame t), aligned to t by the
     tracker's motion, change-gated against the empty scene and recency-weighted, plus an evidence mass a;
   - the **empty scene** (median of person-free frames).
 - **Outputs:**
@@ -181,7 +182,7 @@ it **ranks methods like the hand masks**.
 | **SAM2-ceiling** | SAM2.1-L, GT box at person-clear frames, propagated both ways | 0.716 | 0.88 / 0.78 | **yes**: Spearman +0.80, 7 of 8 paired Δ signs |
 | frozen pseudo-GT | exemplar silhouettes ∪ SAM2-ceiling | 0.624 | 0.67 / 0.88 | **no**: Spearman −0.07, 3 of 8 |
 | SAM2-b+ on frame t, GT box + centre (single image) | per frame | **0.730** | 0.83 / 0.87 | not tested yet |
-| SAM2-b+ on a GT-motion composite, t±1, weights 0.7^\|i−t\| | per frame | 0.690 | 0.77 / 0.87 | not tested (worse than frame t) |
+| SAM2-b+ on a GT-motion integral image, t±1, weights 0.7^\|i−t\| | per frame | 0.690 | 0.77 / 0.87 | not tested (worse than frame t) |
 | same, t±3 | per frame | 0.662 | 0.75 / 0.84 | — |
 
 **Rules:**

@@ -1,4 +1,4 @@
-# GT-free cleaned composite C (composite gallery)
+# GT-free cleaned integral image C (integral image gallery)
 
 Construction of the "GT-free clean C" tile in `images/benchmark/rr_checks/composite_gallery/`.
 Code: `benchmark/nfo_vos/diag_composite_diff.py`, `gallery()` (lines 306–351) and `window()` (lines 68–88);
@@ -17,7 +17,7 @@ For a trial window starting at frame $t_0$, the history is the $N - 1 = 6$ frame
 
 $$\mathcal{H} = \{t_0 - 6, \dots, t_0 - 1\}$$
 
-Frame $t_0$ itself is **not** in the composite.
+Frame $t_0$ itself is **not** in the integral image.
 
 ## 2. Empty-scene background
 
@@ -34,7 +34,7 @@ Let $c_k \in \mathbb{R}^2$ be the centre of the human GT box at frame $k$, conve
 
 $$\delta_k = c_{t_0} - c_k, \qquad A_k(x) = R_k(x - \delta_k)$$
 
-with bilinear interpolation and border replication (`shift`, line 62). This is the only GT input to the composite.
+with bilinear interpolation and border replication (`shift`, line 62). This is the only GT input to the integral image.
 
 ## 4. GT-free foreground weight
 
@@ -64,7 +64,7 @@ $$\tilde{w}_k = \exp\!\left(-\frac{t_0 - 1 - k}{\tau}\right), \qquad w_k = \frac
 
 (`window()`, line 87)
 
-## 6. The composite
+## 6. The integral image
 
 $$C_{\text{GT-free}}(x) = \frac{\sum_{k \in \mathcal{H}} w_k \, g_k(x) \, A_k(x)}{\max\!\left(\sum_{k \in \mathcal{H}} w_k \, g_k(x), \; 10^{-6}\right)}$$
 
@@ -72,15 +72,15 @@ $$C_{\text{GT-free}}(x) = \frac{\sum_{k \in \mathcal{H}} w_k \, g_k(x) \, A_k(x)
 it looks unlike the empty scene.
 
 Note: where no history frame is foreground-like ($\sum_k w_k g_k \to 0$) the numerator also goes to 0, so $C$
-is near black there. It does **not** fall back to the raw composite (unlike the oracle version below).
+is near black there. It does **not** fall back to the raw integral image (unlike the oracle version below).
 
 ## 7. The comparison tiles
 
-Raw composite (no cleaning):
+Raw integral image (no cleaning):
 
 $$C_{\text{raw}}(x) = \sum_{k \in \mathcal{H}} w_k \, A_k(x)$$
 
-Oracle-cleaned composite: replace $g_k$ by the aligned SAM2-ceiling visibility mask $v_k(x) \in \{0, 1\}$,
+Oracle-cleaned integral image: replace $g_k$ by the aligned SAM2-ceiling visibility mask $v_k(x) \in \{0, 1\}$,
 falling back to raw where no history frame saw the person:
 
 $$\bar{V}(x) = \sum_{k} w_k \, v_k(x), \qquad
@@ -91,11 +91,11 @@ C_{\text{oracle}}(x) = \begin{cases} \dfrac{\sum_k w_k \, v_k(x) \, A_k(x)}{\bar
 ## 8. Why it was expected to work, and what was measured
 
 Mixing model (`diag_composite_diff.py` docstring): a pixel at $t_0$ is a mixture of person $P$ and occluder
-$O$ with visibility $v$; the composite mixes them with history visibility $\bar{V}$:
+$O$ with visibility $v$; the integral image mixes them with history visibility $\bar{V}$:
 
 $$R_{t_0} = v P + (1 - v) O, \qquad C = \bar{V} P + (1 - \bar{V}) \bar{O}$$
 
-The raw composite should separate person from occluder only where $\bar{V}$ is high; a clean composite
+The raw integral image should separate person from occluder only where $\bar{V}$ is high; a clean integral image
 ($\bar{V} \to 1$ on the person) should separate everywhere.
 
 Measured (2026-10-12, `docs/vos_benchmark/archive/nfo_vos_pilot_findings_full.md`, pre-registered fine-addition test, KILL):

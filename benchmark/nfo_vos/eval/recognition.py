@@ -1,4 +1,4 @@
-"""Person recognition on masked temporal composites (docs/vos_benchmark/plan_downstream_benchmark.md, Task 4; D4).
+"""Person recognition on masked temporal stacks (docs/vos_benchmark/plan_downstream_benchmark.md, Task 4; D4).
 
 For frame t of a window (local index ≥ N−1): frames t−N+1..t are translated onto t by the GT-box centre shift (same
 motion for every arm, so only the masks differ), and combined as the uniform masked mean
@@ -7,7 +7,7 @@ Fill = the plain aligned mean (2026-10-19, after the controls): the empty-scene 
 around the fragments and lost to the unmasked mean (seq2–4 AP50 0.48 vs 0.80); with the mean fill a method scores
 above 'nomask' only if its masked pixels are more recognisable than the synthetic-aperture blur (FP foliage re-sharpens,
 FN falls back to the blur). fill='bg' keeps the first design. YOLO11m (data/yolo11m.pt,
-COCO class 0) on C; scored against the GT box of t: AP50 over all composites of a sequence group (ultralytics
+COCO class 0) on C; scored against the GT box of t: AP50 over all stacks of a sequence group (ultralytics
 ap_per_class) and the confidence of the best person detection with IoU ≥ 0.5 (0 if none).
 Ancestor: airborne optical sectioning (Kurmi / Schedl / Bimber), integral images of aligned views before person
 classification; here the integration is temporal and gated by each segmentation method's masks.
@@ -39,7 +39,7 @@ def gt_shifts(boxes, frames, t):
     return [(float(ct[0] - c(boxes[i])[0]), float(ct[1] - c(boxes[i])[1])) for i in frames]
 
 
-def masked_composite(imgs, masks, shifts, bg, weights=None, fill='mean'):
+def masked_stack(imgs, masks, shifts, bg, weights=None, fill='mean'):
     """Uniform (or weighted) masked mean of the shifted frames; where no mask covers a pixel: the plain aligned mean
     (fill 'mean') or the empty scene (fill 'bg')."""
     H, W = bg.shape[:2]
@@ -70,11 +70,11 @@ def score_yolo(model, img, gt_box):
     return dict(dets=dets, conf=max(hits) if hits else 0.0, box=None if best is None else xyxy[best])
 
 
-def ap50(per_composite):
-    """AP50 over composites, one GT person each; at most one TP per composite (highest-confidence match)."""
+def ap50(per_stack):
+    """AP50 over stacks, one GT person each; at most one TP per stack (highest-confidence match)."""
     from ultralytics.utils.metrics import ap_per_class
     tp, cf = [], []
-    for dets in per_composite:
+    for dets in per_stack:
         used = False
         for c, i in sorted(dets, reverse=True):
             ok = i >= 0.5 and not used
@@ -82,7 +82,7 @@ def ap50(per_composite):
             tp.append(ok); cf.append(c)
     if not tp:
         return 0.0
-    out = ap_per_class(np.array(tp)[:, None], np.array(cf), np.zeros(len(cf)), np.zeros(len(per_composite)))
+    out = ap_per_class(np.array(tp)[:, None], np.array(cf), np.zeros(len(cf)), np.zeros(len(per_stack)))
     return float(out[5][0, 0])          # ap: [n_classes, n_iou]
 
 
@@ -122,7 +122,7 @@ def _arm_masks(arm, t, gtb):
 
 
 def main(N=7, weights='uniform', arms=('nomask', 'gtbox', 't1'), stride=None, montage_ids=None):
-    """stride: frames between composites; default ⌊N/2⌋ (half-overlapping windows, every frame still covered)."""
+    """stride: frames between stacks; default ⌊N/2⌋ (half-overlapping windows, every frame still covered)."""
     from ultralytics import YOLO as Y
     model = Y(YOLO)
     N, trials = int(N), json.load(open(TR.OUT))
@@ -135,7 +135,7 @@ def main(N=7, weights='uniform', arms=('nomask', 'gtbox', 't1'), stride=None, mo
         bg = background(t['seq'], *t['warmup'])
         av = [arm_masks(a, t, gtb) for a in arms]
         if any(a is None for a in av):
-            continue                                    # every arm scored on the same composites
+            continue                                    # every arm scored on the same stacks
         cov = np.all([a[1] for a in av], 0)
         ok = [j >= N - 1 and cov[j - N + 1:j + 1].all() for j in range(len(fr))]
         for arm in arms:
@@ -148,7 +148,7 @@ def main(N=7, weights='uniform', arms=('nomask', 'gtbox', 't1'), stride=None, mo
                     continue
                 idx = list(range(j - N + 1, j + 1))
                 w = None if weights == 'uniform' else [RECENCY ** (j - i) for i in idx]
-                C = masked_composite([frame(t['seq'], fr[i]) for i in idx], [M[i] for i in idx],
+                C = masked_stack([frame(t['seq'], fr[i]) for i in idx], [M[i] for i in idx],
                                      gt_shifts(gtb, [fr[i] for i in idx], fr[j]), bg, w)
                 s = score_yolo(model, C, gtb[fr[j]])
                 rows.append(dict(arm=arm, id=t['id'], seq=t['seq'], frame=fr[j], conf=s['conf'],
@@ -210,7 +210,7 @@ def _montage(keep, arms, N, weights):
     w = max(r.shape[1] for r in rows)
     rows = [np.pad(r, ((0, 0), (0, w - r.shape[1]), (0, 0))) for r in rows]
     os.makedirs(BM.IMG, exist_ok=True)
-    cv2.imwrite(f'{BM.IMG}/composite_N{N}_{weights}_meanfill.jpg', np.vstack(rows), [cv2.IMWRITE_JPEG_QUALITY, 80])
+    cv2.imwrite(f'{BM.IMG}/stack_N{N}_{weights}_meanfill.jpg', np.vstack(rows), [cv2.IMWRITE_JPEG_QUALITY, 80])
 
 
 if __name__ == '__main__':

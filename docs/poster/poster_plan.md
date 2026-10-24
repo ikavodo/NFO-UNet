@@ -114,7 +114,7 @@ length curve (the stacking picture carries the same point).
 
 ## Vocabulary
 Replace rather than define. Visible-part segmentation (not *modal*), memory of its own past answers (not *memory
-bank*), unchanged (not *frozen*), integral image, i.e. stack of aligned past frames (not *composite*); the recognition metric's frames are a "5-frame stack", position hint (not *prompt*).
+bank*), unchanged (not *frozen*), integral image, i.e. stack of aligned past frames (not *stack*); the recognition metric's frames are a "5-frame stack", position hint (not *prompt*).
 A small glossary box for what cannot be avoided: IoU (overlap of two regions, 0–1), SAM2, precision / recall.
 
 ## Figures
@@ -123,7 +123,7 @@ A small glossary box for what cannot be avoided: IoU (overlap of two regions, 0�
 |---|---|---|
 | reuse, cropped | `docs/briefing/figs/nfo_inputs.jpg` (one row) | exists |
 | reuse, 2–3 tiles | `images/benchmark/downstream/hand_vs_gt_box.png` | exists |
-| reuse, one tile | `images/benchmark/downstream/composite_N7_vs_N21.jpg` or `labels_vs_composite.jpg` | exists; legend of the cyan / red outlines in the latter to confirm |
+| reuse, one tile | `images/benchmark/downstream/stack_N7_vs_N21.jpg` or `labels_vs_integral_image.jpg` | exists; legend of the cyan / red outlines in the latter to confirm |
 | new | `images/benchmark/downstream/mask_fill_trend.png` | done (`python -m benchmark.nfo_vos.eval.mask_fill`) |
 | new | raw frame with tinted visible fragments | needs a native frame (cluster) |
 | new | simplified method diagram | to draw |

@@ -1,6 +1,6 @@
 """NFO hand frames as adapter inputs, and the evaluation of a checkpoint on them (used during training).
 Splits: 'test' = seq2–4 hand labels (handAv: 1 person, 2 void ignored), touched once at the end; 'select' = seq1 brush
-masks, used for checkpoint selection. Inputs exactly as at test time: composite of k-6..k-1 aligned by the x-only
+masks, used for checkpoint selection. Inputs exactly as at test time: integral image of k-6..k-1 aligned by the x-only
 Theil–Sen fit of the kernel-f16 track (adapter/tracker.py), its evidence mass a, warm-up median bg.
 """
 import os
@@ -14,13 +14,13 @@ import json
 
 from benchmark.nfo_vos import trials as TR
 from benchmark.nfo_vos.adapter.fusion_data import AMP, a256, u8
-from benchmark.nfo_vos.adapter.composite import composite_and_mass
+from benchmark.nfo_vos.adapter.integral_image import integral_image_and_mass
 from gen_data.nfo_pseudo_masks.gen_nfo_pseudo_masks import gt_to_native
 from utils.stats_utils import theil_at
 
 def hand_windows(split):
     """[(seq, k, trial, j)]: each hand frame k of the split with the first admissible window holding it at local j ≥ 6
-    (six frames of history for the composite). 'select': seq1; 'test': seq2–4."""
+    (six frames of history for the integral image). 'select': seq1; 'test': seq2–4."""
     T = [t for t in json.load(open(TR.OUT)) if t['admissible']]
     out = []
     for seq in (('seq1',) if split == 'select' else ('seq2', 'seq3', 'seq4')):
@@ -37,8 +37,8 @@ def items(split='test', pred=None):
     split 'test': seq2–4 handAv (modal, void ignored), touched once at the end (remedy 2, 2026-10-16).
     split 'select': seq1 brush masks (handmask_raw, visible-leaning, no void), used for checkpoint selection.
     Alignment (2026-10-16 v3, train/test parity with fusion_data.build): kernel-f16 track of the window
-    (tracker.kernel16_track) from the t0 prompt box; x-only Theil–Sen over [j-12, j]; composite of j-6..j-1 with the
-    test parameters (τ = composite.TAU_AGE, z0 = adaptive). box_trk: the tracker's box at j (GT-free control, 'trk-box' arm)."""
+    (tracker.kernel16_track) from the t0 prompt box; x-only Theil–Sen over [j-12, j]; integral image of j-6..j-1 with the
+    test parameters (τ = integral_image.TAU_AGE, z0 = adaptive). box_trk: the tracker's box at j (GT-free control, 'trk-box' arm)."""
     from benchmark.nfo_vos.adapter.tracker import kernel16_track
     out, trk = [], {}
     for seq, k, t, j in hand_windows(split):
@@ -51,7 +51,7 @@ def items(split='test', pred=None):
         fx = theil_at(cs, [kc[l, 0] for l in cs], [j] + list(range(j - 6, j)))
         hist = [t['frames'][l] for l in range(j - 6, j)]
         Ms = [np.float32([[1, 0, fx[j] - fx[l]], [0, 1, 0]]) for l in range(j - 6, j)]
-        C, a = composite_and_mass([TR.native(i, seq).astype(np.float32) for i in hist], Ms, bg, z0='adaptive')
+        C, a = integral_image_and_mass([TR.native(i, seq).astype(np.float32) for i in hist], Ms, bg, z0='adaptive')
         H, keep = TR.hand_label(seq, k)
         v = H.astype(np.uint8) if keep is None else np.where(keep, H, 2).astype(np.uint8)   # 1 person, 2 void
         x0, y0, x1, y1 = gt_to_native(TR.bbs(seq)[k][0], 800, 600)
@@ -69,8 +69,8 @@ def evaluate(pred, net, its):
     """Frame-mean J / P / R vs the hand label (void ignored). Arms:
       box          SAM2, GT box (oracle prompt)          box+pt   GT box + its centre
       trk-box      SAM2, the kernel tracker's box (the GT-free control the token-mode adapter must beat)
-      adapter      the adapter (its own prompt)          adapter-noC  sanity: composite removed (C := B, a := 0);
-                                                         if it scores like 'adapter', the composite is not used
+      adapter      the adapter (its own prompt)          adapter-noC  sanity: integral image removed (C := B, a := 0);
+                                                         if it scores like 'adapter', the integral image is not used
     Also the input statistics (median evidence mass Σa, mean a on the labelled person) for train/test parity."""
     from benchmark.nfo_vos.adapter.fusion_adapter import decode
     from benchmark.nfo_vos.adapter.fusion_data import encode

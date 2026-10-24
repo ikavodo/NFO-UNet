@@ -159,7 +159,7 @@ For comparison, today's synthetic set had V area shares of 0.007/0.010/0.045/0.9
 
 - The generator, SAM2 runs and scoring already work end to end (18 clips in about 2 min, measured).
 - Remaining toy checks:
-  - the cut-out person composites without NaNs or halos (montage, user judges);
+  - the cut-out person integral images without NaNs or halos (montage, user judges);
   - occ_branch at 1–3 px renders at the requested width after the blur.
 
 ## 6. Pre-registered pass/fail (to sign off before rungs A–D run)

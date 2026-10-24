@@ -5,7 +5,7 @@ seq2–4 handAv with void (value 2) ignored. Paired window-bootstrap Δ for the 
 (results/benchmark/rr/downstream/box_gt.csv), recognition confidence (recog_N<NFO_RECOG_N>_uniform_meanfill.csv) and
 hand J. Groups: all sequences (the headline since 2026-10-23), seq1 (where step 200 was selected, so not independent)
 and seq2–4 (the clean held-out check).
-Recognition N = 5 frames per composite (NFO_RECOG_N): the N at which SAM2.1 video and SAMURAI score highest in the
+Recognition N = 5 frames per recognition stack (NFO_RECOG_N): the N at which SAM2.1 video and SAMURAI score highest in the
 N sweep (eval/recog_vs_N.py), i.e. the baselines' best case. It replaced the a-priori N = 7 on 2026-10-23.
 
   python -m benchmark.nfo_vos.eval.report
@@ -20,7 +20,7 @@ from benchmark.nfo_vos import trials as TR
 from benchmark.nfo_vos.eval import box_metrics as BM
 
 # final arms: baselines B0 (SAM2.1 video) / T1 (SAMURAI), the tracker controls, the adapter over 3 seeds and its
-# no-composite controls (the composite's contribution)
+# no-integral-image controls (the integral image's contribution)
 SEEDS = ('adapter-pf', 'adapter-s1', 'adapter-s2')
 ARMS = ('b0-c2', 't1-c2', 'trkbox', 'trk', *SEEDS, *(f'{a}-noC' for a in SEEDS))
 PAIRS = (('trk', 't1-c2'), *((a, 't1-c2') for a in SEEDS), ('adapter-pf', 'trk'), *((a, f'{a}-noC') for a in SEEDS))

@@ -4,7 +4,7 @@ Status: **live** = current direction · **done** = executed, results inside · *
 for its results and reasoning (all closed docs are in `archive/`).
 
 ## Live
-- `plan_fusion_prompt_adapter.md` — **live.** Composite/background fusion adapter → gated dense prompt for a frozen,
+- `plan_fusion_prompt_adapter.md` — **live.** Integral image/background fusion adapter → gated dense prompt for a frozen,
   memory-free SAM2 with the tracker point. Gate O1 (GT-prompt oracle) first. This is the method in
   `benchmark/nfo_vos/adapter/`.
 - `related_work_minimal_adapter.md` — related work for the integral image (AOS ancestor) and slimmer adapter variants.

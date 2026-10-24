@@ -15,7 +15,7 @@ Source: `NFO-UNet` branch `vos-benchmark-pilot`, `docs/vos_benchmark/archive/nfo
   helps amodal extent but not modal masks. It is capped by gait articulation: translation-only
   alignment works only up to about 7 frames, and more frames or stride make it worse even with
   oracle alignment.
-- **Composite-prepend** (SAM2 cut-out of the integrated person pasted onto background as a
+- **Integral-image-prepend** (SAM2 cut-out of the integrated person pasted onto background as a
   synthetic, prompted frame 0) helps SAMURAI: 0.773 → 0.843 with GT alignment, 0.806 with
   GT-free tracker alignment. Vanilla SAM2 collapses on heavily occluded starts with the GT-free
   version.
@@ -147,7 +147,7 @@ Decision rules:
 1. **Encoder fusion is motivated** if, at the NFO-like Δv, best E − P ≥ +0.03 amodal IoU at ≥ 2 of 3
    densities and E ≥ M on amodal IoU.
 2. **Memory fusion is the route** if M ≥ E on amodal as well. In that case, invest in SAM2's memory
-   (e.g. composite-prepend, memory selection), not in the encoder.
+   (e.g. integral-image-prepend, memory selection), not in the encoder.
 3. **Resolution, not tolerance:** if E's advantage over P exists only for ε < 16 px, report it as
    a stride effect.
 4. **Stop** if every fused arm < A0 at Δv = 0.

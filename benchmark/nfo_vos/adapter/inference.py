@@ -15,7 +15,7 @@ S1 = np.array([1024 / 800, 1024 / 600] * 2, np.float32)    # native xyxy -> SAM2
 
 
 def _gate_gpu(X, B):
-    """composite.composite_and_mass's gate, z0 = 'adaptive', on the GPU: robust z of |X − B| (median, 1.4826·MAD),
+    """integral_image.integral_image_and_mass's gate, z0 = 'adaptive', on the GPU: robust z of |X − B| (median, 1.4826·MAD),
     threshold max(3, q90(z)). Depends only on the frame and the empty scene, so it is computed once per frame."""
     d = (X - B).abs()
     med = d.median()
@@ -36,10 +36,10 @@ def _shift_x(x, dx):
 @torch.no_grad()
 def fast_masks(pred, net, t, tau=3.5, noC=False, hist=6):
     """Adapter masks of one NFO window. Each frame is encoded ONCE (shared by tracker, adapter and decoder), the empty
-    scene once per window, each frame's gate once, the composite on the GPU (61 ms/frame vs 445 ms for the original
-    path that re-encoded frame / composite / empty scene per frame; same box AUC and hand J, 2026-10-20).
-    net None: the 'trk' arm (per-frame SAM2, tracker box + point, every frame). noC: the composite removed
-    (C := empty scene, a := 0). hist: past frames in the composite (training drew 4..8). Frames j < hist have no history
+    scene once per window, each frame's gate once, the integral image on the GPU (61 ms/frame vs 445 ms for the original
+    path that re-encoded frame / integral image / empty scene per frame; same box AUC and hand J, 2026-10-20).
+    net None: the 'trk' arm (per-frame SAM2, tracker box + point, every frame). noC: the integral image removed
+    (C := empty scene, a := 0). hist: past frames in the integral image (training drew 4..8). Frames j < hist have no history
     and use the tracker prompts alone.
     Returns ([T, H, W] bool, s / frame)."""
     seq, fr = t['seq'], t['frames']

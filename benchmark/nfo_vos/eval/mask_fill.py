@@ -36,7 +36,7 @@ from benchmark.nfo_vos.eval import box_metrics as BM
 from benchmark.nfo_vos.eval.report import SEEDS
 
 ARMS = ('b0-c2', 't1-c2', 'trk', *SEEDS)
-K0 = 6                       # first steady-state frame (adapter composite history)
+K0 = 6                       # first steady-state frame (adapter integral-image history)
 K1 = 30                      # late-ratio start: the memory arms' drop is over by then (pass run)
 MIN_N = 15                   # median curve drawn while at least this many clips are still running
 CSV = f'{BM.OUT}/mask_fill.csv'

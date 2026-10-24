@@ -8,9 +8,9 @@ Read first:
 ## 0. Why this exists (context in five lines)
 - **Goal:** beat SAM2.1 (B0) and SAMURAI (T1) on modal person segmentation under fragmented foliage occlusion (NFO
   dataset). The win has to come from higher recall: humans label more "generously" than SAM2.
-- **Post-hoc fixes after T1 failed on modal labels.** V̂ = T1 plus change-gated pixels from a person composite gives
+- **Post-hoc fixes after T1 failed on modal labels.** V̂ = T1 plus change-gated pixels from a person integral image gives
   ΔJ −0.001 on NFO seq2–4 with the void regions ignored.
-- **Next idea:** put the empty-scene comparison and the person composite *inside* SAM2 and train them ("Layer-SAM2",
+- **Next idea:** put the empty-scene comparison and the person integral image *inside* SAM2 and train them ("Layer-SAM2",
   architecture v2).
 - **Training needs exact layers:** visible person V, amodal person S, occluder matte a. Real NFO has none of these,
   so we build them synthetically: GPJATK walkers + foliage.
@@ -58,7 +58,7 @@ Per clip (one GPJATK sequence × camera × a contiguous walking window of N = 40
    - Coverage target per clip: uniform in [0.3, 0.7] of person pixels occluded. Calibrate num_branches /
      threshold per clip by a few bisection steps; the old `calibrate_branch_num_branches` was deleted, see the note
      in the testbed file.
-4. **Composite:** I_t = a_t·O_t + (1 − a_t)·I^g_t.
+4. **Integral image:** I_t = a_t·O_t + (1 − a_t)·I^g_t.
 5. **Exact targets:**
    - V_t = m_t ∧ (a_t < 0.5): visible person (modal).
    - S_t = m_t: amodal person.

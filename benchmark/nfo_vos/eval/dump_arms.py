@@ -3,10 +3,10 @@ Writes results/benchmark/rr/masks/<arm>/<trial_id>.npz in the B0/T1 schema (mask
 'trkbox' also stores boxes [40, 4] (native xyxy). Skips a window whose file exists.
   trkbox          kernel-f16 tracker box itself (fixed t0 size), masks = filled box
   trk             per-frame SAM2, tracker box + point, no memory
-  adapter-pf      per-frame adapter, v3.4 loss, step 200, seed 0 (frames < 6 have no composite -> trk)
+  adapter-pf      per-frame adapter, v3.4 loss, step 200, seed 0 (frames < 6 have no integral image -> trk)
   adapter-s1/-s2  the same, seeds 1 / 2
-  <arm>-noC       the adapter with the composite removed at inference (C := empty scene, a := 0)
-  <arm>-h<n>      the adapter with n past frames in the composite instead of 6 (n in the training range 4..8)
+  <arm>-noC       the adapter with the integral image removed at inference (C := empty scene, a := 0)
+  <arm>-h<n>      the adapter with n past frames in the integral image instead of 6 (n in the training range 4..8)
 
     PYTHONPATH=. ../samurai/.venv/bin/python -m benchmark.nfo_vos.eval.dump_arms ARM TRIAL_INDEX
 """

@@ -5,10 +5,10 @@ Per clip (sample_occlusion): person/scene scale s ~ U[0.5, 1] (zoom-out; GPJATK 
 0.33), ρ = 0 (10%) or ρ ~ U[0.2, 0.6], clump ∈ {12, 24, (12, 24)}, flutter ~ U[0, 2]·noise.FLUTTER_AMP.
 Alignment (2026-10-16, v3): the kernel-f16 tracker (adapter/tracker.kernel_track on 1 − cos(F_t, F_B)), the same
 path as on NFO (fusion_nfo). It located the person in 100% of synthetic frames (centre error 0.092 person heights vs
-0.105 on NFO); the blob tracker of v2 covered only 48% and left a third of the training frames without a composite.
+0.105 on NFO); the blob tracker of v2 covered only 48% and left a third of the training frames without an integral image.
 Whole-clip batches (build): each frame is encoded once and reused. Backgrounds: template photo or CanaTree100 (50/50;
-every 5th image held out for val). Composite parameters randomised per clip. Mode 2 (5%): composite = empty scene.
-Composite: the gated pixel composite C and its evidence mass a = Σ w G (adapter/composite.py).
+every 5th image held out for val). Integral image parameters randomised per clip. Mode 2 (5%): integral image = empty scene.
+Integral image: the gated pixel average C and its evidence mass a = Σ w G (adapter/integral_image.py).
 """
 import os
 
@@ -19,7 +19,7 @@ import torch
 AMP = torch.float16 if os.environ.get('AMP') == 'fp16' else torch.bfloat16   # fp16 on pre-Ampere GPUs
 
 from benchmark.nfo_vos.adapter import dataset as D
-from benchmark.nfo_vos.adapter.composite import composite_and_mass
+from benchmark.nfo_vos.adapter.integral_image import integral_image_and_mass
 from benchmark.nfo_vos.synth import noise
 from utils.stats_utils import theil_at
 
@@ -98,7 +98,7 @@ def loss_weights(S, V):
 
 def clip_raw(spec, rng):
     """One clip on the CPU (DataLoader worker): rescaled frames, labels, jittered boxes (the t0 prompt), per-frame
-    corruption mode, and the composite parameters drawn for this clip (randomised: history n_h ∈ 4..8, age τ ∈ [2, 6],
+    corruption mode, and the integral image parameters drawn for this clip (randomised: history n_h ∈ 4..8, age τ ∈ [2, 6],
     gate z0 ∈ [2, 4]; NFO uses 6 / 3.5 / 3)."""
     seq, cam, _, seed = spec
     occ = sample_occlusion(rng)
@@ -123,8 +123,8 @@ def _enc(pred, imgs, chunk=8):
 def build(pred, raw, max_targets=None, rng=None, dev='cuda', all_targets=False):
     """GPU side of one clip, the test-time path: encode every frame once (+ the empty scene); kernel-f16 tracker
     (adapter/tracker.kernel_track on 1 − cos(F_t, F_B)) from the jittered t0 box; for each target t, x-only Theil–Sen
-    on the track over [t-12, t] aligns frames t-n_h..t-1 into V̂'s gated composite (composite_and_mass with the clip's
-    τ, z0); the composites are encoded. Each frame's F_t is reused as its own target input, so the encode cost per
+    on the track over [t-12, t] aligns frames t-n_h..t-1 into V̂'s gated integral image (integral_image_and_mass with the clip's
+    τ, z0); the integral images are encoded. Each frame's F_t is reused as its own target input, so the encode cost per
     sample is ≈ (T + K + 1) / K. Returns (f, meta)."""
     from concurrent.futures import ThreadPoolExecutor
     from benchmark.nfo_vos.adapter.tracker import kernel_track
@@ -153,7 +153,7 @@ def build(pred, raw, max_targets=None, rng=None, dev='cuda', all_targets=False):
         hist = list(range(t - nh, t))
         cs = list(range(max(0, t - 12), t + 1))
         fx = theil_at(cs, [trk[l, 0] for l in cs], [t] + hist)
-        return composite_and_mass([X[i].astype(np.float32) for i in hist],
+        return integral_image_and_mass([X[i].astype(np.float32) for i in hist],
                                   [np.float32([[1, 0, fx[t] - fx[i]], [0, 1, 0]]) for i in hist], bg.astype(np.float32),
                                   occ['tau'], occ['z0'])
     with ThreadPoolExecutor(8) as ex:
@@ -214,7 +214,7 @@ class Clips(torch.utils.data.IterableDataset):
 
 @torch.no_grad()
 def encode(pred, clips, dev='cuda'):
-    """Frozen SAM2 (bf16) on a list of clip batches: features of every target frame X, its composite C, and each clip's
+    """Frozen SAM2 (bf16) on a list of clip batches: features of every target frame X, its integral image C, and each clip's
     empty scene B (encoded once per clip, broadcast to its frames). Returns one flat batch."""
     rgb = lambda a: [np.stack([x] * 3, -1) for x in a]
     f = {}

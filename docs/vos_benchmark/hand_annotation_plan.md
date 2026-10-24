@@ -78,7 +78,7 @@ static.
 - **Transfer.** For seg 5 / seg 0 frames: visible = Ŝ_t ∧ (P(O) < ½), restricted to pixels with evidence.
   Elsewhere fall back to the SAM2-ceiling.
 - **The hard part is Ŝ_t.** It is the silhouette, not a box. Options:
-  - SAM2 on the motion-aligned composite (the A/4 extent: +0.06–0.08 box IoU on NFO, amodal IoU ~0.75 on
+  - SAM2 on the motion-aligned integral image (the A/4 extent: +0.06–0.08 box IoU on NFO, amodal IoU ~0.75 on
     GPJATK; finally a use for it);
   - the hand-segment silhouettes shifted along the path, since the person walks at a similar height;
   - the union of SAM2-ceiling over the window.

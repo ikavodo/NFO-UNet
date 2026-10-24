@@ -30,23 +30,23 @@ def test_ope_lost():
     assert r['auc'] == 0 and r['fail'] == 1 and r['p20'] == 0
 
 
-def test_composite_no_mask_is_bg():
+def test_stack_no_mask_is_bg():
     bg = np.full((20, 30, 3), 7, np.uint8)
     imgs = [np.full((20, 30, 3), 200, np.uint8)] * 3
-    out = RC.masked_composite(imgs, [np.zeros((20, 30), bool)] * 3, [(0, 0)] * 3, bg, fill='bg')
+    out = RC.masked_stack(imgs, [np.zeros((20, 30), bool)] * 3, [(0, 0)] * 3, bg, fill='bg')
     np.testing.assert_array_equal(out, bg)
 
 
-def test_composite_shift():
+def test_stack_shift():
     im = np.zeros((20, 30, 3), np.uint8)
     im[5, 10] = 255
-    out = RC.masked_composite([im], [np.ones((20, 30), bool)], [(5, 0)], np.zeros_like(im))
+    out = RC.masked_stack([im], [np.ones((20, 30), bool)], [(5, 0)], np.zeros_like(im))
     assert out[5, 15, 0] == 255 and out[5, 10, 0] == 0
 
 
-def test_composite_uniform_mean():
+def test_stack_uniform_mean():
     a, b = np.zeros((4, 4, 3), np.uint8), np.full((4, 4, 3), 100, np.uint8)
-    out = RC.masked_composite([a, b], [np.ones((4, 4), bool)] * 2, [(0, 0)] * 2, np.zeros_like(a))
+    out = RC.masked_stack([a, b], [np.ones((4, 4), bool)] * 2, [(0, 0)] * 2, np.zeros_like(a))
     assert np.all(out == 50)
 
 
@@ -56,8 +56,8 @@ def test_gt_shifts_zero_at_t():
     assert s[-1] == (0.0, 0.0) and s[0] == (4.0, 2.0)
 
 
-def test_composite_mean_fill_where_unmasked():
+def test_stack_mean_fill_where_unmasked():
     a, b = np.zeros((4, 4, 3), np.uint8), np.full((4, 4, 3), 100, np.uint8)
     m = np.zeros((4, 4), bool); m[0, 0] = True
-    out = RC.masked_composite([a, b], [m, np.zeros((4, 4), bool)], [(0, 0)] * 2, np.full_like(a, 7))
+    out = RC.masked_stack([a, b], [m, np.zeros((4, 4), bool)], [(0, 0)] * 2, np.full_like(a, 7))
     assert out[0, 0, 0] == 0 and np.all(out[1:, :, 0] == 50)      # masked pixel: frame a only; elsewhere plain mean
