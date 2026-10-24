@@ -19,7 +19,8 @@ taken straight from pixels can't.*
 | 5 | We score what masks are for: following the person, and keeping them recognisable. | three icons | benchmark |
 | 6 | Clearly better at following the person (0.70 vs 0.63), as good as the best video models on everything else, with no memory at all. | three result bars | rescore 1945844 |
 | 7 | Every ingredient earns its place: the position hint buys tracking, the empty scene removes false pixels, the integral image adds real person evidence. | ablation bars | rescore 1945844 |
-| 8 | Next: how far do two annotators agree, and does our lead grow over whole crossings? | — | open |
+| 8 | Over whole crossings our lead grows: tracking +0.10 instead of +0.065, and more of the visible person marked correctly. | optional: window vs whole-crossing bars | full-pass job 1950229 (findings §9) |
+| 9 | Next: how far do two annotators agree? | — | open |
 
 Takeaway line under the title (punch 3 in one sentence): *A memory built from the model's own guesses compounds
 its mistakes, while evidence taken straight from pixels can't.*

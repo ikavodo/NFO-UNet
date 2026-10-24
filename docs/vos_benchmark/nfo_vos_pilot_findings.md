@@ -246,6 +246,19 @@ it **ranks methods like the hand masks**.
   start to the end of the pass (32 clips, 44–155 frames, every frame once; `trials --to-pass-end --first-per-pass`,
   NFO_RUN=fullpass). Motivation: following a person through a whole crossing is the realistic use, and memory drift
   (§`eval/mask_fill.py`: masks of the memory methods shrink ≈ 10% per 10 frames, ours ≈ 1%) is hidden by short clips.
+  **Outcome (job 1950229, 2026-10-24, one cluster env; ours = 3 seeds, Δ vs SAMURAI with window-bootstrap 95% CI):**
+
+  | seq1–4, 32 clips | ours | SAMURAI | SAM2.1 video | ours − SAMURAI, per seed |
+  |---|---|---|---|---|
+  | box AUC | 0.674 / 0.681 / 0.678 | 0.579 | 0.571 | +0.096 … +0.102, every CI > 0 |
+  | hand J (19 labelled frames) | 0.757 / 0.759 / 0.752 | 0.730 | 0.733 | +0.022 … +0.029, every CI > 0 |
+  | recognition conf (N = 5) | 0.662 / 0.669 / 0.671 | 0.663 | 0.666 | −0.001 … +0.008, on par |
+
+  seq2–4 alone: box AUC +0.102 … +0.109, hand J +0.022 … +0.030 (18 frames), recognition on par. Against the
+  40-frame windows the box lead grows (+0.065 → +0.10) and hand J turns from on par into a small, significant lead; the
+  gain is recall (hand R 0.86 vs 0.81) at some precision (0.86 vs 0.88). Recognition stays on par: it scores 5-frame
+  stacks aligned with the true motion, so it sees no clip-length effect by construction. Caveat: the full-pass hand
+  frames are a different, smaller set (19 vs the windows' set) and lie later in their clips on average.
 
 ## Code map
 
