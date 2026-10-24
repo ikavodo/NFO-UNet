@@ -92,7 +92,7 @@ def boot_mean(per_clip, ids, B=2000):
     groups = {}
     for i in ids:
         groups.setdefault(pass_of(i), []).append(per_clip[i])
-    g = list(groups.values())
+    g = [groups[p] for p in sorted(groups)]      # fixed order: ids come from sets, whose order changes per run
     draws = np.random.default_rng(0).integers(0, len(g), (B, len(g)))
     bs = [np.mean([x for j in d for x in g[j]]) for d in draws]
     return np.mean([x for v in g for x in v]), np.quantile(bs, .025), np.quantile(bs, .975), len(ids), len(g)
