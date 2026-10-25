@@ -9,6 +9,8 @@ single frame is the frame itself, so every stack is the raw frame (the no-integr
     NFO_RUN=fullpass python3 -m benchmark.nfo_vos.eval.recog_vs_N   # the 32 whole crossings, seq1–4, + b0trk-c2
 Whole crossings (2026-10-25): CSVs from eval/recog_sweep.sbatch (one per N and arm, _fpN_<arm>) and N = 5 from the
 headline CSV (_fp); -> recog_vs_N_fullpass.png.
+40-frame windows + b0trk-c2 (eval/vidtrk_windows.sh): an arm missing from an _ablN CSV is read from its own
+recog_N<N>_uniform_meanfill_ablN_<arm>.csv (scored later on the cluster, so absolute AP may shift slightly).
 """
 import csv
 import json
@@ -28,8 +30,7 @@ ARMS = (('adapter-pf', 'adapter (ours, per-frame)', '#2a78d6', '-'), ('t1-c2', '
         ('b0-c2', 'SAM2.1 video', '#1baf7a', '-'), ('trk', 'SAM2.1 per-frame (tracker box)', '#eda100', '-'),
         ('nomask', 'no mask', '#8a8984', '--'))
 FULLPASS = TR.RUN == 'fullpass'
-if FULLPASS:
-    ARMS = ARMS[:4] + (('b0trk-c2', 'SAM2.1 video + tracker box', '#7a5ac8', '-'),) + ARMS[4:]
+ARMS = ARMS[:4] + (('b0trk-c2', 'SAM2.1 video + tracker box', '#7a5ac8', '-'),) + ARMS[4:]
 SEQS = TR.ALL_SEQS if FULLPASS else ('seq2', 'seq3', 'seq4')     # whole crossings: the seq1–4 headline
 OUT = f"{BM.IMG}/recog_vs_N{'_fullpass' if FULLPASS else ''}.png"
 
@@ -53,6 +54,8 @@ def main():
         for a, *_ in ARMS:
             if FULLPASS:
                 rows = list(csv.DictReader(open(f"{BM.OUT}/recog_N{N}_uniform_meanfill_{'fp' if N == 5 else 'fpN_' + a}.csv")))
+            elif not any(r['arm'] == a for r in rows):
+                rows = rows + list(csv.DictReader(open(f'{BM.OUT}/recog_N{N}_uniform_meanfill_ablN_{a}.csv')))
             res[a, N] = ap_ci(rows, a)
             print(f'N={N} {a:12s} AP50 {res[a, N][0]:.3f} [{res[a, N][1]:.3f}, {res[a, N][2]:.3f}]')
     fig, ax = plt.subplots(figsize=(6.4, 4.2), dpi=100)
