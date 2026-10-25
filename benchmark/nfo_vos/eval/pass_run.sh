@@ -5,6 +5,7 @@
 #   bash benchmark/nfo_vos/eval/pass_run.sh baselines                 # trials + B0/T1 arrays (independent of our arms)
 #   bash benchmark/nfo_vos/eval/pass_run.sh ours trk adapter-pf ...   # our arms (e.g. adapter-pf-h4 once chosen)
 #   bash benchmark/nfo_vos/eval/pass_run.sh fullpass adapter-pf-noC ...  # arms needed only on the 32 fullpass clips
+#   bash benchmark/nfo_vos/eval/pass_run.sh vidtrk                    # B0 + tracker prompts on the 32 clips -> b0trk-c2
 # Then (cluster or locally after copying results/benchmark/pass/masks back):
 #   NFO_RUN=pass  python -m benchmark.nfo_vos.eval.mask_fill score && NFO_RUN=pass python -m benchmark.nfo_vos.eval.mask_fill
 #   NFO_RUN=fullpass python -m benchmark.nfo_vos.eval.box_metrics score <arms>; ...eval.recognition 5 uniform <arms>; ...eval.report
@@ -30,6 +31,10 @@ elif [ "$STAGE" = fullpass ]; then
   # writes through fullpass/masks -> pass/masks; the fullpass clips are a subset of the pass clips (same ids)
   N=$("$PYTHON" -c "import json; print(len(json.load(open('results/benchmark/fullpass/trials.json'))))")
   for A in "$@"; do NFO_RUN=fullpass ARM=$A sbatch --export=ALL --array=0-$((N - 1)) --time=01:00:00 benchmark/nfo_vos/eval/dump_arms.sbatch; done
+elif [ "$STAGE" = vidtrk ]; then
+  # SAM2.1 video (memory) + tracker box/point every frame; needs fullpass/masks/trkbox (boxes). Ids 0..N-1 = B0 only.
+  N=$("$PYTHON" -c "import json; print(len(json.load(open('results/benchmark/fullpass/trials.json'))))")
+  NFO_RUN=fullpass NFO_TAG=-c2 NFO_TRK_PROMPTS=1 sbatch --export=ALL --array=0-$((N - 1)) benchmark/nfo_vos/baselines/run_sam2_video.sbatch
 else
-  echo "usage: $0 baselines | ours ARM... | fullpass ARM..."; exit 1
+  echo "usage: $0 baselines | ours ARM... | fullpass ARM... | vidtrk"; exit 1
 fi

@@ -1,6 +1,7 @@
 #!/bin/bash
 # B0 (SAM2.1 video) and T1 (SAMURAI) on the NFO windows, one array task per (method, window).
 #   NFO_TAG=-c2 sbatch --export=ALL benchmark/nfo_vos/baselines/run_sam2_video.sbatch   # -> masks/b0-c2, masks/t1-c2
+# NFO_TRK_PROMPTS=1 adds --trk-prompts (masks/b0trk<TAG>; submit ids 0..N-1 only = B0): eval/pass_run.sh vidtrk.
 # Task map: id 0..N-1 -> B0, window id; id N..2N-1 -> T1, window id-N (N = 61 admissible windows).
 # Needs on the cluster: data/nfo_final/nfo_final/<seq>/, the base_plus checkpoint at NFO_SAM2_CKPT, a sam2 1.x env
 # for B0 (PYTHON_B0) and the SAMURAI repo's sam2 fork for T1 (SAMURAI_SAM2). GPU choice: see adapter/fusion_adapter.sbatch.
@@ -36,8 +37,9 @@ else
 fi
 
 pwd; hostname; date; nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
-echo "method=$METHOD trial-index=$IDX tag=${NFO_TAG:-} python=$PY"
+TRK=${NFO_TRK_PROMPTS:+--trk-prompts}
+echo "method=$METHOD trial-index=$IDX tag=${NFO_TAG:-} $TRK python=$PY"
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
-srun "$PY" -m benchmark.nfo_vos.baselines.run_sam2_video --method "$METHOD" --trial-index "$IDX" --force
+srun "$PY" -m benchmark.nfo_vos.baselines.run_sam2_video --method "$METHOD" --trial-index "$IDX" --force $TRK
 date

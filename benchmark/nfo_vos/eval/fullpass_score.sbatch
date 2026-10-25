@@ -17,7 +17,11 @@
 set -e
 PYTHON=${PYTHON:-/home/wiss/akid/miniconda3/envs/comp_vis/bin/python3}
 export OMP_NUM_THREADS=8 PYTHONPATH=. NFO_RUN=fullpass NFO_RECOG_TAG=_fp
-ARMS="b0-c2 t1-c2 trkbox trk adapter-pf adapter-s1 adapter-s2 adapter-pf-noC adapter-s1-noC adapter-s2-noC"
+ARMS="b0-c2 t1-c2 b0trk-c2 trkbox trk adapter-pf adapter-s1 adapter-s2 adapter-pf-noC adapter-s1-noC adapter-s2-noC"
+for A in $ARMS; do                # recognition drops a clip for every arm if one arm lacks it: all 32 first
+  n=$(ls results/benchmark/fullpass/masks/$A/ | grep -cxFf <("$PYTHON" -c "import json; [print(t['id'] + '.npz') for t in json.load(open('results/benchmark/fullpass/trials.json'))]")) || true
+  [ "$n" -eq 32 ] || { echo "arm $A has $n of 32 fullpass clips; wait for its array"; exit 1; }
+done
 hostname; nvidia-smi --query-gpu=name --format=csv,noheader; date
 "$PYTHON" -m benchmark.nfo_vos.eval.box_metrics score $ARMS
 "$PYTHON" -m benchmark.nfo_vos.eval.recognition 5 uniform nomask gtbox $ARMS

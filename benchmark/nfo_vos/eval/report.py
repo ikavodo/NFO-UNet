@@ -20,10 +20,11 @@ from benchmark.nfo_vos import trials as TR
 from benchmark.nfo_vos.eval import box_metrics as BM
 
 # final arms: baselines B0 (SAM2.1 video) / T1 (SAMURAI), the tracker controls, the adapter over 3 seeds and its
-# no-integral-image controls (the integral image's contribution)
+# no-integral-image controls (the integral image's contribution); b0trk-c2 = SAM2.1 video + tracker prompts (memory on
+# top of trk; the tracker on top of memory), full-pass protocol only
 SEEDS = ('adapter-pf', 'adapter-s1', 'adapter-s2')
-ARMS = ('b0-c2', 't1-c2', 'trkbox', 'trk', *SEEDS, *(f'{a}-noC' for a in SEEDS))
-PAIRS = (('trk', 't1-c2'), *((a, 't1-c2') for a in SEEDS), ('adapter-pf', 'trk'), *((a, f'{a}-noC') for a in SEEDS))
+ARMS = ('b0-c2', 't1-c2', 'b0trk-c2', 'trkbox', 'trk', *SEEDS, *(f'{a}-noC' for a in SEEDS))
+PAIRS = (('trk', 't1-c2'), ('b0trk-c2', 'trk'), ('b0trk-c2', 'b0-c2'), *((a, 't1-c2') for a in SEEDS), ('adapter-pf', 'trk'), *((a, f'{a}-noC') for a in SEEDS))
 # extra arms (e.g. history variants adapter-pf-h4): appended to the table, paired with their base arm
 EXTRA = tuple(os.environ.get('NFO_EXTRA_ARMS', '').split())
 ARMS, PAIRS = ARMS + EXTRA, PAIRS + tuple((a, a.rsplit('-h', 1)[0]) for a in EXTRA if '-h' in a)
