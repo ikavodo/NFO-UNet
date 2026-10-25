@@ -119,7 +119,13 @@ frame, person, visible target, loss weights.}
 more than false alarms. Hidden pixels next to visible fragments (yellow) are not penalised; far hidden ones (red)
 count as background, at lower weight.
 
+\Unter{Benchmark note: recognition vs.\ frames integrated}
+\Bild{plots/nfo/recogN.png}
+\Unterschrift{YOLO11 AP50 (Layer-SAM: one seed; SAM2.1 rows as in 6). Good masks matter for short integrations
+(N\,$\le$\,7: noisy masks lose); for long ones the plain average wins and masks become unnecessary.}
+
 %======================================================================= column 3: results
+\columnbreak
 \par\noindent\begin{minipage}{\linewidth}\raggedright   % heading + table + caption stay together
 \Abschnitt{6\quad Results on NFO-VOS}
 
@@ -155,9 +161,5 @@ shrink (0.76$\times$ Layer-SAM after frame 30); with tracker prompts they keep t
 \Unterschrift{From SAM2.1 to Layer-SAM, one change per row; lines: 95\,\% CI, dots: 3 seeds. Without the integral image, the
 adapter gets the empty scene in its place.}
 
-\Unter{Recognition vs.\ frames integrated}
-\Bild{plots/nfo/recogN.png}
-\Unterschrift{YOLO11 AP50 (Layer-SAM: one seed). Good masks matter for short integrations (N\,$\le$\,7: noisy masks
-lose); for long ones the plain average wins and masks become unnecessary.}
 
 \end{multicols*}

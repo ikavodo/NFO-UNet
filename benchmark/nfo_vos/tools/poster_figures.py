@@ -113,7 +113,7 @@ def playsafe_options():
 def qual():
     """Results column: the section-2 frame again, now with our mask, plus a frame late in another crossing."""
     playsafe((('seq4', 293), ('seq4', 123)), arms=(('b0-c2', 'SAM2.1', C_B0), ('adapter-pf', 'Layer-SAM', C_OURS)),
-             name='qual.png', pad_x=0.5, row_h=3.6)
+             name='qual.png', pad_x=0.5, row_h=4.0)
 
 
 def playsafe(picks=(('seq4', 293),), arms=(('b0-c2', 'SAM2.1 video', C_B0),), name='playsafe.png', label_rows=False,
@@ -192,7 +192,7 @@ def ablation():
     """Rows: ingredients added one at a time; per row one bar per question (3-seed means). Line: 95% CI of the single
     comparison (none on this table, all steps from the SAM2.1 video baseline); dots: the three seeds (integral image)."""
     qs = (('tracking AUC', '#1f4e8c'), ('segmentation J', '#28aa3c'), ('recognition conf', '#8a5cc2'))
-    fig, ax = plt.subplots(figsize=(9.3, 4.3))
+    fig, ax = plt.subplots(figsize=(9.3, 4.9))
     h = 0.26
     for r, (name, d, ci, seeds) in enumerate(STEPS):
         for m, (q, col) in enumerate(qs):
@@ -229,7 +229,7 @@ def masksize():
     r = MF.late_ratio(F, 'b0-c2', list(F['b0-c2']))
     m, lo, hi, n, g = MF.boot_mean(r, list(r))
     print(f'SAM2.1 video / ours mask size, k >= {MF.K1}: x{np.exp(m):.2f} [{np.exp(lo):.2f}, {np.exp(hi):.2f}] ({n} clips)')
-    fig, ax = plt.subplots(figsize=(9.3, 4.4))
+    fig, ax = plt.subplots(figsize=(9.3, 5.0))
     # legend: fitted change of mask size per 10 frames (mask_fill trends, k = 6...end, mean over the 32 crossings)
     S = MF.trends(F)
     pct = lambda a: f'{(np.exp(MF.boot_mean(S[a], list(S[a]))[0]) - 1) * 100:+.0f}%'
