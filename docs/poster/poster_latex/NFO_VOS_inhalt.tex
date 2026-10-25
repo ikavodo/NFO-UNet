@@ -87,8 +87,8 @@ NFO-VOS defines prompt frames throughout each walk, at different occlusion level
 \parbox[t]{6.9cm}{\centering\textbf{Recognition}\\\fontsize{19}{23}\selectfont YOLO11\,[7] conf, IoU, AP50}
 \end{tabular}}\par\vspace{0.6\baselineskip}
 \Unterschrift{Blue: box of the mask; green: hand-drawn box; magenta: YOLO box.\\
-Recognition: 5 frames are aligned on the person and averaged where the method's mask marks the person; YOLO must
-find the person in the result. Same procedure for every method, so only the masks differ.}
+Recognition: 5 consecutive frames, aligned on the person by the hand-drawn boxes, are merged into one image:
+masked pixels are averaged over the frames whose mask covers them, all others over all 5. Can YOLO find the person?}
 \end{minipage}\par
 
 \Abschnitt{4\quad Contribution B: Layer-SAM method}
