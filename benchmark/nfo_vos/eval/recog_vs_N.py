@@ -6,6 +6,9 @@ N = 1 is the same for every arm by construction: unmasked pixels are filled with
 single frame is the frame itself, so every stack is the raw frame (the no-integration reference point).
 
     python3 -m benchmark.nfo_vos.eval.recog_vs_N
+    NFO_RUN=fullpass python3 -m benchmark.nfo_vos.eval.recog_vs_N   # the 32 whole crossings, seq1–4, + b0trk-c2
+Whole crossings (2026-10-25): CSVs from eval/recog_sweep.sbatch (one per N and arm, _fpN_<arm>) and N = 5 from the
+headline CSV (_fp); -> recog_vs_N_fullpass.png.
 """
 import csv
 import json
@@ -24,13 +27,17 @@ NS = (1, 3, 5, 7, 11, 15, 21)
 ARMS = (('adapter-pf', 'adapter (ours, per-frame)', '#2a78d6', '-'), ('t1-c2', 'SAMURAI', '#eb6834', '-'),
         ('b0-c2', 'SAM2.1 video', '#1baf7a', '-'), ('trk', 'SAM2.1 per-frame (tracker box)', '#eda100', '-'),
         ('nomask', 'no mask', '#8a8984', '--'))
-OUT = f'{BM.IMG}/recog_vs_N.png'
+FULLPASS = TR.RUN == 'fullpass'
+if FULLPASS:
+    ARMS = ARMS[:4] + (('b0trk-c2', 'SAM2.1 video + tracker box', '#7a5ac8', '-'),) + ARMS[4:]
+SEQS = TR.ALL_SEQS if FULLPASS else ('seq2', 'seq3', 'seq4')     # whole crossings: the seq1–4 headline
+OUT = f"{BM.IMG}/recog_vs_N{'_fullpass' if FULLPASS else ''}.png"
 
 
 def ap_ci(rows, arm, B=1000):
     win = {}
     for r in rows:
-        if r['arm'] == arm and r['seq'] != 'seq1':
+        if r['arm'] == arm and r['seq'] in SEQS:
             win.setdefault(r['id'], []).append([tuple(x) for x in json.loads(r['dets'])])   # one det list per stack
     ids = sorted(win)
     boot = np.random.default_rng(0).integers(0, len(ids), (B, len(ids)))
@@ -41,8 +48,11 @@ def ap_ci(rows, arm, B=1000):
 def main():
     res = {}
     for N in NS:
-        rows = list(csv.DictReader(open(f'{BM.OUT}/recog_N{N}_uniform_meanfill_ablN.csv')))
+        if not FULLPASS:
+            rows = list(csv.DictReader(open(f'{BM.OUT}/recog_N{N}_uniform_meanfill_ablN.csv')))
         for a, *_ in ARMS:
+            if FULLPASS:
+                rows = list(csv.DictReader(open(f"{BM.OUT}/recog_N{N}_uniform_meanfill_{'fp' if N == 5 else 'fpN_' + a}.csv")))
             res[a, N] = ap_ci(rows, a)
             print(f'N={N} {a:12s} AP50 {res[a, N][0]:.3f} [{res[a, N][1]:.3f}, {res[a, N][2]:.3f}]')
     fig, ax = plt.subplots(figsize=(6.4, 4.2), dpi=100)
@@ -63,7 +73,8 @@ def main():
     ax.annotate('N = 1: raw frame,\nidentical for all arms', (1, res['nomask', 1][0]), xytext=(1.25, res['nomask', 1][0] - 0.06),
                 fontsize=8, color='#52514e')
     ax.set_xlabel('frames per stack N'); ax.set_ylabel('YOLO11m person AP50')
-    ax.set_title('Recognition on masked temporal stacks (NFO seq2–4, 95% CI)', fontsize=10, loc='left')
+    ax.set_title(f"Recognition on masked temporal stacks (NFO {'32 whole crossings, seq1–4' if FULLPASS else 'seq2–4'}, 95% CI)",
+                 fontsize=10, loc='left')
     for s in ('top', 'right'):
         ax.spines[s].set_visible(False)
     ax.grid(axis='y', color='#e6e5e0', lw=0.8); ax.set_axisbelow(True)

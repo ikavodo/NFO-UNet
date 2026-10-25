@@ -6,6 +6,8 @@
 #   bash benchmark/nfo_vos/eval/pass_run.sh ours trk adapter-pf ...   # our arms (e.g. adapter-pf-h4 once chosen)
 #   bash benchmark/nfo_vos/eval/pass_run.sh fullpass adapter-pf-noC ...  # arms needed only on the 32 fullpass clips
 #   bash benchmark/nfo_vos/eval/pass_run.sh vidtrk                    # B0 + tracker prompts on the 32 clips -> b0trk-c2
+#   bash benchmark/nfo_vos/eval/pass_run.sh recogN                    # recognition vs N on the 32 clips (36 parallel
+#                                                                     # tasks) + the plot once all finish
 # Then (cluster or locally after copying results/benchmark/pass/masks back):
 #   NFO_RUN=pass  python -m benchmark.nfo_vos.eval.mask_fill score && NFO_RUN=pass python -m benchmark.nfo_vos.eval.mask_fill
 #   NFO_RUN=fullpass python -m benchmark.nfo_vos.eval.box_metrics score <arms>; ...eval.recognition 5 uniform <arms>; ...eval.report
@@ -35,6 +37,12 @@ elif [ "$STAGE" = vidtrk ]; then
   # SAM2.1 video (memory) + tracker box/point every frame; needs fullpass/masks/trkbox (boxes). Ids 0..N-1 = B0 only.
   N=$("$PYTHON" -c "import json; print(len(json.load(open('results/benchmark/fullpass/trials.json'))))")
   NFO_RUN=fullpass NFO_TAG=-c2 NFO_TRK_PROMPTS=1 sbatch --export=ALL --array=0-$((N - 1)) benchmark/nfo_vos/baselines/run_sam2_video.sbatch
+elif [ "$STAGE" = recogN ]; then
+  J=$(sbatch --parsable benchmark/nfo_vos/eval/recog_sweep.sbatch)
+  sbatch --dependency=afterok:$J --job-name=nfo_recogN_plot --cpus-per-task=4 --mem=16G --time=00:30:00 \
+    --output=/storage/slurm/akid/logs/nfo_recogN_plot-%j.out \
+    --wrap="cd $PWD && NFO_RUN=fullpass PYTHONPATH=. $PYTHON -m benchmark.nfo_vos.eval.recog_vs_N"
+  echo "sweep $J (36 tasks) -> plot job waits for it: images/benchmark/downstream/recog_vs_N_fullpass.png"
 else
-  echo "usage: $0 baselines | ours ARM... | fullpass ARM... | vidtrk"; exit 1
+  echo "usage: $0 baselines | ours ARM... | fullpass ARM... | vidtrk | recogN"; exit 1
 fi

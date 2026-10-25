@@ -219,4 +219,5 @@ if __name__ == '__main__':
         report(rows, None, list(dict.fromkeys(r['arm'] for r in rows))); sys.exit()
     trials = json.load(open(TR.OUT))
     ids = {trials[0]['id']} | {next(x['id'] for x in trials if x['seq'] == s) for s in ('seq2', 'seq3')}
-    main(sys.argv[1], sys.argv[2], tuple(sys.argv[3:]), montage_ids=ids)
+    # NFO_RECOG_MONTAGE=0: no stack montage (parallel sweep jobs would overwrite each other's jpg)
+    main(sys.argv[1], sys.argv[2], tuple(sys.argv[3:]), montage_ids=ids if os.environ.get('NFO_RECOG_MONTAGE') != '0' else None)
