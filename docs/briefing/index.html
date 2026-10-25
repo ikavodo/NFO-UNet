@@ -74,14 +74,14 @@ svg .cross { stroke: var(--bad); stroke-width: 2; }
 <main>
 <header class="col">
   <div class="eyebrow">Research status · NFO person segmentation · 25 October 2026</div>
-  <h1>Seeing people through foliage with a frozen SAM2</h1>
-  <p class="lede">A small adapter that gives SAM2's image model an empty-scene reference and a motion-aligned integral image of the last six frames. It tracks people behind dense foliage clearly better than SAMURAI and segments their visible parts slightly better, over whole crossings and without memory.</p>
+  <h1>Layer-SAM: seeing people through foliage with a frozen SAM2</h1>
+  <p class="lede"><b>Layer-SAM</b> is a small adapter that gives SAM2's image model an empty-scene reference and a motion-aligned integral image of the last six frames. It tracks people behind dense foliage clearly better than SAMURAI and segments their visible parts slightly better, over whole crossings and without memory.</p>
   <p class="meta">Branch <span class="mono">vos-benchmark-pilot</span> · numbers measured on the data below unless marked otherwise · 95% CIs are paired bootstrap over clips (2,000 resamples).</p>
 </header>
 
 <section class="col">
   <div class="claim">
-    <p><b>Current claim.</b> Over 32 whole crossings of the NFO sequences (seq1–4, every frame once), a per-frame layer adapter on frozen SAM2.1-b+, trained only on synthetic data, beats SAMURAI on tracking by +0.10 box AUC and on visible-pixel segmentation by a small but significant +0.03 hand J. It is on par on recognition. The result holds for each of 3 training seeds, and on the held-out seq2–4 alone.</p>
+    <p><b>Current claim.</b> Over 32 whole crossings of the NFO sequences (seq1–4, every frame once), Layer-SAM (a per-frame layer adapter on frozen SAM2.1-b+, trained only on synthetic data) beats SAMURAI on tracking by +0.10 box AUC and on visible-pixel segmentation by a small but significant +0.03 hand J. It is on par on recognition. The result holds for each of 3 training seeds, and on the held-out seq2–4 alone.</p>
   </div>
   <div class="nums">
     <div class="num"><b>+0.099 ± 0.003</b><span>box AUC over SAMURAI (0.579 → 0.678), 3 seeds; each seed's CI excludes 0; seq2–4 alone +0.102 to +0.109</span></div>
@@ -119,14 +119,14 @@ svg .cross { stroke: var(--bad); stroke-width: 2; }
   <tr><td>B0</td><td>SAM2.1-b+ video predictor (Ravi et al. 2024, arXiv 2408.00714)</td><td>yes</td><td>no (t0 only)</td></tr>
   <tr><td>T1 · <span style="color:var(--samurai)">SAMURAI</span></td><td>SAM2 + Kalman motion-aware memory selection (Yang et al. 2024, arXiv 2411.11922). The strongest published baseline here.</td><td>yes</td><td>no</td></tr>
   <tr><td>trk</td><td>SAM2.1-b+ <i>image</i> predictor, run on every frame independently, prompted with our feature tracker's box + point</td><td>no</td><td>tracker box + point</td></tr>
-  <tr class="ours"><td><span style="color:var(--ours)">ours</span> (adapter-pf)</td><td>trk + the layer adapter below (frozen SAM2, about 0.73 M trained parameters)</td><td>no</td><td>tracker box + corrected point</td></tr>
+  <tr class="ours"><td><span style="color:var(--ours)">Layer-SAM (ours)</span> (adapter-pf)</td><td>trk + the layer adapter below (frozen SAM2, about 0.73 M trained parameters)</td><td>no</td><td>tracker box + corrected point</td></tr>
 </table></div>
 <section class="col">
   <p>The <b>feature tracker</b> is a fixed-size kernel at the t0 box size. On SAM2's stride-16 features it finds the position that maximises the change against the empty scene, 1 − cos(F<sub>t</sub>, F<sub>empty</sub>), and predicts motion with a Theil–Sen line over the last 12 frames (<span class="mono">adapter/tracker.py</span>). It runs with the adapter, not as an alternative to it.</p>
 </section>
 
 <section class="col">
-  <h2>3. Architecture</h2>
+  <h2>3. Architecture: Layer-SAM</h2>
   <p>SAM2 has two paths. The <b>video path</b> runs each frame through the image encoder, conditions it on a memory bank of past frames and their predicted masks (memory attention), decodes a mask, and writes the result back into memory. The <b>image path</b> is the same without memory. We use the image path, run per frame, and add an adapter that injects evidence the image encoder cannot see on its own: what the empty scene looks like, and where the recent frames changed against it.</p>
 </section>
 
@@ -292,8 +292,8 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
   <tr><td><span class="swatch" style="background:var(--samurai)"></span>T1 · SAMURAI</td><td class="n">0.730</td><td class="n">0.88 / 0.81</td><td class="n">0.579</td><td class="n">0.663</td><td class="n">0.863</td></tr>
   <tr><td>SAM2.1 video + tracker prompts (memory on)</td><td class="n">0.745</td><td class="n">0.82 / 0.88</td><td class="n">0.661</td><td class="n">0.636</td><td class="n">0.861</td></tr>
   <tr><td>trk · per-frame SAM2.1 + tracker</td><td class="n">0.685</td><td class="n">0.80 / 0.83</td><td class="n">0.628</td><td class="n">0.596</td><td class="n">0.814</td></tr>
-  <tr><td>ours without integral image, 3 seeds</td><td class="n">0.740 ± 0.011</td><td class="n">0.88 / 0.81</td><td class="n">0.647 ± 0.009</td><td class="n">0.651 ± 0.003</td><td class="n">0.859 ± 0.010</td></tr>
-  <tr class="ours"><td><span class="swatch" style="background:var(--ours)"></span>ours, 3 seeds (mean ± sd)</td><td class="n">0.756 ± 0.004</td><td class="n">0.86 / 0.85</td><td class="n">0.678 ± 0.004</td><td class="n">0.667 ± 0.005</td><td class="n" id="rec-cell">0.878 ± 0.000</td></tr>
+  <tr><td>Layer-SAM without integral image, 3 seeds</td><td class="n">0.740 ± 0.011</td><td class="n">0.88 / 0.81</td><td class="n">0.647 ± 0.009</td><td class="n">0.651 ± 0.003</td><td class="n">0.859 ± 0.010</td></tr>
+  <tr class="ours"><td><span class="swatch" style="background:var(--ours)"></span>Layer-SAM, 3 seeds (mean ± sd)</td><td class="n">0.756 ± 0.004</td><td class="n">0.86 / 0.85</td><td class="n">0.678 ± 0.004</td><td class="n">0.667 ± 0.005</td><td class="n" id="rec-cell">0.878 ± 0.000</td></tr>
 </table></div>
 <section class="col">
   <p class="meta">All masks computed on the same cluster, and every number in this table from one scoring run there (job 1950449, 2026-10-24): box AUC, hand J and one YOLO run over all arms. Absolute AP shifts between software versions, so compare within this table. Seeds 0–1 were trained in bf16, seed 2 in fp16. Held-out seq2–4 alone: box AUC 0.720 vs SAMURAI 0.615, hand J 0.768 vs 0.741 (23 frames), recognition conf 0.694 vs 0.687.</p>
@@ -309,7 +309,7 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
   <tr><td>motion-aligned integral image (3 seeds, mean ± sd)</td><td>adapter − adapter without integral image, per seed</td><td class="n"><b>+0.016 ± 0.009</b></td><td class="n"><b>+0.031 ± 0.010</b></td><td class="n"><b>+0.017 ± 0.007</b></td></tr>
 </table></div>
 <section class="col">
-  <p>Reading: <b>the motion prompt buys tracking but costs precision; the empty-scene cue restores precision; the integral image adds real person evidence</b>. With tracker prompts, memory does help (hand J +0.060 over per-frame trk; job 1953256), but ours without memory stays above SAM2.1 video + tracker on every metric (box 0.678 vs 0.661, J 0.756 vs 0.745, recognition 0.667 vs 0.636; no paired CI for this pair). The empty-scene step is mostly precision (hand P 0.80 → 0.88), the integral-image step mostly recall (hand R 0.81 → 0.85), and recognition goes up with it, not just box extent. For the integral image every seed's box-AUC and recognition-confidence CI excludes 0, and hand J rises for every seed (+0.005, +0.020, +0.022; seed 0's CI includes 0). Its box gain is larger than on the 40-frame windows (+0.024), as expected if its benefit is staying on the person over long clips.</p>
+  <p>Reading: <b>the motion prompt buys tracking but costs precision; the empty-scene cue restores precision; the integral image adds real person evidence</b>. With tracker prompts, memory does help (hand J +0.060 over per-frame trk; job 1953256), but Layer-SAM without memory stays above SAM2.1 video + tracker on every metric (box 0.678 vs 0.661, J 0.756 vs 0.745, recognition 0.667 vs 0.636; no paired CI for this pair). The empty-scene step is mostly precision (hand P 0.80 → 0.88), the integral-image step mostly recall (hand R 0.81 → 0.85), and recognition goes up with it, not just box extent. For the integral image every seed's box-AUC and recognition-confidence CI excludes 0, and hand J rises for every seed (+0.005, +0.020, +0.022; seed 0's CI includes 0). Its box gain is larger than on the 40-frame windows (+0.024), as expected if its benefit is staying on the person over long clips.</p>
 
   <h3>Over a whole crossing, memory masks shrink</h3>
 </section>
@@ -326,7 +326,7 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
 </section>
 <figure>
   <img src="figs/recog_vs_N.png" alt="YOLO person AP50 against frames per recognition stack N for five methods." style="max-width:760px">
-  <figcaption><b>Temporal integration is what makes the person recognisable</b> (raw frame AP50 0.33). Masks help most at short integration. Per-frame SAM2 stops improving after N = 5, because its masks change shape from frame to frame and the average smears. Our adapter keeps pace with the video methods <i>without memory</i>. Beyond N ≈ 7 every masked recognition stack falls, while the unmasked mean keeps rising (0.95 at N = 21). With GT-aligned motion and long integration, plain averaging wins. N = 7 was fixed before any results; the headline now uses N = 5, the baselines' best point in this sweep (decided 2026-10-23, before the whole-crossing runs).</figcaption>
+  <figcaption><b>Temporal integration is what makes the person recognisable</b> (raw frame AP50 0.33). Masks help most at short integration. Per-frame SAM2 stops improving after N = 5, because its masks change shape from frame to frame and the average smears. Layer-SAM keeps pace with the video methods <i>without memory</i>. Beyond N ≈ 7 every masked recognition stack falls, while the unmasked mean keeps rising (0.95 at N = 21). With GT-aligned motion and long integration, plain averaging wins. N = 7 was fixed before any results; the headline now uses N = 5, the baselines' best point in this sweep (decided 2026-10-23, before the whole-crossing runs).</figcaption>
 </figure>
 
 <section class="col">
@@ -334,8 +334,8 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
   <p>The natural expectation is that SAM2's memory should help: the person was partly visible a moment ago, so remembering should fill in what is hidden now. Under fragmented occlusion the evidence says otherwise (hand J on the 40-frame windows, seq2–4, unless noted):</p>
   <ul>
     <li><b>Plain SAM2 video already beats plain per-frame SAM2</b> (B0 0.755 vs trk 0.716 hand J). Memory carries the object's extent from frame to frame.</li>
-    <li><b>Our per-frame adapter matches or beats every video method</b> (0.760), without memory. Over whole crossings the gap widens: 0.756 vs 0.730–0.733, and the memory methods' masks shrink (§6).</li>
-    <li><b>Whole crossings, memory + tracker prompts</b> (job 1953256): memory helps a tracker-prompted SAM2.1 (hand J 0.745 vs 0.685, recognition 0.636 vs 0.596) and stops the masks shrinking, but stays below the memory-free adapter (J 0.756, box 0.678 vs 0.661, recognition 0.667).</li>
+    <li><b>Layer-SAM (per-frame, no memory) matches or beats every video method</b> (0.760), without memory. Over whole crossings the gap widens: 0.756 vs 0.730–0.733, and the memory methods' masks shrink (§6).</li>
+    <li><b>Whole crossings, memory + tracker prompts</b> (job 1953256): memory helps a tracker-prompted SAM2.1 (hand J 0.745 vs 0.685, recognition 0.636 vs 0.596) and stops the masks shrinking, but stays below the memory-free Layer-SAM (J 0.756, box 0.678 vs 0.661, recognition 0.667).</li>
     <li><b>Feeding SAM2's memory better masks does not beat the adapter.</b> Writing the adapter's own masks into memory: 0.763 (+0.002, n.s.). Writing the SAM2-ceiling labels (GT-box-prompted SAM2.1-L, non-causal): 0.756.</li>
     <li><b>Upper bound for any memory-conditioned read-out:</b> a perfect per-frame chooser between the adapter's output and the memory output gains only <b>+0.012</b> [+0.004, +0.021] hand J. A learned read adapter would get less.</li>
     <li><b>On synthetic clips with exact masks</b> (per-frame adapter trained with the balanced loss), the gain from writing <i>perfect</i> masks into memory over a per-frame adapter is +0.017, and it does not grow with occlusion density (+0.018 at ρ 0.2–0.4, +0.017 at ρ 0.4–0.7).</li>
