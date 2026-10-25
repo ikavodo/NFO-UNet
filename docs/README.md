@@ -19,10 +19,11 @@ superseded work goes to the topic's `archive/`, kept for its results and reasoni
   - `archive/` — full chronological findings log, the A/4 port
 - `layer_sam2/` — the learned adapter on frozen SAM2 (code: `benchmark/nfo_vos/adapter/`); see `layer_sam2/README.md`
 - `unet/` — the original spatio-temporal U-Net: training-failure root cause (resolved)
-- `poster/poster_plan.md` — conference poster: structure, figures, vocabulary, open decisions
+- `poster/poster_plan.md` — conference poster: structure, figures, vocabulary, open decisions; `poster/poster_latex/`
+  — the poster's LaTeX sources and figures (TUM template and logos local only)
 - `briefing/` — collaborator briefing (HTML + figures); published as the claude.ai artifact "Seeing Through Foliage",
   https://claude.ai/artifact/3Fq1La6yPnNqLjQ8SgiP9d (shared with the organisation). The repo copy is the source:
   edit `briefing/index.html`, then republish it to that URL
-- `archive/blob_tracker/` — classical blob tracker, scale generalisation, live deployment (Aug–Sep 2026); its code
-  (`tracking/`) is at git tag `archive/pre-cleanup-2026-10-21`
+- blob tracker (Aug–Sep 2026): code (`tracking/`) and design notes (`archive/blob_tracker/`) are at git tag
+  `archive/pre-cleanup-2026-10-21`
 - `external/` — papers and poster text by others (SatSAM2, ViperSAM, STORE poster); local only, not committed
