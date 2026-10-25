@@ -112,7 +112,7 @@ def playsafe_options():
 
 def qual():
     """Results column: the section-2 frame again, now with our mask, plus a frame late in another crossing."""
-    playsafe((('seq4', 293), ('seq4', 123)), arms=(('b0-c2', 'SAM2.1', C_B0), ('adapter-pf', 'ours', C_OURS)),
+    playsafe((('seq4', 293), ('seq4', 123)), arms=(('b0-c2', 'SAM2.1', C_B0), ('adapter-pf', 'Layer-SAM', C_OURS)),
              name='qual.png', pad_x=0.5, row_h=3.6)
 
 
@@ -184,7 +184,7 @@ def bars():
 STEPS = (('+ tracker prompts\n(memory kept)', (0.089, 0.012, -0.029), ((0.062, 0.116), (-0.011, 0.036), (-0.054, 0.001)), None),
          ('− memory', (-0.033, -0.060, -0.040), ((-0.076, 0.004), (-0.113, -0.014), (-0.061, -0.021)), None),
          ('+ adapter, given the\nempty scene', (0.019, 0.055, 0.055), None, None),
-         ('+ integral image\n(= ours)', (0.031, 0.016, 0.017), None,
+         ('+ integral image\n(= Layer-SAM)', (0.031, 0.016, 0.017), None,
           ((0.019, 0.035, 0.038), (0.005, 0.020, 0.022), (0.009, 0.022, 0.019))))
 
 
@@ -231,7 +231,7 @@ def masksize():
     print(f'SAM2.1 video / ours mask size, k >= {MF.K1}: x{np.exp(m):.2f} [{np.exp(lo):.2f}, {np.exp(hi):.2f}] ({n} clips)')
     fig, ax = plt.subplots(figsize=(9.3, 3.3))
     for a, label, col in (('b0-c2', 'SAM2.1', C_B0), ('b0trk-c2', 'SAM2.1 + tracker', '#8a5cc2'),
-                          ('ours', 'ours, no memory', C_OURS)):
+                          ('ours', 'Layer-SAM (ours)', C_OURS)):
         yv, lo, hi = MF.median_curve(F[a], k)
         ax.fill_between(k, lo, hi, color=col, alpha=0.13, lw=0)
         ax.plot(k, yv, color=col, lw=3.5, label=label)
@@ -244,27 +244,39 @@ def masksize():
     save(fig, 'masksize.png')
 
 
-def recogN():
-    """Detector AP50 on masked N-frame stacks vs N (40-frame windows, seq2–4; recog_vs_N's CSVs)."""
-    from benchmark.nfo_vos.eval import recog_vs_N as RN
-    import importlib
-    os.environ['NFO_RUN'] = 'rr'
-    importlib.reload(TR); importlib.reload(BM)
-    names = {'adapter-pf': 'ours, no memory', 't1-c2': 'SAMURAI', 'b0-c2': 'SAM2.1', 'trk': 'SAM2.1, no memory*',
-             'nomask': 'no mask (plain average)'}
-    fig, ax = plt.subplots(figsize=(9.3, 2.9))
+# recognition vs N on the 32 whole crossings (seq1-4): eval/recog_sweep.sbatch CSVs (_fpN_<arm>), N = 5 from the
+# headline CSV (_fp); Layer-SAM = seed 0 (the sweep ran one seed)
+RECOG_ARMS = (('adapter-pf', 'Layer-SAM (ours)', C_OURS, '-'), ('b0-c2', 'SAM2.1', C_B0, '-'),
+              ('nomask', 'no mask (plain average)', C_GREY, '--'))      # tracker variants: in the table
+
+
+def recogN(ns=(1, 3, 5, 7, 11, 15, 21)):
+    """YOLO11 AP50 on masked N-frame integrations vs N, whole crossings, seq1-4; light band: 95% CI over crossings."""
+    from benchmark.nfo_vos.eval.recognition import ap50
     res = {}
-    for N in RN.NS:
-        rows = list(csv.DictReader(open(f'{BM.OUT}/recog_N{N}_uniform_meanfill_ablN.csv')))
-        for a, *_ in RN.ARMS:
-            res[a, N] = RN.ap_ci(rows, a, B=300)
-    for a, _, col, ls in [x for x in RN.ARMS if x[0] != 't1-c2']:
-        yv = np.array([res[a, N] for N in RN.NS])
-        ax.plot(RN.NS, yv[:, 0], ls, color=col, lw=3 if a == 'adapter-pf' else 2.2, marker='o', ms=8, mec='white',
-                mew=1.5, label=names[a], zorder=3 if a == 'adapter-pf' else 2)
-    ax.axvline(5, color='#52514e', lw=1, ls=':')                     # N = 5: the headline's stack length
-    ax.set_xticks(RN.NS); ax.set_xlabel('frames stacked N'); ax.set_ylabel('person detected (AP50)')
-    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.22), ncol=2, frameon=False, fontsize=16)
+    for N in ns:
+        for a, *_ in RECOG_ARMS:
+            f = f'{BM.OUT}/recog_N5_uniform_meanfill_fp.csv' if N == 5 else f'{BM.OUT}/recog_N{N}_uniform_meanfill_fpN_{a}.csv'
+            win = {}
+            for r in csv.DictReader(open(f)):
+                if r['arm'] == a:
+                    win.setdefault(r['id'], []).append([tuple(x) for x in json.loads(r['dets'])])
+            ids = sorted(win)
+            boot = np.random.default_rng(0).integers(0, len(ids), (300, len(ids)))
+            bs = [ap50([d for i in b for d in win[ids[i]]]) for b in boot]
+            res[a, N] = (ap50([d for i in ids for d in win[i]]), *np.quantile(bs, [.025, .975]))
+            print(f'N={N} {a:10s} AP50 {res[a, N][0]:.3f} [{res[a, N][1]:.3f}, {res[a, N][2]:.3f}]')
+    fig, ax = plt.subplots(figsize=(9.3, 3.1))
+    for a, label, col, ls in RECOG_ARMS:
+        y = np.array([res[a, N] for N in ns])
+        if a in ('adapter-pf', 'b0-c2'):
+            ax.fill_between(ns, y[:, 1], y[:, 2], color=col, alpha=0.12, lw=0)
+        ax.plot(ns, y[:, 0], ls, color=col, lw=3.2 if a == 'adapter-pf' else 2, marker='o', ms=7 if a == 'adapter-pf' else 5,
+                mec='white', mew=1.2, label=label, zorder=3 if a == 'adapter-pf' else 2)
+    ax.axvline(5, color='#52514e', lw=1, ls=':')                     # N = 5: the table's stack length
+    ax.set_xticks(ns); ax.set_xlim(0.5, 21.5); ax.set_xlabel('frames integrated N'); ax.set_ylabel('YOLO11 AP50')
+    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.24), ncol=3, frameon=False, fontsize=14, handlelength=1.4,
+              columnspacing=1)
     ax.grid(axis='y', color='#e6e5e0', lw=0.8); ax.set_axisbelow(True)
     save(fig, 'recogN.png')
 

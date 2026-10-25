@@ -129,40 +129,41 @@ scene-1 hand labels (IoU), not on the downstream metrics.
 \Abschnitt{6\quad Results on NFO-VOS}
 
 \begin{center}
-\setlength{\tabcolsep}{3.6pt}\fontsize{20}{25}\selectfont
-\begin{tabular}{@{}l cc ccc ccc@{}}
- & \multicolumn{2}{c}{\textbf{tracking}} & \multicolumn{3}{c}{\textbf{segmentation}} & \multicolumn{3}{c}{\textbf{recognition}} \\
- & AUC & P@20 & J & P & R & conf & IoU & AP50 \\\hline
-SAM2.1 & .571 & .682 & .733 & \textbf{.89} & .80 & .666 & .692 & .869 \\
-SAMURAI & .579 & .691 & .730 & .88 & .81 & .663 & .696 & .863 \\
-SAM2.1 + tracker$^*$ & .661 & .766 & .745 & .82 & \textbf{.88} & .636 & .691 & .861 \\
-SAM2.1, no memory$^*$ & .628 & .727 & .685 & .80 & .83 & .596 & .645 & .814 \\
-\textbf{ours, no memory} & \textbf{.678} & \textbf{.773} & \textbf{.756} & .86 & .85 & \textbf{.667} & \textbf{.705} & \textbf{.878}
+\setlength{\tabcolsep}{3.3pt}\fontsize{19}{24}\selectfont
+\begin{tabular}{@{}l cc cc ccc ccc@{}}
+ & & & \multicolumn{2}{c}{\textbf{tracking}} & \multicolumn{3}{c}{\textbf{segmentation}} & \multicolumn{3}{c}{\textbf{recognition}} \\
+ & mem. & trk. & AUC & P@20 & J & P & R & conf & IoU & AP50 \\\hline
+SAM2.1 & $\checkmark$ & -- & .571 & .682 & .733 & \textbf{.89} & .80 & .666 & .692 & .869 \\
+SAMURAI & $\checkmark$ & -- & .579 & .691 & .730 & .88 & .81 & .663 & .696 & .863 \\
+SAM2.1 & $\checkmark$ & $\checkmark$ & .661 & .766 & .745 & .82 & \textbf{.88} & .636 & .691 & .861 \\
+SAM2.1 & -- & $\checkmark$ & .628 & .727 & .685 & .80 & .83 & .596 & .645 & .814 \\
+\textbf{Layer-SAM} & -- & $\checkmark$ & \textbf{.678} & \textbf{.773} & \textbf{.756} & .86 & .85 & \textbf{.667} & \textbf{.705} & \textbf{.878}
 \end{tabular}
 \end{center}
-\Unterschrift{32 walks, 4 scenes (scenes 2--4 alone: same conclusions); J/P/R on the hand-labelled frames; ours:
-mean of 3 seeds. Recognition IoU: top YOLO detection vs hand-drawn box.\\
-$^*$prompted in every frame by our tracker; ``no memory'': SAM2.1's image model.}
+\Unterschrift{32 walks, 4 scenes (scenes 2--4 alone: same conclusions); J/P/R on the hand-labelled frames; Layer-SAM:
+mean of 3 seeds. \emph{mem.}: memory of past masks; \emph{trk.}: our tracker's box in every frame (else only the first
+prompt). Recognition IoU: top YOLO detection vs hand-drawn box.}
 
 \Merke{No memory, yet above every memory variant on tracking, segmentation and recognition. Better memory
 management (SAMURAI) adds little here.}
 
-\Unter{Masks: SAM2.1 vs ours}
+\Unter{Masks: SAM2.1 vs Layer-SAM}
 \Bild{plots/nfo/qual.png}
 \Unterschrift{Two frames of one walk in scene 4. \emph{right}: precision; \emph{finds}: recall.}
 
 \Unter{Does the segmentation degrade over time?}
 \Bild{plots/nfo/masksize.png}
 \Unterschrift{Mask area / box area, relative to frame 6 (median, 95\,\% CI). Prompted only at the start, memory masks
-shrink (0.76$\times$ ours after frame 30); with tracker prompts they keep their size, as ours do.}
+shrink (0.76$\times$ Layer-SAM after frame 30); with tracker prompts they keep their size, as Layer-SAM's do.}
 
 \Unter{Ablation}
 \Bild{plots/nfo/ablation.png}
-\Unterschrift{From SAM2.1 to ours, one change per row; lines: 95\,\% CI, dots: 3 seeds. Without the integral image, the
+\Unterschrift{From SAM2.1 to Layer-SAM, one change per row; lines: 95\,\% CI, dots: 3 seeds. Without the integral image, the
 adapter gets the empty scene in its place.}
 
 \Unter{Recognition vs.\ frames integrated}
 \Bild{plots/nfo/recogN.png}
-\Unterschrift{YOLO11 AP50, N masked frames integrated: on par up to N\,=\,7 (N\,=\,5 in the table), ahead beyond; $^*$as in the table.}
+\Unterschrift{YOLO11 AP50 (Layer-SAM: one seed): ahead at N\,=\,3, on par at 5--11; beyond, SAM2.1 keeps more and the
+plain average wins.}
 
 \end{multicols*}
