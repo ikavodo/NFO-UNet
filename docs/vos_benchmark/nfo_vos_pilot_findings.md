@@ -257,18 +257,22 @@ it **ranks methods like the hand masks**.
   | seq1–4, 32 clips | ours | SAMURAI | SAM2.1 video | ours − SAMURAI, per seed |
   |---|---|---|---|---|
   | box AUC | 0.674 / 0.681 / 0.678 | 0.579 | 0.571 | +0.096 … +0.102, every CI > 0 |
-  | hand J (19 labelled frames) | 0.757 / 0.759 / 0.752 | 0.730 | 0.733 | +0.022 … +0.029, every CI > 0 |
+  | hand J (all 43 hand frames, in 19 clips) | 0.757 / 0.759 / 0.752 | 0.730 | 0.733 | +0.022 … +0.029, every CI > 0 |
   | recognition conf (N = 5) | 0.662 / 0.669 / 0.671 | 0.663 | 0.666 | −0.001 … +0.008, on par |
 
-  seq2–4 alone: box AUC +0.102 … +0.109, hand J +0.022 … +0.030 (18 frames), recognition on par. Against the
+  seq2–4 alone: box AUC +0.102 … +0.109, hand J +0.022 … +0.030 (23 frames in 18 clips), recognition on par. Against the
   40-frame windows the box lead grows (+0.065 → +0.10) and hand J turns from on par into a small, significant lead; the
   gain is recall (hand R 0.86 vs 0.81) at some precision (0.86 vs 0.88). Recognition stays on par: it scores 5-frame
-  stacks aligned with the true motion, so it sees no clip-length effect by construction. Caveat: the full-pass hand
-  frames are a different, smaller set (19 vs the windows' set) and lie later in their clips on average.
+  stacks aligned with the true motion, so it sees no clip-length effect by construction. Hand J uses all 43 hand
+  frames (every one lies inside a crossing), averaged per clip first: n = 19 in the CIs is clips, not frames. seq1's
+  20 brush frames fall in one clip, so seq1 weighs 1/19 of the all-sequence hand J. Pooled per frame instead (seq1 at
+  20/43): SAMURAI 0.640, SAM2.1 video 0.623, trk 0.590, ours 0.655 / 0.665 / 0.660 (lower overall because seq1's brush
+  masks have no void class); seq2–4 per frame matches per clip within 0.003. The per-clip mean is the headline because
+  the bootstrap resamples clips.
 
   **Ablation on the 32 clips (job 1950449, 2026-10-24, same env; `-noC` = integral image removed at inference):**
 
-  | seq1–4, 32 clips | box AUC | recog conf | hand J (19) | hand P / R |
+  | seq1–4, 32 clips | box AUC | recog conf | hand J (43 frames, 19 clips) | hand P / R |
   |---|---|---|---|---|
   | SAMURAI | 0.579 | 0.663 | 0.730 | 0.879 / 0.806 |
   | trk (tracker prompts) | 0.628 | 0.596 | 0.685 | 0.803 / 0.827 |

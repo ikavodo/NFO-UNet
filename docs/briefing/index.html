@@ -85,7 +85,7 @@ svg .cross { stroke: var(--bad); stroke-width: 2; }
   </div>
   <div class="nums">
     <div class="num"><b>+0.099 ± 0.003</b><span>box AUC over SAMURAI (0.579 → 0.678), 3 seeds; each seed's CI excludes 0; seq2–4 alone +0.102 to +0.109</span></div>
-    <div class="num"><b>+0.026 ± 0.004</b><span>hand-label J over SAMURAI (0.730 → 0.756) on the 19 labelled frames inside the crossings, 3 seeds; each seed's CI excludes 0 → small lead</span></div>
+    <div class="num"><b>+0.026 ± 0.004</b><span>hand-label J over SAMURAI (0.730 → 0.756) on all 43 hand-labelled frames (averaged per crossing; they fall in 19 of the 32), 3 seeds; each seed's CI excludes 0 → small lead</span></div>
     <div class="num tie"><b id="rec-num">+0.004 ± 0.005</b><span id="rec-span">YOLO person confidence on 5-frame recognition stacks over SAMURAI (0.663 → 0.667), 3 seeds; every CI includes 0 → on par (AP50 0.863 → 0.878)</span></div>
   </div>
 </section>
@@ -277,7 +277,7 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
 </section>
 <div class="scroll"><table>
   <tr><th>metric</th><th>question</th><th>how</th><th>blind spot</th></tr>
-  <tr><td>hand J / P / R</td><td>are the visible pixels right?</td><td>IoU against the hand masks that fall inside the crossings, void ignored</td><td>only 19 frames</td></tr>
+  <tr><td>hand J / P / R</td><td>are the visible pixels right?</td><td>IoU against the hand masks that fall inside the crossings, void ignored</td><td>only 43 frames, in 19 crossings</td></tr>
   <tr><td>box AUC, P@20, P<sub>norm</sub></td><td>does it track?</td><td>LaSOT one-pass protocol, ported from SAMURAI's evaluation code; mask → tight box, as SAMURAI does; against the GT boxes</td><td>rewards extent: the tracker box alone scores 0.642</td></tr>
   <tr><td>recognition conf / AP50</td><td>does the mask keep the evidence a detector needs?</td><td>5-frame recognition stacks aligned by GT-box motion (identical for all methods); masked mean, unmasked pixels filled with the plain mean; YOLO11m person confidence and AP50. N = 5 is where SAM2.1 video and SAMURAI score best, i.e. their best case</td><td>uses GT motion; see the N sweep below</td></tr>
 </table></div>
@@ -295,7 +295,7 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
   <tr class="ours"><td><span class="swatch" style="background:var(--ours)"></span>ours, 3 seeds (mean ± sd)</td><td class="n">0.756 ± 0.004</td><td class="n">0.86 / 0.85</td><td class="n">0.678 ± 0.004</td><td class="n">0.667 ± 0.005</td><td class="n" id="rec-cell">0.878 ± 0.000</td></tr>
 </table></div>
 <section class="col">
-  <p class="meta">All masks computed on the same cluster, and every number in this table from one scoring run there (job 1950449, 2026-10-24): box AUC, hand J and one YOLO run over all arms. Absolute AP shifts between software versions, so compare within this table. Seeds 0–1 were trained in bf16, seed 2 in fp16. Held-out seq2–4 alone: box AUC 0.720 vs SAMURAI 0.615, hand J 0.768 vs 0.741 (18 frames), recognition conf 0.694 vs 0.687.</p>
+  <p class="meta">All masks computed on the same cluster, and every number in this table from one scoring run there (job 1950449, 2026-10-24): box AUC, hand J and one YOLO run over all arms. Absolute AP shifts between software versions, so compare within this table. Seeds 0–1 were trained in bf16, seed 2 in fp16. Held-out seq2–4 alone: box AUC 0.720 vs SAMURAI 0.615, hand J 0.768 vs 0.741 (23 frames), recognition conf 0.694 vs 0.687.</p>
 
   <h3>What each ingredient does (one variable at a time)</h3>
 </section>

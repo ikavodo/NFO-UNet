@@ -89,7 +89,7 @@ Numbers (full-pass job 1950229, 2026-10-24, 32 crossings, seq1–4; recognition 
 | question | ours | SAMURAI | SAM2.1 video | verdict |
 |---|---|---|---|---|
 | follows the person (box AUC) | 0.68 | 0.58 | 0.57 | better, +0.10, every seed's CI excludes 0 |
-| visible pixels right (hand J, 19 labelled frames) | 0.76 | 0.73 | 0.73 | slightly better, +0.02 to +0.03, every seed's CI excludes 0 |
+| visible pixels right (hand J, all 43 hand-labelled frames) | 0.76 | 0.73 | 0.73 | slightly better, +0.02 to +0.03, every seed's CI excludes 0 |
 | cut-out recognisable (detector confidence, 5-frame stacks) | 0.67 | 0.66 | 0.67 | on par |
 
 | ingredient (32 crossings) | tracking | recognition conf | hand J |
