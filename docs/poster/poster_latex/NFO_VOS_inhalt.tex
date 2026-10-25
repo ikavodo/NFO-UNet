@@ -119,11 +119,7 @@ frame, person, visible target, loss weights.}
 more than false alarms. Hidden pixels next to visible fragments (yellow) are not penalised; far hidden ones (red)
 count as background, at lower weight.
 
-\Unter{Masks: SAM2.1 vs Layer-SAM (scene 4)}
-\Bild{plots/nfo/qual.png}
-
 %======================================================================= column 3: results
-\columnbreak
 \par\noindent\begin{minipage}{\linewidth}\raggedright   % heading + table + caption stay together
 \Abschnitt{6\quad Results on NFO-VOS}
 
@@ -146,6 +142,9 @@ prompt). Recognition IoU: top YOLO detection vs hand-drawn box.}
 \Merke{Without memory, Layer-SAM matches or beats every SAM2.1 memory variant.}
 \end{minipage}\par
 
+\Unter{Masks: SAM2.1 vs Layer-SAM (scene 4)}
+\Bild{plots/nfo/qual.png}
+
 \Unter{Does the segmentation degrade over time?}
 \Bild{plots/nfo/masksize.png}
 \Unterschrift{Mask area / box area, relative to frame 6 (median, 95\,\% CI). Prompted only at the start, memory masks
@@ -156,10 +155,9 @@ shrink (0.76$\times$ Layer-SAM after frame 30); with tracker prompts they keep t
 \Unterschrift{From SAM2.1 to Layer-SAM, one change per row; lines: 95\,\% CI, dots: 3 seeds. Without the integral image, the
 adapter gets the empty scene in its place.}
 
-
 \Unter{Recognition vs.\ frames integrated}
 \Bild{plots/nfo/recogN.png}
-\Unterschrift{YOLO11 AP50 (Layer-SAM: one seed; SAM2.1 rows as in the table). Good masks matter for short integrations
-(N\,$\le$\,7: noisy masks lose); for long ones the plain average wins and masks become unnecessary.}
+\Unterschrift{YOLO11 AP50 (Layer-SAM: one seed). Good masks matter for short integrations (N\,$\le$\,7: noisy masks
+lose); for long ones the plain average wins and masks become unnecessary.}
 
 \end{multicols*}

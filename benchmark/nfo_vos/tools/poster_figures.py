@@ -192,7 +192,7 @@ def ablation():
     """Rows: ingredients added one at a time; per row one bar per question (3-seed means). Line: 95% CI of the single
     comparison (none on this table, all steps from the SAM2.1 video baseline); dots: the three seeds (integral image)."""
     qs = (('tracking AUC', '#1f4e8c'), ('segmentation J', '#28aa3c'), ('recognition conf', '#8a5cc2'))
-    fig, ax = plt.subplots(figsize=(9.3, 4.9))
+    fig, ax = plt.subplots(figsize=(9.3, 5.3))
     h = 0.26
     for r, (name, d, ci, seeds) in enumerate(STEPS):
         for m, (q, col) in enumerate(qs):
@@ -229,7 +229,7 @@ def masksize():
     r = MF.late_ratio(F, 'b0-c2', list(F['b0-c2']))
     m, lo, hi, n, g = MF.boot_mean(r, list(r))
     print(f'SAM2.1 video / ours mask size, k >= {MF.K1}: x{np.exp(m):.2f} [{np.exp(lo):.2f}, {np.exp(hi):.2f}] ({n} clips)')
-    fig, ax = plt.subplots(figsize=(9.3, 5.0))
+    fig, ax = plt.subplots(figsize=(9.3, 5.4))
     # legend: fitted change of mask size per 10 frames (mask_fill trends, k = 6...end, mean over the 32 crossings)
     S = MF.trends(F)
     pct = lambda a: f'{(np.exp(MF.boot_mean(S[a], list(S[a]))[0]) - 1) * 100:+.0f}%'
@@ -270,7 +270,7 @@ def recogN(ns=(1, 3, 5, 7, 11, 15, 21)):
             bs = [ap50([d for i in b for d in win[ids[i]]]) for b in boot]
             res[a, N] = (ap50([d for i in ids for d in win[i]]), *np.quantile(bs, [.025, .975]))
             print(f'N={N} {a:10s} AP50 {res[a, N][0]:.3f} [{res[a, N][1]:.3f}, {res[a, N][2]:.3f}]')
-    fig, ax = plt.subplots(figsize=(9.3, 3.9))
+    fig, ax = plt.subplots(figsize=(9.3, 4.4))
     for a, label, col, ls in RECOG_ARMS:
         y = np.array([res[a, N] for N in ns])
         if a in ('adapter-pf', 'b0-c2'):
