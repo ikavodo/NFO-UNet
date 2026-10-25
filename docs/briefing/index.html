@@ -73,20 +73,20 @@ svg .cross { stroke: var(--bad); stroke-width: 2; }
 
 <main>
 <header class="col">
-  <div class="eyebrow">Research status · NFO person segmentation · 20 October 2026</div>
+  <div class="eyebrow">Research status · NFO person segmentation · 25 October 2026</div>
   <h1>Seeing people through foliage with a frozen SAM2</h1>
-  <p class="lede">A small adapter that gives SAM2's image model an empty-scene reference and a motion-aligned integral image of the last six frames. It tracks people behind dense foliage clearly better than SAMURAI and segments their visible parts as well.</p>
-  <p class="meta">Branch <span class="mono">vos-benchmark-pilot</span> · numbers measured on the data below unless marked otherwise · 95% CIs are paired window-bootstrap (2,000 resamples).</p>
+  <p class="lede">A small adapter that gives SAM2's image model an empty-scene reference and a motion-aligned integral image of the last six frames. It tracks people behind dense foliage clearly better than SAMURAI and segments their visible parts slightly better, over whole crossings and without memory.</p>
+  <p class="meta">Branch <span class="mono">vos-benchmark-pilot</span> · numbers measured on the data below unless marked otherwise · 95% CIs are paired bootstrap over clips (2,000 resamples).</p>
 </header>
 
 <section class="col">
   <div class="claim">
-    <p><b>Current claim.</b> On the held-out NFO sequences (seq2–4), a per-frame layer adapter on frozen SAM2.1-b+, trained only on synthetic data, beats SAMURAI on tracking by +0.07 box AUC. It matches SAMURAI on visible-pixel segmentation and on recognition. The result is the same across 3 training seeds.</p>
+    <p><b>Current claim.</b> Over 32 whole crossings of the NFO sequences (seq1–4, every frame once), a per-frame layer adapter on frozen SAM2.1-b+, trained only on synthetic data, beats SAMURAI on tracking by +0.10 box AUC and on visible-pixel segmentation by a small but significant +0.03 hand J. It is on par on recognition. The result holds for each of 3 training seeds, and on the held-out seq2–4 alone.</p>
   </div>
   <div class="nums">
-    <div class="num"><b>+0.072 ± 0.004</b><span>box AUC over SAMURAI (0.646 → 0.718), 3 seeds; each seed's CI excludes 0; seed 0 is ahead in all 24 segments</span></div>
-    <div class="num tie"><b>+0.010 ± 0.003</b><span>hand-label J over SAMURAI (0.750 → 0.760), 3 seeds; every CI includes 0 → on par</span></div>
-    <div class="num tie"><b id="rec-num">+0.013 ± 0.006</b><span id="rec-span">YOLO person AP50 on 7-frame recognition stacks over SAMURAI (0.909 → 0.922), 3 seeds; confidence +0.020 ± 0.004, positive for every seed but no seed's CI excludes 0 → on par</span></div>
+    <div class="num"><b>+0.099 ± 0.003</b><span>box AUC over SAMURAI (0.579 → 0.678), 3 seeds; each seed's CI excludes 0; seq2–4 alone +0.102 to +0.109</span></div>
+    <div class="num"><b>+0.026 ± 0.004</b><span>hand-label J over SAMURAI (0.730 → 0.756) on the 19 labelled frames inside the crossings, 3 seeds; each seed's CI excludes 0 → small lead</span></div>
+    <div class="num tie"><b id="rec-num">+0.004 ± 0.005</b><span id="rec-span">YOLO person confidence on 5-frame recognition stacks over SAMURAI (0.663 → 0.667), 3 seeds; every CI includes 0 → on par (AP50 0.863 → 0.878)</span></div>
   </div>
 </section>
 
@@ -95,7 +95,8 @@ svg .cross { stroke: var(--bad); stroke-width: 2; }
   <p>In <b>NFO</b>, a fixed grayscale camera (800×600) films one person walking behind dense shrubs and branches. At any instant the body is visible only in fragments: a shoulder between two branches, a leg below a twig. We call this <i>fragmented occlusion</i>. The task is <b>modal</b> segmentation: mark the pixels where the person is actually visible, not the hidden body.</p>
   <ul>
     <li><b>Data.</b> Four sequences, seq1–4. Dense hand-drawn GT boxes (about 900 per sequence, whole person). Sparse hand masks of the visible pixels: 23 frames on seq2–4 (with a "void / unsure" class that is ignored) and 20 on seq1.</li>
-    <li><b>Protocol.</b> 61 windows of 40 frames each: 15 on seq1, used for selection; 46 on seq2–4, the <b>single held-out test</b>. Every method gets the standard semi-supervised VOS prompt at the first frame (GT box + one point) and runs causally from there.</li>
+    <li><b>Protocol: whole crossings.</b> One clip per pass of the person through the scene, from its first admissible start to the end of the pass: 32 clips of 44–155 frames, every frame used once. 8 are on seq1, which was used for checkpoint selection; 24 on seq2–4, the <b>single held-out test</b>. Headline numbers are over all 32, with seq2–4 alone reported alongside. Every method gets the standard semi-supervised VOS prompt at the first frame (GT box + one point) and runs causally from there. Following a person through a whole crossing is the realistic use, and it exposes memory drift that short clips hide (§6).</li>
+    <li><b>Earlier protocol.</b> Until 2026-10-23 we scored 61 windows of 40 frames. Numbers in §4, §7 and §8 come from those windows and are marked so.</li>
   </ul>
 </section>
 
@@ -261,7 +262,7 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
   </ul>
 </section>
 <div class="scroll"><table>
-  <tr><th>loss</th><th>FP / FN price</th><th>weights W</th><th class="n">synthetic J</th><th class="n">real hand J (seq2–4)</th><th>verdict</th></tr>
+  <tr><th>loss</th><th>FP / FN price</th><th>weights W</th><th class="n">synthetic J</th><th class="n">real hand J (seq2–4, 40-frame windows)</th><th>verdict</th></tr>
   <tr><td>simple</td><td>0.5 / 0.5</td><td>no</td><td class="n">0.737</td><td class="n">0.427 (seq1 selection frames; P 0.91, R 0.45)</td><td>misses half the person</td></tr>
   <tr><td>balanced</td><td>0.5 / 0.5</td><td>yes</td><td class="n">0.705</td><td class="n">0.735</td><td>too conservative (R 0.78)</td></tr>
   <tr class="ours"><td>v3.4 (used)</td><td>0.3 / 0.7</td><td>yes</td><td class="n">0.617</td><td class="n">0.761</td><td>best on real data</td></tr>
@@ -276,52 +277,61 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
 </section>
 <div class="scroll"><table>
   <tr><th>metric</th><th>question</th><th>how</th><th>blind spot</th></tr>
-  <tr><td>hand J / P / R</td><td>are the visible pixels right?</td><td>IoU against the 23 seq2–4 hand masks, void ignored</td><td>only 23 frames</td></tr>
-  <tr><td>box AUC, P@20, P<sub>norm</sub></td><td>does it track?</td><td>LaSOT one-pass protocol, ported from SAMURAI's evaluation code; mask → tight box, as SAMURAI does; against the GT boxes</td><td>rewards extent: the tracker box alone scores 0.709</td></tr>
-  <tr><td>recognition AP50</td><td>does the mask keep the evidence a detector needs?</td><td>7-frame recognition stacks aligned by GT-box motion (identical for all methods); masked mean, unmasked pixels filled with the plain mean; YOLO11m person AP50</td><td>uses GT motion; see the N sweep below</td></tr>
+  <tr><td>hand J / P / R</td><td>are the visible pixels right?</td><td>IoU against the hand masks that fall inside the crossings, void ignored</td><td>only 19 frames</td></tr>
+  <tr><td>box AUC, P@20, P<sub>norm</sub></td><td>does it track?</td><td>LaSOT one-pass protocol, ported from SAMURAI's evaluation code; mask → tight box, as SAMURAI does; against the GT boxes</td><td>rewards extent: the tracker box alone scores 0.642</td></tr>
+  <tr><td>recognition conf / AP50</td><td>does the mask keep the evidence a detector needs?</td><td>5-frame recognition stacks aligned by GT-box motion (identical for all methods); masked mean, unmasked pixels filled with the plain mean; YOLO11m person confidence and AP50. N = 5 is where SAM2.1 video and SAMURAI score best, i.e. their best case</td><td>uses GT motion; see the N sweep below</td></tr>
 </table></div>
 
 <section class="col">
   <h2>6. Results</h2>
-  <h3>Main table (seq2–4, 46 windows)</h3>
+  <h3>Main table (32 whole crossings, seq1–4)</h3>
 </section>
 <div class="scroll"><table>
-  <tr><th>method</th><th class="n">hand J</th><th class="n">P / R</th><th class="n">box AUC</th><th class="n">P@20</th><th class="n">recog AP50</th></tr>
-  <tr><td>B0 · SAM2.1 video</td><td class="n">0.755</td><td class="n">0.90 / 0.81</td><td class="n">0.641</td><td class="n">0.767</td><td class="n">0.905</td></tr>
-  <tr><td><span class="swatch" style="background:var(--samurai)"></span>T1 · SAMURAI</td><td class="n">0.750</td><td class="n">0.89 / 0.82</td><td class="n">0.646</td><td class="n">0.778</td><td class="n">0.909</td></tr>
-  <tr><td>trk · per-frame SAM2.1 + tracker</td><td class="n">0.716</td><td class="n">0.82 / 0.85</td><td class="n">0.693</td><td class="n">0.833</td><td class="n">0.813</td></tr>
-  <tr class="ours"><td><span class="swatch" style="background:var(--ours)"></span>ours, 3 seeds (mean ± sd)</td><td class="n">0.760 ± 0.003</td><td class="n">0.87 / 0.85</td><td class="n">0.718 ± 0.004</td><td class="n">0.848<sup>s0</sup></td><td class="n" id="rec-cell">0.922 ± 0.006</td></tr>
+  <tr><th>method</th><th class="n">hand J</th><th class="n">P / R</th><th class="n">box AUC</th><th class="n">recog conf</th><th class="n">recog AP50</th></tr>
+  <tr><td>B0 · SAM2.1 video</td><td class="n">0.733</td><td class="n">0.89 / 0.80</td><td class="n">0.571</td><td class="n">0.666</td><td class="n">0.869</td></tr>
+  <tr><td><span class="swatch" style="background:var(--samurai)"></span>T1 · SAMURAI</td><td class="n">0.730</td><td class="n">0.88 / 0.81</td><td class="n">0.579</td><td class="n">0.663</td><td class="n">0.863</td></tr>
+  <tr><td>trk · per-frame SAM2.1 + tracker</td><td class="n">0.685</td><td class="n">0.80 / 0.83</td><td class="n">0.628</td><td class="n">0.596</td><td class="n">0.814</td></tr>
+  <tr><td>ours without integral image, 3 seeds</td><td class="n">0.740 ± 0.011</td><td class="n">0.88 / 0.81</td><td class="n">0.647 ± 0.009</td><td class="n">0.651 ± 0.003</td><td class="n">0.859 ± 0.010</td></tr>
+  <tr class="ours"><td><span class="swatch" style="background:var(--ours)"></span>ours, 3 seeds (mean ± sd)</td><td class="n">0.756 ± 0.004</td><td class="n">0.86 / 0.85</td><td class="n">0.678 ± 0.004</td><td class="n">0.667 ± 0.005</td><td class="n" id="rec-cell">0.878 ± 0.000</td></tr>
 </table></div>
 <section class="col">
-  <p class="meta">All masks computed on the same cluster, and every number in this table from one scoring run there (2026-10-21): box AUC, hand J and one YOLO run over all arms. Absolute AP shifts between software versions, so compare within this table. Seeds 0–1 were trained in bf16, seed 2 in fp16. <sup>s0</sup> = seed 0 only.</p>
+  <p class="meta">All masks computed on the same cluster, and every number in this table from one scoring run there (job 1950449, 2026-10-24): box AUC, hand J and one YOLO run over all arms. Absolute AP shifts between software versions, so compare within this table. Seeds 0–1 were trained in bf16, seed 2 in fp16. Held-out seq2–4 alone: box AUC 0.720 vs SAMURAI 0.615, hand J 0.768 vs 0.741 (18 frames), recognition conf 0.694 vs 0.687.</p>
 
   <h3>What each ingredient does (one variable at a time)</h3>
 </section>
 <div class="scroll"><table>
   <tr><th>ingredient</th><th>comparison</th><th class="n">hand J</th><th class="n">box AUC</th><th class="n">recognition conf</th></tr>
-  <tr><td>motion prompt (tracker box + point every frame)</td><td>trk − SAMURAI</td><td class="n">−0.034</td><td class="n"><b>+0.046</b></td><td class="n">−0.091</td></tr>
-  <tr><td>empty-scene cue in the adapter</td><td>adapter without integral image − trk</td><td class="n"><b>+0.043</b> [+0.002, +0.099]</td><td class="n">+0.007</td><td class="n">—</td></tr>
-  <tr><td>motion-aligned integral image (3 seeds, mean ± sd)</td><td>adapter − adapter without integral image, per seed</td><td class="n"><b>+0.016 ± 0.013</b></td><td class="n"><b>+0.024 ± 0.005</b></td><td class="n"><b>+0.025 ± 0.003</b></td></tr>
+  <tr><td>motion prompt (tracker box + point every frame)</td><td>trk − SAMURAI</td><td class="n">−0.045 [−0.088, −0.010]</td><td class="n"><b>+0.049</b> [−0.013, +0.106]</td><td class="n">−0.067 [−0.101, −0.029]</td></tr>
+  <tr><td>empty-scene cue in the adapter (3-seed mean)</td><td>adapter without integral image − trk</td><td class="n"><b>+0.055</b></td><td class="n">+0.019</td><td class="n"><b>+0.055</b></td></tr>
+  <tr><td>motion-aligned integral image (3 seeds, mean ± sd)</td><td>adapter − adapter without integral image, per seed</td><td class="n"><b>+0.016 ± 0.009</b></td><td class="n"><b>+0.031 ± 0.010</b></td><td class="n"><b>+0.017 ± 0.007</b></td></tr>
 </table></div>
 <section class="col">
-  <p>Reading: <b>the motion prompt buys tracking but costs precision; the empty-scene cue restores precision; the integral image adds real person evidence</b>. Recognition goes up, not just box extent. Over 3 seeds every box-AUC and recognition-confidence CI excludes 0, and the integral image also lifts hand J in two of three seeds (+0.022, +0.026; seed 0 +0.001).</p>
+  <p>Reading: <b>the motion prompt buys tracking but costs precision; the empty-scene cue restores precision; the integral image adds real person evidence</b>. The empty-scene step is mostly precision (hand P 0.80 → 0.88), the integral-image step mostly recall (hand R 0.81 → 0.85), and recognition goes up with it, not just box extent. For the integral image every seed's box-AUC and recognition-confidence CI excludes 0, and hand J rises for every seed (+0.005, +0.020, +0.022; seed 0's CI includes 0). Its box gain is larger than on the 40-frame windows (+0.024), as expected if its benefit is staying on the person over long clips.</p>
+
+  <h3>Over a whole crossing, memory masks shrink</h3>
+</section>
+<figure>
+  <img src="figs/mask_fill_ratio_fullpass.png" alt="Median per-frame mask size of SAM2.1 video and SAMURAI relative to ours over 32 whole crossings, with 95% bands; both curves drift below 1." style="max-width:760px">
+  <figcaption><b>The memory methods' caution sticks.</b> Per frame, mask area of SAM2.1 video and SAMURAI divided by ours (each normalised to frame 6), median over the 32 crossings, 95% band from a bootstrap over passes. From frame 30 to the end of the crossing their masks are ×0.76 [0.63, 0.89] (SAM2.1 video) and ×0.78 [0.66, 0.92] (SAMURAI) of ours; ours stay at their size (+1% per 10 frames [−1%, +3%]). It varies by crossing: a third lose more than 30%, a quarter end larger than ours. Area is not recall, but with their precision-leaning profile (P 0.88–0.89, R 0.80–0.81) the lost pixels are likely person. Code: <span class="mono">eval/mask_fill.py</span>, NFO_RUN=fullpass.</figcaption>
+</figure>
+<section class="col">
 
   <h3>Runtime</h3>
   <p>Per frame, laptop RTX PRO 4000. <b>Ours: 61 ms. SAM2 video: 53 ms.</b> Each frame is encoded once and shared by the tracker, the adapter and the decoder; the integral image takes a second encoder pass; the empty scene is encoded once per sequence. The integral image and SAM2's preprocessing run on the GPU. SAM2 video spends its extra time on memory attention and the memory encoder instead, so the two designs cost about the same. Code: <span class="mono">adapter/inference.py: fast_masks</span>, <span class="mono">benchmark/nfo_vos/tools/timing.py</span>.</p>
 
-  <h3>Recognition vs. the number of integrated frames</h3>
+  <h3>Recognition vs. the number of integrated frames (40-frame windows)</h3>
 </section>
 <figure>
   <img src="figs/recog_vs_N.png" alt="YOLO person AP50 against frames per recognition stack N for five methods." style="max-width:760px">
-  <figcaption><b>Temporal integration is what makes the person recognisable</b> (raw frame AP50 0.33). Masks help most at short integration. Per-frame SAM2 stops improving after N = 5, because its masks change shape from frame to frame and the average smears. Our adapter keeps pace with the video methods <i>without memory</i>. Beyond N ≈ 7 every masked recognition stack falls, while the unmasked mean keeps rising (0.95 at N = 21). With GT-aligned motion and long integration, plain averaging wins. N = 7 was fixed before any results; this sweep is an ablation, not a selection.</figcaption>
+  <figcaption><b>Temporal integration is what makes the person recognisable</b> (raw frame AP50 0.33). Masks help most at short integration. Per-frame SAM2 stops improving after N = 5, because its masks change shape from frame to frame and the average smears. Our adapter keeps pace with the video methods <i>without memory</i>. Beyond N ≈ 7 every masked recognition stack falls, while the unmasked mean keeps rising (0.95 at N = 21). With GT-aligned motion and long integration, plain averaging wins. N = 7 was fixed before any results; the headline now uses N = 5, the baselines' best point in this sweep (decided 2026-10-23, before the whole-crossing runs).</figcaption>
 </figure>
 
 <section class="col">
   <h2>7. Per-frame vs. video: what to expect, and why we do not use memory</h2>
-  <p>The natural expectation is that SAM2's memory should help: the person was partly visible a moment ago, so remembering should fill in what is hidden now. Under fragmented occlusion the evidence says otherwise:</p>
+  <p>The natural expectation is that SAM2's memory should help: the person was partly visible a moment ago, so remembering should fill in what is hidden now. Under fragmented occlusion the evidence says otherwise (hand J on the 40-frame windows, seq2–4, unless noted):</p>
   <ul>
     <li><b>Plain SAM2 video already beats plain per-frame SAM2</b> (B0 0.755 vs trk 0.716 hand J). Memory carries the object's extent from frame to frame.</li>
-    <li><b>Our per-frame adapter matches or beats every video method</b> (0.760), without memory.</li>
+    <li><b>Our per-frame adapter matches or beats every video method</b> (0.760), without memory. Over whole crossings the gap widens: 0.756 vs 0.730–0.733, and the memory methods' masks shrink (§6).</li>
     <li><b>Feeding SAM2's memory better masks does not beat the adapter.</b> Writing the adapter's own masks into memory: 0.763 (+0.002, n.s.). Writing the SAM2-ceiling labels (GT-box-prompted SAM2.1-L, non-causal): 0.756.</li>
     <li><b>Upper bound for any memory-conditioned read-out:</b> a perfect per-frame chooser between the adapter's output and the memory output gains only <b>+0.012</b> [+0.004, +0.021] hand J. A learned read adapter would get less.</li>
     <li><b>On synthetic clips with exact masks</b> (per-frame adapter trained with the balanced loss), the gain from writing <i>perfect</i> masks into memory over a per-frame adapter is +0.017, and it does not grow with occlusion density (+0.018 at ρ 0.2–0.4, +0.017 at ρ 0.4–0.7).</li>
@@ -335,7 +345,7 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
   <ul class="failed">
     <li><b>Adapter inside SAM2's memory loop</b> (residual before memory attention): over-segments, hand J −0.031.</li>
     <li><b>Balanced / unweighted losses:</b> better synthetic J, worse real J (table in §4).</li>
-    <li><b>SAM2-ceiling labels as a dense evaluation proxy:</b> they reverse the main ranking (SAMURAI 0.781 vs ours 0.718 against the proxy), because they share SAM2's bias. Usable only for non-SAM2 comparisons.</li>
+    <li><b>SAM2-ceiling labels as a dense evaluation proxy:</b> they reverse the main ranking (SAMURAI 0.781 vs ours 0.718 against the proxy, 40-frame windows), because they share SAM2's bias. Usable only for non-SAM2 comparisons.</li>
     <li><b>Frozen pseudo-GT and integral-image-based labels</b> as stand-ins for the hand masks: J 0.62–0.69 against hand labels, too far off to rank methods.</li>
     <li><b>Depth cues</b> (gating by empty-scene disparity): raise precision ≤ 0.05 but cost more recall.</li>
     <li><b>Background fill in the recognition stack:</b> re-inserted sharp foliage. Replaced by the mean fill.</li>
@@ -346,7 +356,7 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
   <h2>9. Open questions and next steps</h2>
   <ol>
     <li><b>Second annotator</b> (CVAT tasks ready, seq2–4). This gives human agreement: if two people agree at J ≈ 0.78, both methods sit at the ceiling and "on par" is the strongest possible segmentation claim.</li>
-    <li><b>Recognition with each method's own motion</b> instead of GT motion. With a real tracker, long-N averaging inherits tracking drift. That is where our +0.07 box AUC should turn into a recognition gain. This is the most promising next experiment.</li>
+    <li><b>Recognition with each method's own motion</b> instead of GT motion. With a real tracker, long-N averaging inherits tracking drift. That is where our +0.10 box AUC should turn into a recognition gain. This is the most promising next experiment.</li>
     <li><b>Why masked recognition stacks fall beyond N = 7:</b> seams between masked and filled regions, or misaligned limbs. A visual check is under way; if it's seams, a soft blend is a one-line change, tested on seq1 first.</li>
     <li><b>Memory only if new evidence demands it:</b> split the real frames by visible fraction and see whether the chooser's +0.012 concentrates in the most-occluded ones. This needs the second annotator's frames to have any power.</li>
   </ol>
