@@ -22,7 +22,7 @@ frames, every frame once). No 40-frame-window numbers on the poster.
 | 4 | Branches stay still, the person moves: stacking the last frames, aligned to the person, blurs the foliage and builds up the person. | one row of `nfo_inputs.jpg`: frame, empty scene, integral image, our mask | method |
 | 5 | We score what masks are for: following the person, and keeping them recognisable. | three icons | benchmark |
 | 6 | Clearly better at following the person (0.68 vs 0.58), slightly better at marking the visible pixels, as good as the best video models at keeping the person recognisable, with no memory at all. | three result bars | full-pass job 1950229 |
-| 7 | Every ingredient earns its place: the position hint buys tracking, the empty scene removes false pixels, the integral image adds real person evidence. | ablation bars | full-pass job 1950449 (ablation table below) |
+| 7 | Every ingredient earns its place: tracker prompts buy tracking, memory then helps a little, but the empty scene and the integral image replace it and go further. | ablation bars | full-pass jobs 1950449, 1953256 (ablation table below) |
 | 8 | Next: how far do two annotators agree? | — | open |
 
 Takeaway line under the title (punch 3 in one sentence): *A memory built from the model's own guesses compounds
@@ -94,6 +94,8 @@ Numbers (full-pass job 1950229, 2026-10-24, 32 crossings, seq1–4; recognition 
 
 | ingredient (32 crossings) | tracking | recognition conf | hand J |
 |---|---|---|---|
+| tracker prompts, memory kept (b0trk − SAM2.1 video) | +0.09 | −0.03 | +0.01 |
+| drop memory (trk − b0trk) | −0.03 | −0.04 | −0.06 |
 | position hint every frame (trk − SAMURAI) | +0.05 | −0.07 | −0.05 |
 | empty-scene reference (adapter without integral image − trk) | +0.02 | +0.06 | +0.06 |
 | integral image (ours − without it, 3 seeds) | +0.03 | +0.02 | +0.02 |
@@ -101,6 +103,11 @@ Numbers (full-pass job 1950229, 2026-10-24, 32 crossings, seq1–4; recognition 
 Full-pass job 1950449 (findings §9). The empty-scene row is the trained adapter fed the empty scene but not the
 integral image; its hand-J gain is precision (0.80 → 0.88). The integral image's gain is recall (0.81 → 0.85); per seed
 its CI excludes 0 everywhere except seed 0 hand J.
+New arm b0trk-c2 (2026-10-25, job 1953256, findings §9): SAM2.1 video + tracker prompts on every frame, memory on.
+Box 0.661, hand J 0.745 (P 0.82 / R 0.88), recog conf 0.636, AP50 0.861. Memory helps on top of the tracker (J +0.060
+[+0.014, +0.113]); ours (no memory) stays above it on every metric. Its masks do not shrink over a crossing (×1.00 of
+ours after frame 30), so the shrinking is memory propagating the first prompt alone. The poster's ablation now chains
+SAM2.1 video → + tracker prompts → − memory → + adapter (empty scene) → + integral image.
 
 ### 6. Where this is going
 - Second annotator: the human ceiling for segmentation; tells whether "on par" is already at that ceiling.

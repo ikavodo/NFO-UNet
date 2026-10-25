@@ -35,7 +35,7 @@ from benchmark.nfo_vos import trials as TR
 from benchmark.nfo_vos.eval import box_metrics as BM
 from benchmark.nfo_vos.eval.report import SEEDS
 
-ARMS = ('b0-c2', 't1-c2', 'trk', *SEEDS)
+ARMS = ('b0-c2', 't1-c2', 'b0trk-c2', 'trk', *SEEDS)       # b0trk-c2: memory + tracker prompts (fullpass only)
 K0 = 6                       # first steady-state frame (adapter integral-image history)
 K1 = 30                      # late-ratio start: the memory arms' drop is over by then (pass run)
 MIN_N = 15                   # median curve drawn while at least this many clips are still running
@@ -44,6 +44,7 @@ OUT = f"{BM.IMG}/mask_fill_trend{'' if TR.RUN == 'rr' else '_' + TR.RUN}.png"
 GROUPS = (('seq1-4 (all)', TR.ALL_SEQS), ('seq1 (selection)', ('seq1',)), ('seq2-4 (test)', ('seq2', 'seq3', 'seq4')))
 # recog_vs_N palette
 PLOT = (('b0-c2', 'SAM2.1 video (memory)', '#1baf7a'), ('t1-c2', 'SAMURAI (memory)', '#eb6834'),
+        ('b0trk-c2', 'SAM2.1 video + tracker prompts (memory)', '#8a5cc2'),
         ('ours', 'ours (no memory, 3 seeds)', '#2a78d6'))
 
 
@@ -128,7 +129,7 @@ def plot_ratio(F, kmax, lens):
     still running with its 95% band over passes. Paired, so the pass-to-pass difficulty shared by all arms cancels."""
     k = np.arange(K0, kmax + 1)
     fig, ax = plt.subplots(figsize=(6.4, 3.8), dpi=150)
-    for a, label, col in PLOT[:2]:
+    for a, label, col in PLOT[:-1]:                 # every memory arm / ours
         if a not in F:
             continue
         y, lo, hi = median_curve({i: F[a][i] / F['ours'][i] for i in F['ours'] if i in F[a]}, k)
@@ -170,17 +171,17 @@ def main():
     for name, sel in GROUPS:
         ids = [i for i in S['ours'] if sq[i] in sel]
         print(f'\n== {name}, n = {len(ids)} clips; mask fill trend per 10 frames, k = {K0}…end (95% CI over passes)')
-        for a in ('b0-c2', 't1-c2', 'trk', *SEEDS, 'ours'):
+        for a in ('b0-c2', 't1-c2', 'b0trk-c2', 'trk', *SEEDS, 'ours'):
             if a in S:
                 m, lo, hi, n, g = boot_mean(S[a], [i for i in ids if i in S[a]])
                 print(f'  {a:12s} {pct(m):>5s}  [{pct(lo)}, {pct(hi)}]  ({n} clips, {g} passes)')
-        for a in ('b0-c2', 't1-c2'):
+        for a in ('b0-c2', 't1-c2', 'b0trk-c2'):
             if a in S:
                 both = [i for i in ids if i in S[a]]
                 m, lo, hi, n, g = boot_mean({i: S[a][i] - S['ours'][i] for i in both}, both)
                 print(f'  {a} − ours: {m:+.3f} [{lo:+.3f}, {hi:+.3f}] log fill / 10 frames, {n} clips, {g} passes')
         if len(set(lens)) > 1:
-            for a in ('b0-c2', 't1-c2'):
+            for a in ('b0-c2', 't1-c2', 'b0trk-c2'):
                 if a in F:
                     r = late_ratio(F, a, [i for i in ids if i in F[a]])
                     m, lo, hi, n, g = boot_mean(r, list(r))

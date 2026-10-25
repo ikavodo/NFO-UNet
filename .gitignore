@@ -172,3 +172,19 @@ images/*.jpg
 *.onnx
 *.mp4
 *.png
+
+# Poster (docs/poster/poster_latex): our sources and figures are tracked; the institutional TUM template, the logos,
+# reference figures from papers, LaTeX build files and built PDFs are not (public repo).
+docs/poster/poster_latex/Beispiele/
+docs/poster/poster_latex/Ressourcen/
+docs/poster/poster_latex/Vorlagen/
+docs/poster/poster_latex/_Einstellungen.tex
+docs/poster/poster_latex/_Liesmich.txt
+docs/poster/poster_latex/plots/logos/
+docs/poster/poster_latex/plots/nfo/model_diagram.png
+docs/poster/poster_latex/*.pdf
+*.aux
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*:Zone.Identifier

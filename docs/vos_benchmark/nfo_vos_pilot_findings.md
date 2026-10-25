@@ -275,7 +275,9 @@ it **ranks methods like the hand masks**.
   | seq1–4, 32 clips | box AUC | recog conf | hand J (43 frames, 19 clips) | hand P / R |
   |---|---|---|---|---|
   | SAMURAI | 0.579 | 0.663 | 0.730 | 0.879 / 0.806 |
+  | SAM2.1 video (b0-c2) | 0.571 | 0.666 | 0.733 | 0.893 / 0.796 |
   | trk (tracker prompts) | 0.628 | 0.596 | 0.685 | 0.803 / 0.827 |
+  | b0trk-c2 (SAM2.1 video + tracker prompts, memory on) | 0.661 | 0.636 | 0.745 | 0.821 / 0.883 |
   | adapter-noC, 3 seeds | 0.656 / 0.646 / 0.639 | 0.653 / 0.648 / 0.652 | 0.752 / 0.739 / 0.730 | 0.877 / 0.813 (mean) |
   | adapter, 3 seeds | 0.674 / 0.681 / 0.678 | 0.662 / 0.669 / 0.671 | 0.757 / 0.759 / 0.752 | 0.861 / 0.851 (mean) |
 
@@ -285,6 +287,20 @@ it **ranks methods like the hand masks**.
   +0.019, hand J +0.005 / +0.020 / +0.022 per seed, every CI > 0 except seed 0 hand J [−0.003, +0.013]; the gain is
   recall (0.81 → 0.85). seq2–4 alone: box +0.018 / +0.032 / +0.037, recog +0.011 / +0.022 / +0.023, hand J +0.004 /
   +0.019 / +0.022. Larger than on the 40-frame windows (box +0.024 ± 0.005).
+
+  **Memory + tracker prompts (`b0trk-c2`, job 1953256, 2026-10-25, same env; `baselines/run_sam2_video.py --trk-prompts`,
+  commits ac7cff2 / b79a0df):** SAM2.1 video with our tracker's box + point on every frame after t0; whole-crossing
+  version of the old vid-prompts row (§5). The other arms' numbers in that run match job 1950449 exactly.
+  - What memory adds on top of the tracker (b0trk − trk): hand J **+0.060 [+0.014, +0.113]**, box +0.033
+    [−0.004, +0.076], recog **+0.040 [+0.021, +0.061]**. On the crossings memory does help a tracker-prompted SAM2.1
+    (windows: J +0.032, box +0.020).
+  - What the tracker adds to memory (b0trk − b0): box **+0.089 [+0.062, +0.116]**, hand J +0.012 [−0.011, +0.036],
+    recog −0.029 [−0.054, +0.001]: tracking up, precision down (0.89 → 0.82), recall up (0.80 → 0.88).
+  - Ours (no memory) vs b0trk, 3-seed means: box 0.678 vs 0.661, hand J 0.756 vs 0.745, recog 0.667 vs 0.636, AP50
+    0.878 vs 0.861, P@20 0.773 vs 0.766 (no paired CI computed for this pair). The memory-free adapter stays above the
+    best memory arm on every metric; the margin on segmentation and tracking is small.
+  - seq2–4 alone: b0trk − trk J +0.059 [+0.012, +0.119], box +0.014, recog +0.029; b0trk − b0 box +0.083
+    [+0.059, +0.107], recog −0.043 [−0.066, −0.021].
 
 ## Code map
 

@@ -1,0 +1,56 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% NFO-VOS poster, A0 portrait (TUM template, Vorlagen/PlakatA0Hoch.tex).
+% Compile from this directory:  latexmk -pdf NFO_VOS_poster
+% Content: NFO_VOS_inhalt.tex. Figures: plots/nfo/ (benchmark/nfo_vos/tools/poster_figures.py).
+% Board is 80 cm wide: print A0 at 100 % and trim ~2 cm per side (content starts ~4.6 cm from each edge).
+% Not in git (third-party, see .gitignore): the TUM template (Ressourcen/ incl. the logo row edited in
+% Ressourcen/Plakat/Anfang.tex, _Einstellungen.tex) and plots/logos/ (AIT trimmed, MCML as PDF, TUM).
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\PassOptionsToPackage{english,ngerman}{babel} % English hyphenation, selected after \begin{document}
+\input{./Ressourcen/Plakat/PraeambelA0Hoch.tex} % !!! NICHT ENTFERNEN !!!
+\input{./_Einstellungen.tex}                    % !!! DATEI ANPASSEN !!!
+
+\usepackage{tikz}
+\setlength{\PlakatFusszeilePositionUnten}{42mm} % references a bit lower: gap below the columns
+\usetikzlibrary{arrows.meta,positioning,calc,fit,backgrounds,shapes.geometric}
+
+\newcommand{\PlakatTitel}{NFO-VOS: Video Object Segmentation under Natural Fragmented Occlusion}
+
+\input{./Ressourcen/Plakat/Anfang.tex} % !!! NICHT ENTFERNEN !!!
+
+\selectlanguage{english}
+\PlakatKopfzeileLeer
+
+% Footer: no blank lines or list environments inside (fancyhdr takes it as a short argument)
+\PlakatFusszeileMehrspaltig{%
+  \textbf{References}\\
+  {}[1] Pflugfelder, Auer. Person localisation under fragmented occlusion. \url{https://ieeexplore.ieee.org/document/9663791}\\
+  {}[2] Ravi et al. (2024). SAM 2: Segment anything in images and videos. arXiv 2408.00714.
+  \vfill\columnbreak
+  {}[3] Yang et al. (2024). SAMURAI: zero-shot visual tracking with motion-aware memory. arXiv 2411.11922.\\
+  {}[4] Ding et al. (2024). SAM2Long. arXiv 2410.16268.\\
+  {}[5] Videnovic et al. (2024). A distractor-aware memory for visual object tracking with SAM2. arXiv 2411.17576.
+  \vfill\columnbreak
+  {}[6] Kurmi, Schedl, Bimber et al. Airborne optical sectioning. arXiv 2111.06959, 2207.13344.\\
+  {}[7] Fan et al. (2019). LaSOT: a high-quality benchmark for large-scale single object tracking.\\
+  {}[8] Jocher et al. (2024). Ultralytics YOLO11.
+  \vfill\columnbreak
+  {}[9] Wang, Adelson (1994). Representing moving images with layers. IEEE TIP.\\
+  {}[10] GPJATK gait database; CanaTree100 forest images.\\
+  {}[11] Lin et al. (2017). Focal loss for dense object detection.\\
+  {}[12] Abraham, Khan (2019). A novel focal Tversky loss function with improved attention U-Net for lesion segmentation. arXiv 1810.07842.
+  \vfill\columnbreak
+  \textbf{Contact:} ido.akov@ait.ac.at
+}
+
+{\fontsize{58}{70}\selectfont \PlakatTitel}\\[30pt]
+{\fontsize{50}{60}\selectfont\textbf{Ido Akov, Roman P. Pflugfelder, Daniel Cremers}}\\[14pt]
+{\fontsize{40}{48}\selectfont Computer Vision Group, TUM\quad$\cdot$\quad
+Data Science and Artificial Intelligence (DSS-DSAI), AIT}\\[30pt]
+
+\input{./NFO_VOS_inhalt.tex}
+
+\clearpage
+
+\end{document} % !!! NICHT ENTFERNEN !!!
