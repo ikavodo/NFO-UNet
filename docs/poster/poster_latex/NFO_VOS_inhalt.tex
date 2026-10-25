@@ -1,7 +1,6 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % NFO-VOS poster content (A0 portrait, 3 columns: problem | contributions | results).
-% Numbers: 32 whole crossings (findings §9, jobs 1950229 / 1950449). The recognition-vs-N figure is the
-% 40-frame-window sweep until the whole-crossing sweep (_fpN CSVs) is back.
+% Numbers: 32 whole crossings (findings §9, jobs 1950229 / 1950449 / 1953256), incl. the recognition-vs-N sweep (_fpN CSVs).
 % Figures: benchmark/nfo_vos/tools/poster_figures.py; architecture: plots/nfo/architecture.tex (TikZ).
 % "% REVIEW:" marks wording the authors want a reviewer to look at.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -30,10 +29,10 @@
 % takeaway banner over the full width
 \noindent\colorbox{ColBox}{\parbox{\dimexpr\textwidth-2\fboxsep}{\centering
   \fontsize{38}{48}\selectfont\color{UniversitaetFarbe}\vspace{0.2em}%
-  Under fragmented occlusion, remembering past masks helps less than
-  \textbf{integrating the evidence of past frames.}\vspace{0.2em}}}
+  Under fragmented occlusion, \textbf{integrating evidence across frames replaces memory}.\vspace{0.2em}}}
 \vspace{0.8em}
 
+\raggedcolumns   % no stretched gaps when a column is not full
 \begin{multicols*}{3}
 
 %======================================================================= column 1: the problem
@@ -46,12 +45,11 @@ pixels in every frame (\textbf{modal} segmentation).
 \Unterschrift{Three of the four NFO scenes\,[1]. Green box: hand-drawn person box. Bottom: human label; grey:
 marked ``unsure''.}
 
-% REVIEW: the modal-vs-amodal positioning below is the key idea of the task; wording to be sharpened.
-\Merke{Even human labellers are unsure about most of the person (53--79\,\% above). Goal: claim every pixel the
-evidence supports (\textbf{modal}), never invent hidden parts (\textbf{amodal}).}
+\Merke{Even labellers are uncertain where the person is visible. Goal: claim what the evidence supports
+(\textbf{modal}), never invent hidden parts (\textbf{amodal}).}
 
-Labelling every frame by hand is impractical, so we let a \textbf{prompted video segmentation} (PVS) model do it
-from one prompt: a box and a point in the first frame.
+Labelling by hand is impractical: we let a \textbf{prompted video segmentation} (PVS) model do it from one box
++ point in the first frame.
 
 \Abschnitt{2\quad Why off-the-shelf PVS falls short}
 
@@ -59,8 +57,7 @@ from one prompt: a box and a point in the first frame.
 SAM2Long\,[4], DAM4SAM\,[5]) manage that memory better. But memory holds only what was seen: here, cautious
 partial masks.
 
-\Bild{plots/nfo/playsafe.png}
-\Unterschrift{\emph{right}: precision; \emph{finds}: recall, against the human label.}
+\par\centering\includegraphics[width=0.72\linewidth]{plots/nfo/playsafe.png}\par\raggedright
 
 % REVIEW: keep this claim general (no numbers)?
 \Merke{SAM2.1 plays it safe: what it marks is person, but much of the visible person is missed.}
@@ -71,39 +68,37 @@ segment the wrong layer.
 %======================================================================= column 2: contributions
 \Abschnitt{3\quad Contribution A: a benchmark, NFO-VOS}
 
-NFO\,[1]: people walking and running back and forth behind natural foliage, static camera, hand-drawn person
-boxes in every frame.
+NFO\,[1]: people walking and running behind natural foliage, static camera, a hand-drawn person box in every
+frame.
 
 \Merke{Under fragmented occlusion we cannot assume the person is well visible when the model is prompted.}
 
 NFO-VOS defines prompt frames throughout each walk, at different occlusion levels, to measure
 \textbf{robustness to the initialisation}. Results here: one run per walk, from its first prompt frame to its end.
 
-\begin{center}
+\par\noindent\begin{minipage}{\linewidth}\raggedright   % tiles + caption stay together
+\makebox[\linewidth]{%
 \begin{tabular}{@{}c@{\hspace{5mm}}c@{\hspace{5mm}}c@{}}
-\includegraphics[height=8cm]{plots/nfo/bench_track.jpg} &
-\includegraphics[height=8cm]{plots/nfo/bench_pixels.jpg} &
-\includegraphics[height=8cm]{plots/nfo/bench_recog.jpg} \\[1mm]
-\parbox[t]{6.9cm}{\centering\textbf{Tracking}\\\fontsize{19}{23}\selectfont success AUC, P@20 (LaSOT\,[7]): box
-of the mask (blue) vs hand-drawn box (green)} &
-\parbox[t]{6.9cm}{\centering\textbf{Segmentation}\\\fontsize{19}{23}\selectfont J (IoU), precision, recall vs
-human labels} &
-\parbox[t]{6.9cm}{\centering\textbf{Recognition}\\\fontsize{19}{23}\selectfont YOLO11\,[8] confidence, AP50 on a
-masked integration}
-\end{tabular}
-\end{center}
-\Unterschrift{Masked integration: 5 frames aligned by the motion of the hand-drawn boxes, averaged with the masks
-as 0/1 weights. All design choices are made on scene 1; scenes 2--4 are only used for the final test.}
+\includegraphics[height=6.4cm]{plots/nfo/bench_track.jpg} &
+\includegraphics[height=6.4cm]{plots/nfo/bench_pixels.jpg} &
+\includegraphics[height=6.4cm]{plots/nfo/bench_recog.jpg} \\[1mm]
+\parbox[t]{6.9cm}{\centering\textbf{Tracking}\\\fontsize{19}{23}\selectfont AUC, P@20 (LaSOT\,[6])} &
+\parbox[t]{6.9cm}{\centering\textbf{Segmentation}\\\fontsize{19}{23}\selectfont J (IoU), P, R} &
+\parbox[t]{6.9cm}{\centering\textbf{Recognition}\\\fontsize{19}{23}\selectfont YOLO11\,[7] conf, IoU, AP50}
+\end{tabular}}\par\vspace{0.6\baselineskip}
+\Unterschrift{Blue: box of the mask; green: hand-drawn box; magenta: YOLO box.\\
+Recognition input: 5 frames, aligned by the hand-drawn boxes' motion and averaged only where the method's mask
+covers the pixel (same for every method).\\
+Design choices on scene 1; scenes 2--4 held out.}
+\end{minipage}\par
 
 \Abschnitt{4\quad Contribution B: a method, Layer-SAM}
 
-\textbf{Idea:} integrate evidence across \textbf{motion layers}\,[9]. Integrated with zero motion, frames give the
-\textbf{empty scene}; aligned on the person's motion, the \textbf{integral image} (person sharp, foliage blurred).
+\textbf{Idea:} integrate evidence across \textbf{motion layers}\,[8]. Integrated with zero motion, frames give the
+\textbf{empty scene}; aligned on the person's motion, the \textbf{integral image}\,[9] (person sharp, foliage blurred).
 Layer-SAM feeds both to SAM2.1 \emph{instead of} a memory.
 
-\begin{center}
-\resizebox{\linewidth}{!}{\input{plots/nfo/architecture.tex}}
-\end{center}
+\par\noindent\resizebox{\linewidth}{!}{\input{plots/nfo/architecture.tex}}\par
 
 With a static camera the empty scene is encoded once per scene: two encoder passes per frame, 61 vs 53\,ms for
 SAM2.1 with memory.
@@ -113,19 +108,19 @@ SAM2.1 with memory.
 %         hand labels, not on tracking/recognition; is there a better first-principles reason for extent over caution?)
 \Abschnitt{5\quad Training: extent over caution}
 
-A missed fragment is evidence lost for good (smaller box, weaker integration); a foliage pixel at the person's edge
-costs little. So the loss is asymmetric.
+Tracking and recognition gain from more person evidence, not less: a missed fragment is lost, a stray foliage pixel
+at the edge costs little. So the loss is asymmetric.
 
 \Bild{plots/nfo/synth_row.jpg}
 \Unterschrift{Synthetic clips with exact visible masks (GPJATK people, procedural foliage, CanaTree100\,[10]):
 frame, person, visible target, loss weights.}
 
-\textbf{Loss:} focal\,[11] + \textbf{Focal Tversky}\,[12] (from medical segmentation of small structures): misses
-weigh more than false alarms. No loss in the ambiguous band next to visible fragments (yellow). Chosen on
-scene-1 hand labels (IoU), not on the downstream metrics.
+\textbf{Loss:} Focal Tversky\,[11] (from medical segmentation of small structures, plus a focal term): misses weigh
+more than false alarms. Hidden pixels next to visible fragments (yellow) are not penalised; far hidden ones (red)
+count as background, at lower weight.
 
 %======================================================================= column 3: results
-\columnbreak
+\par\noindent\begin{minipage}{\linewidth}\raggedright   % heading + table + caption stay together
 \Abschnitt{6\quad Results on NFO-VOS}
 
 \begin{center}
@@ -140,16 +135,15 @@ SAM2.1 & -- & $\checkmark$ & .628 & .727 & .685 & .80 & .83 & .596 & .645 & .814
 \textbf{Layer-SAM} & -- & $\checkmark$ & \textbf{.678} & \textbf{.773} & \textbf{.756} & .86 & .85 & \textbf{.667} & \textbf{.705} & \textbf{.878}
 \end{tabular}
 \end{center}
-\Unterschrift{32 walks, 4 scenes (scenes 2--4 alone: same conclusions); J/P/R on the hand-labelled frames; Layer-SAM:
+\Unterschrift{32 walks, 4 scenes (scenes 2--4 alone: same conclusions); J/P/R on the hand-labelled frames, ``unsure'' ignored; Layer-SAM:
 mean of 3 seeds. \emph{mem.}: memory of past masks; \emph{trk.}: our tracker's box in every frame (else only the first
 prompt). Recognition IoU: top YOLO detection vs hand-drawn box.}
 
-\Merke{No memory, yet above every memory variant on tracking, segmentation and recognition. Better memory
-management (SAMURAI) adds little here.}
+\Merke{Without memory, Layer-SAM matches or beats every SAM2.1 memory variant.}
+\end{minipage}\par
 
-\Unter{Masks: SAM2.1 vs Layer-SAM}
+\Unter{Masks: SAM2.1 vs Layer-SAM (scene 4)}
 \Bild{plots/nfo/qual.png}
-\Unterschrift{Two frames of one walk in scene 4. \emph{right}: precision; \emph{finds}: recall.}
 
 \Unter{Does the segmentation degrade over time?}
 \Bild{plots/nfo/masksize.png}
@@ -163,7 +157,7 @@ adapter gets the empty scene in its place.}
 
 \Unter{Recognition vs.\ frames integrated}
 \Bild{plots/nfo/recogN.png}
-\Unterschrift{YOLO11 AP50 (Layer-SAM: one seed): ahead at N\,=\,3, on par at 5--11; beyond, SAM2.1 keeps more and the
-plain average wins.}
+\Unterschrift{YOLO11 AP50 (Layer-SAM: one seed). Good masks matter for short integrations (N\,$\le$\,7: noisy masks
+lose); for long ones the plain average wins and masks become unnecessary.}
 
 \end{multicols*}

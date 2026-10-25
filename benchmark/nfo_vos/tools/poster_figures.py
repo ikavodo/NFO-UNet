@@ -80,7 +80,7 @@ def jpr(m, person, keep):
     return tp / (tp + fp + fn), tp / max(tp + fp, 1), tp / max(tp + fn, 1)
 
 
-def examples(picks=(('seq2', 52), ('seq3', 287), ('seq4', 922))):
+def examples(picks=(('seq2', 335), ('seq3', 367), ('seq4', 293))):   # moderate unsure share: 25 / 26 / 48 %
     """Top: whole frames (person box in green). Bottom: crop raw | crop with the hand label (green = visible person,
     grey = marked unsure by the annotator, ignored in scoring)."""
     fig = plt.figure(figsize=(9.3, 5.0))
@@ -134,7 +134,7 @@ def playsafe(picks=(('seq4', 293),), arms=(('b0-c2', 'SAM2.1 video', C_B0),), na
             m = arm_mask(arm, t, k)
             _, p, rc = jpr(m, person, keep)
             rgb = tuple(int(col[i:i + 2], 16) for i in (1, 3, 5))
-            panes.append((tint(g, m, rgb, 0.65), aname, f'{p:.0%} right\nfinds {rc:.0%}'))
+            panes.append((tint(g, m, rgb, 0.65), aname, f'P {p:.0%}\nR {rc:.0%}'))
         for c, (img, title, note) in enumerate(panes):
             ax = axes[r, c]; ax.imshow(img[y0:y1, x0:x1], aspect='auto'); ax.axis('off')
             ax.set_title(title, fontsize=19, fontweight='bold' if note else 'normal')
@@ -192,7 +192,7 @@ def ablation():
     """Rows: ingredients added one at a time; per row one bar per question (3-seed means). Line: 95% CI of the single
     comparison (none on this table, all steps from the SAM2.1 video baseline); dots: the three seeds (integral image)."""
     qs = (('tracking AUC', '#1f4e8c'), ('segmentation J', '#28aa3c'), ('recognition conf', '#8a5cc2'))
-    fig, ax = plt.subplots(figsize=(9.3, 3.7))
+    fig, ax = plt.subplots(figsize=(9.3, 4.3))
     h = 0.26
     for r, (name, d, ci, seeds) in enumerate(STEPS):
         for m, (q, col) in enumerate(qs):
@@ -229,9 +229,13 @@ def masksize():
     r = MF.late_ratio(F, 'b0-c2', list(F['b0-c2']))
     m, lo, hi, n, g = MF.boot_mean(r, list(r))
     print(f'SAM2.1 video / ours mask size, k >= {MF.K1}: x{np.exp(m):.2f} [{np.exp(lo):.2f}, {np.exp(hi):.2f}] ({n} clips)')
-    fig, ax = plt.subplots(figsize=(9.3, 3.3))
+    fig, ax = plt.subplots(figsize=(9.3, 4.4))
+    # legend: fitted change of mask size per 10 frames (mask_fill trends, k = 6...end, mean over the 32 crossings)
+    S = MF.trends(F)
+    pct = lambda a: f'{(np.exp(MF.boot_mean(S[a], list(S[a]))[0]) - 1) * 100:+.0f}%'
     for a, label, col in (('b0-c2', 'SAM2.1', C_B0), ('b0trk-c2', 'SAM2.1 + tracker', '#8a5cc2'),
-                          ('ours', 'Layer-SAM (ours)', C_OURS)):
+                          ('ours', 'Layer-SAM', C_OURS)):
+        label = f'{label} ({pct(a)} / 10 fr.)' if a == 'b0-c2' else f'{label} ({pct(a)})'
         yv, lo, hi = MF.median_curve(F[a], k)
         ax.fill_between(k, lo, hi, color=col, alpha=0.13, lw=0)
         ax.plot(k, yv, color=col, lw=3.5, label=label)
@@ -247,7 +251,7 @@ def masksize():
 # recognition vs N on the 32 whole crossings (seq1-4): eval/recog_sweep.sbatch CSVs (_fpN_<arm>), N = 5 from the
 # headline CSV (_fp); Layer-SAM = seed 0 (the sweep ran one seed)
 RECOG_ARMS = (('adapter-pf', 'Layer-SAM (ours)', C_OURS, '-'), ('b0-c2', 'SAM2.1', C_B0, '-'),
-              ('nomask', 'no mask (plain average)', C_GREY, '--'))      # tracker variants: in the table
+              ('trk', 'SAM2.1, no memory + tracker', C_TRK, '-'), ('nomask', 'no mask (plain average)', C_GREY, '--'))
 
 
 def recogN(ns=(1, 3, 5, 7, 11, 15, 21)):
@@ -266,7 +270,7 @@ def recogN(ns=(1, 3, 5, 7, 11, 15, 21)):
             bs = [ap50([d for i in b for d in win[ids[i]]]) for b in boot]
             res[a, N] = (ap50([d for i in ids for d in win[i]]), *np.quantile(bs, [.025, .975]))
             print(f'N={N} {a:10s} AP50 {res[a, N][0]:.3f} [{res[a, N][1]:.3f}, {res[a, N][2]:.3f}]')
-    fig, ax = plt.subplots(figsize=(9.3, 3.1))
+    fig, ax = plt.subplots(figsize=(9.3, 3.9))
     for a, label, col, ls in RECOG_ARMS:
         y = np.array([res[a, N] for N in ns])
         if a in ('adapter-pf', 'b0-c2'):
@@ -275,7 +279,7 @@ def recogN(ns=(1, 3, 5, 7, 11, 15, 21)):
                 mec='white', mew=1.2, label=label, zorder=3 if a == 'adapter-pf' else 2)
     ax.axvline(5, color='#52514e', lw=1, ls=':')                     # N = 5: the table's stack length
     ax.set_xticks(ns); ax.set_xlim(0.5, 21.5); ax.set_xlabel('frames integrated N'); ax.set_ylabel('YOLO11 AP50')
-    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.24), ncol=3, frameon=False, fontsize=14, handlelength=1.4,
+    ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.24), ncol=2, frameon=False, fontsize=14, handlelength=1.4,
               columnspacing=1)
     ax.grid(axis='y', color='#e6e5e0', lw=0.8); ax.set_axisbelow(True)
     save(fig, 'recogN.png')
