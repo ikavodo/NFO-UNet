@@ -266,6 +266,22 @@ it **ranks methods like the hand masks**.
   stacks aligned with the true motion, so it sees no clip-length effect by construction. Caveat: the full-pass hand
   frames are a different, smaller set (19 vs the windows' set) and lie later in their clips on average.
 
+  **Ablation on the 32 clips (job 1950449, 2026-10-24, same env; `-noC` = integral image removed at inference):**
+
+  | seq1–4, 32 clips | box AUC | recog conf | hand J (19) | hand P / R |
+  |---|---|---|---|---|
+  | SAMURAI | 0.579 | 0.663 | 0.730 | 0.879 / 0.806 |
+  | trk (tracker prompts) | 0.628 | 0.596 | 0.685 | 0.803 / 0.827 |
+  | adapter-noC, 3 seeds | 0.656 / 0.646 / 0.639 | 0.653 / 0.648 / 0.652 | 0.752 / 0.739 / 0.730 | 0.877 / 0.813 (mean) |
+  | adapter, 3 seeds | 0.674 / 0.681 / 0.678 | 0.662 / 0.669 / 0.671 | 0.757 / 0.759 / 0.752 | 0.861 / 0.851 (mean) |
+
+  Steps (3-seed means): position hint (trk − SAMURAI) box +0.049 [−0.013, +0.106], recog −0.067 [−0.101, −0.029],
+  hand J −0.045 [−0.088, −0.010]; adapter without integral image (noC − trk) box +0.019, recog +0.055, hand J +0.055,
+  mostly precision (0.80 → 0.88); integral image (adapter − noC) box +0.019 / +0.035 / +0.038, recog +0.009 / +0.022 /
+  +0.019, hand J +0.005 / +0.020 / +0.022 per seed, every CI > 0 except seed 0 hand J [−0.003, +0.013]; the gain is
+  recall (0.81 → 0.85). seq2–4 alone: box +0.018 / +0.032 / +0.037, recog +0.011 / +0.022 / +0.023, hand J +0.004 /
+  +0.019 / +0.022. Larger than on the 40-frame windows (box +0.024 ± 0.005).
+
 ## Code map
 
 - `benchmark/nfo_vos/downstream/`:
