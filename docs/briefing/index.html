@@ -322,11 +322,11 @@ TP = Σ p·V,   FP_W = Σ W·p·(1 − V),   FN = Σ (1 − p)·V</div>
   <h3>Runtime</h3>
   <p>Per frame, laptop RTX PRO 4000. <b>Ours: 61 ms. SAM2 video: 53 ms.</b> Each frame is encoded once and shared by the tracker, the adapter and the decoder; the integral image takes a second encoder pass; the empty scene is encoded once per sequence. The integral image and SAM2's preprocessing run on the GPU. SAM2 video spends its extra time on memory attention and the memory encoder instead, so the two designs cost about the same. Code: <span class="mono">adapter/inference.py: fast_masks</span>, <span class="mono">benchmark/nfo_vos/tools/timing.py</span>.</p>
 
-  <h3>Recognition vs. the number of integrated frames (40-frame windows)</h3>
+  <h3>Recognition vs. the number of integrated frames (32 whole crossings)</h3>
 </section>
 <figure>
-  <img src="figs/recog_vs_N.png" alt="YOLO person AP50 against frames per recognition stack N for five methods." style="max-width:760px">
-  <figcaption><b>Temporal integration is what makes the person recognisable</b> (raw frame AP50 0.33). Masks help most at short integration. Per-frame SAM2 stops improving after N = 5, because its masks change shape from frame to frame and the average smears. Layer-SAM keeps pace with the video methods <i>without memory</i>. Beyond N ≈ 7 every masked recognition stack falls, while the unmasked mean keeps rising (0.95 at N = 21). With GT-aligned motion and long integration, plain averaging wins. N = 7 was fixed before any results; the headline now uses N = 5, the baselines' best point in this sweep (decided 2026-10-23, before the whole-crossing runs).</figcaption>
+  <img src="figs/recog_vs_N_fullpass.png" alt="YOLO person AP50 against frames integrated N for Layer-SAM, SAM2.1 video, memoryless SAM2.1 with tracker prompts and the unmasked average, on the 32 whole crossings." style="max-width:760px">
+  <figcaption><b>Good masks matter for short integrations.</b> YOLO11 AP50 on masked integral images of N frames aligned by the GT-box motion (pixels inside a method's masks are integrated only over the masked frames; all others are the plain average), seq1–4, 32 whole crossings; Layer-SAM seed 0, bands 95% CI over crossings. N = 1 is the raw frame (AP50 0.32 for all). Layer-SAM leads at N = 3 (0.81 vs 0.78 SAM2.1 video), is on par at N = 5–11 (N = 5: 0.878 vs 0.869, the table's setting), and for long integrations SAM2.1 video keeps more (N = 21: 0.71 vs 0.77). Memoryless SAM2.1 with tracker prompts falls behind from N = 3 on: noisy masks smear the integration. From N ≈ 11 the unmasked average beats every masked method (0.95 at N = 21), so masks only help short integrations. CSVs: <span class="mono">eval/recog_sweep.sbatch</span> (_fpN), figure <span class="mono">tools/poster_figures.py recogN</span>.</figcaption>
 </figure>
 
 <section class="col">
