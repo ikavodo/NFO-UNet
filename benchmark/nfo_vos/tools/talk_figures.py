@@ -230,6 +230,45 @@ def changemap(seq='seq4', k=43):
     save(fig, 'changemap.png')
 
 
+C_UNSURE = (230, 184, 0)     # the talk's single "unsure" colour (yellow); the poster uses grey
+
+
+def yellow(prompt_pick=('seq2', 132)):
+    """Talk copies of the poster's label figures with unsure in yellow: prompt.png (a frame with small unsure patches),
+    examples.png, playsafe.png, qual.png (all to plots/talk/)."""
+    global C_VOID
+    C_VOID = PF.C_VOID = C_UNSURE
+    PF.OUT = OUT
+    prompt(*prompt_pick)
+    PF.examples(); PF.playsafe(); PF.qual()
+
+
+def annot_pair(picks=(('seq2', 132), ('seq3', 615))):
+    """Annotator A vs B on frames near the median agreement (J about 0.65): frame | A | B | difference."""
+    fig, axes = plt.subplots(len(picks), 4, figsize=(10, 3.2 * len(picks)), gridspec_kw=dict(wspace=0.03, hspace=0.06))
+    for r, (seq, k) in enumerate(picks):
+        g = TR.native(k, seq)
+        pa, ka = TR.hand_label(seq, k)
+        pb, kb = label_B(seq, k)
+        x0, y0, x1, y1 = crop_box(seq, k, pad_x=0.3, pad_y=0.05)
+        def lab(p, keep):
+            v = tint(g, p, C_HAND, 0.65).astype(np.float32)
+            v[~keep] = 0.35 * v[~keep] + 0.65 * np.array(C_UNSURE, np.float32)
+            return v.astype(np.uint8)
+        d = np.repeat(g[..., None], 3, 2).astype(np.float32) * 0.6
+        a_only, b_only = pa & ~pb & ka & kb, pb & ~pa & ka & kb
+        d[a_only] = (230, 40, 200); d[b_only] = (0, 200, 230)
+        m = ka & kb
+        J = (pa & pb & m).sum() / ((pa | pb) & m).sum()
+        for c, img in enumerate((cv2.cvtColor(g, cv2.COLOR_GRAY2RGB), lab(pa, ka), lab(pb, kb), d.astype(np.uint8))):
+            ax = axes[r, c]; ax.imshow(img[y0:y1, x0:x1], aspect='auto'); ax.axis('off')
+            if r == 0:
+                ax.set_title(('frame', 'annotator A', 'annotator B', 'difference')[c], fontsize=16, loc='center')
+        axes[r, 3].text(0.97, 0.03, f'J {J:.2f}', transform=axes[r, 3].transAxes, ha='right', va='bottom', fontsize=15,
+                        color='white', fontweight='bold', bbox=dict(facecolor='#0b0b0b', alpha=0.7, lw=0, pad=3))
+    save(fig, 'annot_pair.png')
+
+
 def clip(seq='seq3', k=287, w=480):
     """One NFO window as a frame sequence with the GT box, for \\animategraphics in the talk (plots/talk/clip/f<i>.jpg),
     plus clip.mp4 for viewers without JavaScript."""
@@ -246,6 +285,7 @@ def clip(seq='seq3', k=287, w=480):
         cv2.imwrite(f'{OUT}/clip/f{i}.jpg', v, [cv2.IMWRITE_JPEG_QUALITY, 85])
         vw.write(v)
     vw.release()
+    open(f'{OUT}/clip/n.tex', 'w').write(f'\\def\\ClipLast{{{len(t["frames"]) - 1}}}\n')
     print('wrote', len(t['frames']), 'frames of', t['id'], 'to', f'{OUT}/clip/')
 
 
