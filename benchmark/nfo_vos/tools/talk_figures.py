@@ -230,6 +230,25 @@ def changemap(seq='seq4', k=43):
     save(fig, 'changemap.png')
 
 
+def clip(seq='seq3', k=287, w=480):
+    """One NFO window as a frame sequence with the GT box, for \\animategraphics in the talk (plots/talk/clip/f<i>.jpg),
+    plus clip.mp4 for viewers without JavaScript."""
+    t = clip_of(seq, k)
+    os.makedirs(f'{OUT}/clip', exist_ok=True)
+    s = w / 800
+    vw = cv2.VideoWriter(f'{OUT}/clip.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 10, (w, int(600 * s)))
+    boxes = BM.gt_boxes(seq)
+    for i, f in enumerate(t['frames']):
+        v = cv2.resize(cv2.cvtColor(TR.native(f, seq), cv2.COLOR_GRAY2BGR), (w, int(600 * s)), interpolation=cv2.INTER_AREA)
+        if f in boxes:
+            b = boxes[f]
+            cv2.rectangle(v, (int(b[0] * s), int(b[1] * s)), (int(b[2] * s), int(b[3] * s)), (60, 220, 60), 2)
+        cv2.imwrite(f'{OUT}/clip/f{i}.jpg', v, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        vw.write(v)
+    vw.release()
+    print('wrote', len(t['frames']), 'frames of', t['id'], 'to', f'{OUT}/clip/')
+
+
 if __name__ == '__main__':
     names = sys.argv[1:] or ['scenes', 'prompt', 'qual2', 'masksize_sam', 'davis']
     for n in names:
