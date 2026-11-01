@@ -46,15 +46,20 @@ def view(g, lab):
     return v.astype(np.uint8)
 
 
-def scenes(picks=(('seq2', 335), ('seq3', 367), ('seq4', 293))):     # seq1 native frames are not on the laptop
-    """One frame per NFO scene (scenes 2-4), hand-drawn person box in green."""
+def scenes(picks=(('seq2', 335), ('seq3', 367), ('seq4', 293)), box=True):     # seq1 native frames are not on the laptop
+    """One frame per NFO scene (scenes 2-4), hand-drawn person box in green (box=False: scenes_nobox.png)."""
     fig, axes = plt.subplots(1, len(picks), figsize=(4 * len(picks), 3.2), gridspec_kw=dict(wspace=0.03))
     for ax, (seq, k) in zip(axes, picks):
         v = cv2.cvtColor(TR.native(k, seq), cv2.COLOR_GRAY2RGB)
         b = BM.gt_boxes(seq)[k]
-        cv2.rectangle(v, (int(b[0]), int(b[1])), (int(b[2]), int(b[3])), (60, 220, 60), 4)
+        if box:
+            cv2.rectangle(v, (int(b[0]), int(b[1])), (int(b[2]), int(b[3])), (60, 220, 60), 4)
         ax.imshow(v); ax.axis('off')
-    save(fig, 'scenes.png')
+    save(fig, 'scenes.png' if box else 'scenes_nobox.png')
+
+
+def scenes_nobox():
+    scenes(box=False)
 
 
 def prompt(seq='seq3', k=287):
@@ -233,7 +238,7 @@ def changemap(seq='seq4', k=43):
 C_UNSURE = (230, 184, 0)     # the talk's single "unsure" colour (yellow); the poster uses grey
 
 
-def yellow(prompt_pick=('seq2', 132)):
+def yellow(prompt_pick=('seq3', 59)):
     """Talk copies of the poster's label figures with unsure in yellow: prompt.png (a frame with small unsure patches),
     examples.png, playsafe.png, qual.png (all to plots/talk/)."""
     global C_VOID
@@ -241,11 +246,13 @@ def yellow(prompt_pick=('seq2', 132)):
     PF.OUT = OUT
     prompt(*prompt_pick)
     PF.examples(); PF.playsafe(); PF.qual()
+    PF.playsafe((('seq4', 293),), arms=(('b0-c2', 'SAM2.1', PF.C_B0), ('adapter-pf', 'Layer-SAM', PF.C_OURS)),
+                name='qual1.png', pad_x=0.5, row_h=4.0)
 
 
-def annot_pair(picks=(('seq2', 132), ('seq3', 615))):
+def annot_pair(picks=(('seq3', 615),)):
     """Annotator A vs B on frames near the median agreement (J about 0.65): frame | A | B | difference."""
-    fig, axes = plt.subplots(len(picks), 4, figsize=(10, 3.2 * len(picks)), gridspec_kw=dict(wspace=0.03, hspace=0.06))
+    fig, axes = plt.subplots(len(picks), 4, figsize=(10, 3.2 * len(picks)), gridspec_kw=dict(wspace=0.03, hspace=0.06), squeeze=False)
     for r, (seq, k) in enumerate(picks):
         g = TR.native(k, seq)
         pa, ka = TR.hand_label(seq, k)
