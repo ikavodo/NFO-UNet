@@ -80,7 +80,7 @@ def jpr(m, person, keep):
     return tp / (tp + fp + fn), tp / max(tp + fp, 1), tp / max(tp + fn, 1)
 
 
-def examples(picks=(('seq2', 335), ('seq3', 367), ('seq4', 293))):   # moderate unsure share: 25 / 26 / 48 %
+def examples(picks=(('seq2', 335), ('seq3', 367), ('seq4', 293)), word='unsure'):   # moderate unsure share: 25 / 26 / 48 %
     """Top: whole frames (person box in green). Bottom: crop raw | crop with the hand label (green = visible person,
     grey = marked unsure by the annotator, ignored in scoring)."""
     fig = plt.figure(figsize=(9.3, 5.0))
@@ -98,7 +98,7 @@ def examples(picks=(('seq2', 335), ('seq3', 367), ('seq4', 293))):   # moderate 
         for j, img in enumerate((cv2.cvtColor(g, cv2.COLOR_GRAY2RGB), label_view(seq, k))):
             ax = fig.add_subplot(gs[1, 2 * c + j]); ax.imshow(img[y0:y1, x0:x1], aspect='auto'); ax.axis('off')
             if j:
-                ax.set_title(f'{unsure:.0%} unsure', fontsize=13, color='#52514e', loc='right')
+                ax.set_title(f'{unsure:.0%} {word}', fontsize=13, color='#52514e', loc='right')
     save(fig, 'examples.png')
 
 
@@ -117,7 +117,7 @@ def qual():
 
 
 def playsafe(picks=(('seq4', 293),), arms=(('b0-c2', 'SAM2.1 video', C_B0),), name='playsafe.png', label_rows=False,
-             pad_x=0.25, row_h=5.4):
+             pad_x=0.25, row_h=5.4, aspect='auto'):
     """Frame, human label, and each arm's mask with precision / recall, on hand frames inside a crossing."""
     n = 2 + len(arms)
     fig, axes = plt.subplots(len(picks), n, figsize=(9.3 * n / 4 if not label_rows else 7, row_h * len(picks) * (1 if not label_rows else 0.75)),
@@ -136,7 +136,7 @@ def playsafe(picks=(('seq4', 293),), arms=(('b0-c2', 'SAM2.1 video', C_B0),), na
             rgb = tuple(int(col[i:i + 2], 16) for i in (1, 3, 5))
             panes.append((tint(g, m, rgb, 0.65), aname, f'P {p:.0%}\nR {rc:.0%}'))
         for c, (img, title, note) in enumerate(panes):
-            ax = axes[r, c]; ax.imshow(img[y0:y1, x0:x1], aspect='auto'); ax.axis('off')
+            ax = axes[r, c]; ax.imshow(img[y0:y1, x0:x1], aspect=aspect); ax.axis('off')
             ax.set_title(title, fontsize=19, fontweight='bold' if note else 'normal')
             if note:
                 ax.text(0.03, 0.03, note, transform=ax.transAxes, fontsize=17, fontweight='bold', va='bottom',

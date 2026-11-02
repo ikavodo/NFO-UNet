@@ -245,9 +245,9 @@ def yellow(prompt_pick=('seq3', 59)):
     C_VOID = PF.C_VOID = C_UNSURE
     PF.OUT = OUT
     prompt(*prompt_pick)
-    PF.examples(); PF.playsafe(); PF.qual()
+    PF.examples(word='ambiguous'); PF.playsafe(pad_x=0.08, aspect='equal'); PF.qual()
     PF.playsafe((('seq4', 293),), arms=(('b0-c2', 'SAM2.1', PF.C_B0), ('adapter-pf', 'Layer-SAM', PF.C_OURS)),
-                name='qual1.png', pad_x=0.5, row_h=4.0)
+                name='qual1.png', pad_x=0.08, row_h=4.0, aspect='equal')
 
 
 def annot_pair(picks=(('seq3', 615),)):

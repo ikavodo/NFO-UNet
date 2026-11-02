@@ -188,3 +188,10 @@ docs/poster/poster_latex/*.pdf
 *.fdb_latexmk
 *.synctex.gz
 *:Zone.Identifier
+*.nav
+*.snm
+*.toc
+# Talk: third-party DAVIS figure (not ours), and the NFO clip frames / video (dropped from the talk, 24 MB)
+docs/poster/poster_latex/plots/talk/DAVIS-VOS.*
+docs/poster/poster_latex/plots/talk/clip/
+docs/poster/poster_latex/plots/talk/clip.mp4
