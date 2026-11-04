@@ -242,7 +242,7 @@ $J = \dfrac{|A \cap B|}{|A \cup B|} \approx 0.65$ \quad \Klein{Jaccard index (Io
 \medskip\raggedright
 \begin{itemize}
 \item tracking rewards the person's \textbf{extent}: a mask that misses limbs gives a small box $\to$ \textbf{recall}
-\item detection: past frames averaged \emph{inside the masks}, then YOLO (next slide): leaves inside a mask get averaged in $\to$ mostly \textbf{precision}
+\item detection rewards a \textbf{clean} mask: leaves inside it get averaged in (next slide) $\to$ \textbf{precision}
 \item[$\Rightarrow$] complementary: neither a box full of leaves nor a cautious mask wins both
 \end{itemize}
 \note[itemize]{
@@ -403,7 +403,7 @@ frame $t$ & integral image $C$ & support $a$
 \item the 6 frames before $t$, shifted by the tracker's velocity: a robust (change-gated), recency-weighted average
 \item support $a$: in how many registered frames a pixel differs from the empty scene
 \end{itemize}
-\Merke{Every registered pixel is evidence: the integral image is a memory bank of evidence, not of masks.}
+\Merke{Every registered pixel is evidence: the integral image remembers pixels, not masks.}
 \note[itemize]{
 \item Each past frame is shifted so the person lands where it is in frame $t$; averaged, the person adds up and the foliage blurs. As in the detection metric, but with the tracker instead of hand boxes.
 \item Not a plain mean: recent frames weigh more (weights $e^{-\text{age}/3.5}$; gait makes older frames drift), and a pixel enters only where it clearly differs from the empty scene (robust z-score against $B$, adaptive threshold), so foliage does not pile up. $C = \sum w G A / \sum w G$.
@@ -642,7 +642,7 @@ SAMURAI & .879 & .806 & .832 & .730 & & .770 & .647 \\
 \item PVS is cautious, and memory compounds it; a prompt every frame trades it for foliage
 \item Layer-SAM: motion layers instead of memory; best tracking, on par or better in detection
 \end{enumerate}
-\Merke{Remember pixels, not masks: collect the evidence first, then decide.}
+\Merke{No frame shows the whole person; together, the frames do.}
 \medskip
 \textbf{Open questions}
 \begin{itemize}\setlength{\itemsep}{1.5mm}
