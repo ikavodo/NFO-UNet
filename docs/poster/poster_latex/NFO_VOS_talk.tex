@@ -349,7 +349,7 @@ $J = \dfrac{|A \cap B|}{|A \cup B|} \approx 0.65$ \quad \Klein{Jaccard index (Io
 \Teil{Layer-SAM}
 
 \begin{frame}
-\frametitle{Motion layers instead of a mask memory}
+\frametitle{Motion layers}
 \centering\Schichten{1}
 
 \bigskip
@@ -357,7 +357,7 @@ $J = \dfrac{|A \cap B|}{|A \cup B|} \approx 0.65$ \quad \Klein{Jaccard index (Io
 \begin{itemize}
 \item static camera: foliage and background do not move; the person: about constant velocity $v$
 \item layer at velocity $0$: empty scene $\to$ \textbf{where}: a prompt every frame (tracking)
-\item layer at $v$: integral image $\to$ \textbf{what}: the person's appearance, which aids detection
+\item layer at $v$: integral image $\to$ \textbf{what}: the person's appearance (detection)
 \end{itemize}
 \Quelle{layers: Wang \& Adelson 1994}
 \note[itemize]{
@@ -389,7 +389,7 @@ $J = \dfrac{|A \cap B|}{|A \cup B|} \approx 0.65$ \quad \Klein{Jaccard index (Io
 \end{frame}
 
 \begin{frame}
-\frametitle{What: the integral image as a memory of pixels}
+\frametitle{What: the integral image}
 \centering
 \begin{tabular}{@{}c@{\hspace{10mm}}c@{\hspace{10mm}}c@{}}
 \includegraphics[height=4.2cm]{plots/nfo/inputs_0.jpg} &
@@ -400,7 +400,7 @@ frame $t$ & integral image $C$ & support $a$
 
 \medskip\raggedright
 \begin{itemize}
-\item a buffer of the 6 frames before $t$, \textbf{outside} SAM2.1, shifted by the tracker's velocity: a robust (change-gated), recency-weighted average
+\item the 6 frames before $t$, shifted by the tracker's velocity: a robust (change-gated), recency-weighted average
 \item support $a$: in how many registered frames a pixel differs from the empty scene
 \end{itemize}
 \Merke{Every registered pixel is evidence: the integral image remembers pixels, not masks.}
@@ -414,7 +414,7 @@ frame $t$ & integral image $C$ & support $a$
 \end{frame}
 
 \begin{frame}
-\frametitle{Layer-SAM: an image memory instead of a mask memory}
+\frametitle{Layer-SAM}
 \centering\resizebox{!}{7.0cm}{\input{plots/talk/architecture_lr.tex}}
 \note[itemize]{
 \item A new SAM2 architecture: the memory bank is removed; in its place the two motion layers. The tracker gives the prompt (where); the empty scene and the integral image go through the frozen encoder and an adapter (what); frozen SAM2.1 decides once per frame.
@@ -545,7 +545,7 @@ SAM2.1 & -- & $\checkmark$ & -- & -- & .628 & .596 & .814 \\
 
 \medskip\raggedright
 \begin{itemize}
-\item no mask memory (past frames kept as images, outside SAM2.1): best tracking, +0.10 AUC vs.\ SAMURAI (all 95\,\% CIs $> 0$)
+\item no mask memory: best tracking, +0.10 AUC vs.\ SAMURAI (all 95\,\% CIs $> 0$)
 \item detection: on par in confidence, highest AP50: both sides of the trade-off
 \item integral image: +0.03 tracking, +0.02 detection (every seed, all CIs $> 0$)
 \item cost: 61 vs.\ 53\,ms per frame (+15\,\%, laptop GPU)
@@ -640,7 +640,7 @@ SAMURAI & .879 & .806 & .832 & .730 & & .770 & .647 \\
 \item behind foliage: never a full view; patches stay ambiguous, annotators disagree
 \item NFO-VOS: masks scored on tracking and detection; hand masks as a probe
 \item PVS is cautious, and memory compounds it; a prompt every frame trades it for foliage
-\item Layer-SAM: past frames as images outside SAM2.1, not masks inside it; best tracking, on par or better in detection
+\item Layer-SAM: remembers images, not masks; best tracking, on par or better in detection
 \end{enumerate}
 \medskip
 \textbf{Open questions}
