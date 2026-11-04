@@ -349,7 +349,7 @@ $J = \dfrac{|A \cap B|}{|A \cup B|} \approx 0.65$ \quad \Klein{Jaccard index (Io
 \Teil{Layer-SAM}
 
 \begin{frame}
-\frametitle{Motion layers instead of memory}
+\frametitle{Motion layers instead of a mask memory}
 \centering\Schichten{1}
 
 \bigskip
@@ -400,7 +400,7 @@ frame $t$ & integral image $C$ & support $a$
 
 \medskip\raggedright
 \begin{itemize}
-\item the 6 frames before $t$, shifted by the tracker's velocity: a robust (change-gated), recency-weighted average
+\item a buffer of the 6 frames before $t$, \textbf{outside} SAM2.1, shifted by the tracker's velocity: a robust (change-gated), recency-weighted average
 \item support $a$: in how many registered frames a pixel differs from the empty scene
 \end{itemize}
 \Merke{Every registered pixel is evidence: the integral image remembers pixels, not masks.}
@@ -414,11 +414,11 @@ frame $t$ & integral image $C$ & support $a$
 \end{frame}
 
 \begin{frame}
-\frametitle{Layer-SAM: SAM2.1 with motion layers instead of memory}
+\frametitle{Layer-SAM: an image memory instead of a mask memory}
 \centering\resizebox{!}{7.0cm}{\input{plots/talk/architecture_lr.tex}}
 \note[itemize]{
 \item A new SAM2 architecture: the memory bank is removed; in its place the two motion layers. The tracker gives the prompt (where); the empty scene and the integral image go through the frozen encoder and an adapter (what); frozen SAM2.1 decides once per frame.
-\item Say: memory stores decisions; the integral image stores pixels. No decision is fed back.
+\item Say: there still is a memory, but of images, and it lives outside SAM2.1: a buffer of the last 6 frames, turned into the integral image before SAM2.1 sees anything. SAM2.1 never sees its own past masks. Memory stores decisions; the integral image stores pixels. No decision is fed back.
 \item One frozen encoder for all three images; the empty scene once per scene: two encoder passes per frame. 61\,ms per frame vs 53\,ms for SAM2.1 video on a laptop GPU.
 }
 \end{frame}
@@ -534,7 +534,7 @@ frame $t$ & integral image $C$ & support $a$
 \resizebox{0.9\textwidth}{!}{%
 \begin{tabular}{@{}l cccc c cc@{}}
  & & & empty & integral & \textbf{tracking} & \multicolumn{2}{c}{\textbf{detection}} \\
- & memory & tracker & scene & image & AUC & conf & AP50 \\\hline
+ & mask memory & tracker & scene & image & AUC & conf & AP50 \\\hline
 SAM2.1 & $\checkmark$ & -- & -- & -- & .571 & .666 & .869 \\
 SAMURAI & $\checkmark$ & -- & -- & -- & .579 & .663 & .863 \\
 SAM2.1 & $\checkmark$ & $\checkmark$ & -- & -- & .661 & .636 & .861 \\
@@ -545,7 +545,7 @@ SAM2.1 & -- & $\checkmark$ & -- & -- & .628 & .596 & .814 \\
 
 \medskip\raggedright
 \begin{itemize}
-\item no memory at all: best tracking, +0.10 AUC vs.\ SAMURAI (all 95\,\% CIs $> 0$)
+\item no mask memory (past frames kept as images, outside SAM2.1): best tracking, +0.10 AUC vs.\ SAMURAI (all 95\,\% CIs $> 0$)
 \item detection: on par in confidence, highest AP50: both sides of the trade-off
 \item integral image: +0.03 tracking, +0.02 detection (every seed, all CIs $> 0$)
 \item cost: 61 vs.\ 53\,ms per frame (+15\,\%, laptop GPU)
@@ -554,7 +554,7 @@ SAM2.1 & -- & $\checkmark$ & -- & -- & .628 & .596 & .814 \\
 \note[itemize]{
 \item Tracking: Layer-SAM vs SAMURAI +0.096 to +0.102 AUC per seed, every paired bootstrap CI above 0; also ahead of SAM2.1 with memory and a box every frame.
 \item Detection confidence vs SAMURAI: $-$0.001 to +0.008 per seed: on par. AP50 0.878 is the highest in the table, but no CI was computed for it.
-\item The trade-off of the probes in rows 1--4: memory best in detection, a box every frame better in tracking. Layer-SAM is on both sides at once: the tracker box alone lost detection; with the integral image it is back, without memory.
+\item The trade-off of the probes in rows 1--4: memory best in detection, a box every frame better in tracking. Layer-SAM is on both sides at once: the tracker box alone lost detection; with the integral image it is back, without a mask memory.
 \item Cost: one shared encoder pass per frame for the frame and one for the integral image (the empty scene once per scene); tracker and adapter are small. RTX PRO 4000 laptop GPU, batch 1.
 }
 \end{frame}
@@ -640,7 +640,7 @@ SAMURAI & .879 & .806 & .832 & .730 & & .770 & .647 \\
 \item behind foliage: never a full view; patches stay ambiguous, annotators disagree
 \item NFO-VOS: masks scored on tracking and detection; hand masks as a probe
 \item PVS is cautious, and memory compounds it; a prompt every frame trades it for foliage
-\item Layer-SAM: motion layers instead of memory; best tracking, on par or better in detection
+\item Layer-SAM: past frames as images outside SAM2.1, not masks inside it; best tracking, on par or better in detection
 \end{enumerate}
 \medskip
 \textbf{Open questions}
@@ -652,7 +652,7 @@ SAMURAI & .879 & .806 & .832 & .730 & & .770 & .647 \\
 \note[itemize]{
 \item A static wall of leaves in front of a moving person: no frame shows all of it, not at the prompt, not later. Some patches mix person and leaf too finely to resolve, for any model and for annotators (J 0.65).
 \item For tracking and detection, the person pixels in such patches are worth more than the leaf pixels cost. A PVS model leaves them out, stores that mask, and conditions the next one on it: the masks shrink.
-\item What we know about the scene (static camera, moving person) separates it into layers by motion; their images accumulate evidence, and deciding once per frame from them, without memory, works better.
+\item What we know about the scene (static camera, moving person) separates it into layers by motion; their images accumulate evidence, and deciding once per frame from them, without a mask memory, works better.
 \item Moving camera: there is no single empty scene any more; the background has to be aligned frame to frame.
 \item Turning, stopping, waving: one shift per frame no longer lines the person up; the integral image would need a motion per body part.
 \item One encoder pass: today the integral image goes through the encoder separately. Averaging features instead of pixels would save that pass, but the encoder is non-linear and a feature cell is larger than most gaps: open whether it works.

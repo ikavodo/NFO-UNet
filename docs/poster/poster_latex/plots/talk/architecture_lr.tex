@@ -11,7 +11,7 @@
     feat/.style={draw=SamEncD, fill=SamEnc!70, line width=0.7pt, minimum size=6.5mm, inner sep=0pt}]
   % inputs
   \foreach \n/\y/\f/\l in {X/2.5/inputs_0/{frame $t$\\{\color{black!60}tracker box}},
-                           C/0/inputs_2/{integral image\\{\color{black!60}6 past frames}},
+                           C/0/inputs_2/{integral image\\{\color{black!60}buffer of 6 past frames}},
                            B/-2.5/inputs_1/{empty scene\\{\color{black!60}once per scene}}} {
     \node[inner sep=0pt] (\n) at (0, \y) {\includegraphics[height=2.1cm]{plots/nfo/\f.jpg}};
     \node[anchor=east, align=right] at (-1.0, \y) {\l};
