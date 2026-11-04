@@ -117,8 +117,9 @@ def qual():
 
 
 def playsafe(picks=(('seq4', 293),), arms=(('b0-c2', 'SAM2.1 video', C_B0),), name='playsafe.png', label_rows=False,
-             pad_x=0.25, row_h=5.4, aspect='auto'):
-    """Frame, human label, and each arm's mask with precision / recall, on hand frames inside a crossing."""
+             pad_x=0.25, row_h=5.4, aspect='auto', f1=False):
+    """Frame, human label, and each arm's mask with precision / recall (f1: F1 first, P / R below), on hand frames
+    inside a crossing."""
     n = 2 + len(arms)
     fig, axes = plt.subplots(len(picks), n, figsize=(9.3 * n / 4 if not label_rows else 7, row_h * len(picks) * (1 if not label_rows else 0.75)),
                              gridspec_kw=dict(wspace=0.04, hspace=0.15), squeeze=False)
@@ -134,12 +135,13 @@ def playsafe(picks=(('seq4', 293),), arms=(('b0-c2', 'SAM2.1 video', C_B0),), na
             m = arm_mask(arm, t, k)
             _, p, rc = jpr(m, person, keep)
             rgb = tuple(int(col[i:i + 2], 16) for i in (1, 3, 5))
-            panes.append((tint(g, m, rgb, 0.65), aname, f'P {p:.0%}\nR {rc:.0%}'))
+            note = f'F1 {2 * p * rc / max(p + rc, 1e-9):.0%}\nP {p:.0%} R {rc:.0%}' if f1 else f'P {p:.0%}\nR {rc:.0%}'
+            panes.append((tint(g, m, rgb, 0.65), aname, note))
         for c, (img, title, note) in enumerate(panes):
             ax = axes[r, c]; ax.imshow(img[y0:y1, x0:x1], aspect=aspect); ax.axis('off')
             ax.set_title(title, fontsize=19, fontweight='bold' if note else 'normal')
             if note:
-                ax.text(0.03, 0.03, note, transform=ax.transAxes, fontsize=17, fontweight='bold', va='bottom',
+                ax.text(0.03, 0.03, note, transform=ax.transAxes, fontsize=15 if f1 else 17, fontweight='bold', va='bottom',
                         color='white', bbox=dict(facecolor='#0b0b0b', alpha=0.7, lw=0, pad=4))
     save(fig, name)
 

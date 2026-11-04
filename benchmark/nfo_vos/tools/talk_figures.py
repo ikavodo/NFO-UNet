@@ -198,6 +198,34 @@ def masksize_sam():
     save(fig, 'masksize_sam.png')
 
 
+def masksize_trend(kmax=60):
+    """masksize_sam as fitted trends: per crossing the least-squares slope of log(mask / box area) over frames 6...end
+    (mask_fill.trends), mean over the 32 crossings with its 95 % CI over passes, drawn as size relative to frame 6.
+    SAM2.1 variants only."""
+    from benchmark.nfo_vos.eval import mask_fill as MF
+    F = MF.fills(list(csv.DictReader(open(MF.CSV))))
+    S = MF.trends(F)
+    k = np.arange(MF.K0, kmax + 1)
+    fig, ax = plt.subplots(figsize=(9.3, 5.0))
+    for a, label, col, ls in (('b0-c2', 'SAM2.1: memory, one prompt', C_B0, '-'), ('t1-c2', 'SAMURAI: memory, one prompt', C_SAMURAI, '-'),
+                              ('trk', 'box every frame, no memory', C_TRK, '--'), ('b0trk-c2', 'box every frame + memory', '#8a5cc2', '--')):
+        m, lo, hi, *_ = MF.boot_mean(S[a], list(S[a]))
+        y = lambda s: np.exp(s / 10 * (k - MF.K0))
+        if a == 'b0-c2':
+            ax.fill_between(k, y(lo), y(hi), color=col, alpha=0.12, lw=0)
+        ax.plot(k, y(m), ls, color=col, lw=3, label=label)
+        ax.annotate(f'{(np.exp(m) - 1) * 100:+.0f}% / 10 frames', (k[-1], y(m)[-1]), xytext=(8, 0), textcoords='offset points',
+                    va='center', fontsize=15, color=col, annotation_clip=False, fontweight='bold')
+    ax.axhline(1, color='#52514e', lw=1, ls=':')
+    ax.set_xlim(MF.K0, kmax); ax.set_ylim(0.75, 1.15)
+    ax.set_xlabel('frames since the prompt'); ax.set_ylabel('mask area / box area\n(frame 6 = 1)')
+    ax.legend(loc='lower left', frameon=False, fontsize=14, handlelength=1.6)
+    ax.grid(axis='y', color='#e6e5e0', lw=0.8); ax.set_axisbelow(True)
+    for s in ('top', 'right'):
+        ax.spines[s].set_visible(False)
+    save(fig, 'masksize_trend.png')
+
+
 def recogN4(ns=(1, 3, 5, 7, 11, 15, 21)):
     """poster_figures.recogN with SAMURAI instead of the memoryless tracker arm: YOLO11 AP50 vs N, 32 crossings."""
     PF.OUT = OUT
@@ -247,7 +275,7 @@ def yellow(prompt_pick=('seq3', 59)):
     prompt(*prompt_pick)
     PF.examples(word='ambiguous'); PF.playsafe(pad_x=0.08, aspect='equal'); PF.qual()
     PF.playsafe((('seq4', 293),), arms=(('b0-c2', 'SAM2.1', PF.C_B0), ('adapter-pf', 'Layer-SAM', PF.C_OURS)),
-                name='qual1.png', pad_x=0.08, row_h=4.0, aspect='equal')
+                name='qual1.png', pad_x=0.08, row_h=4.0, aspect='equal', f1=True)
 
 
 def annot_pair(picks=(('seq3', 615),)):

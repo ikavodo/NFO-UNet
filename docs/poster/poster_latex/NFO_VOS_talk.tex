@@ -7,10 +7,10 @@
 % \Platzhalter{w}{h}{what}: an image still to be chosen. Figures: plots/nfo/ (poster), plots/talk/ (talk only;
 % benchmark/nfo_vos/tools/talk_figures.py).
 %
-% Story: SVOS, masks, PVS -> fragmented occlusion (never a full view) -> hard, humans disagree -> modal, keep the
-% evidence -> what can go wrong with PVS -> NFO-VOS (start positions, three scores, integral image in detection)
-% -> memory vs where (trade-off) -> motion layers -> tracker -> two layers -> Layer-SAM (evidence, not memory) -> adapter,
-% synthetic data, loss -> results -> conclusion.
+% Story: fragmented occlusion -> which pixels are person (modal, ambiguous patches / pixels) -> annotators disagree
+% -> PVS instead, but how well? -> NFO-VOS (prompt places, two complementary downstream tasks: tracking ~ recall,
+% detection ~ precision; hand masks as a probe) -> probes: cautious, memory shrinks masks -> motion layers: tracker (where) + integral image
+% (what, a memory of pixels) -> Layer-SAM, adapter, data, loss -> results, detection vs N, probe again, components.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 \PassOptionsToPackage{english,ngerman}{babel} % English hyphenation, selected after \begin{document}
@@ -28,8 +28,8 @@
 \renewcommand{\LehrstuhlName}{Computer Vision Group}
 \renewcommand{\PraesentationFusszeileZusatz}{}
 
-\title{Seeing through Foliage}
-\newcommand{\Untertitel}{Video object segmentation under natural fragmented occlusion}
+\title{NFO-VOS: Video Segmentation under Fragmented Occlusion}
+\newcommand{\Untertitel}{A benchmark, and why memory fails behind foliage}
 \author{{\PraesentationSchriftgroesseGross\selectfont\Untertitel}\\[8mm]Ido Akov}
 \institute[]{Computer Vision Group, TUM\\Data Science and Artificial Intelligence (DSS-DSAI), AIT}
 \date{}
@@ -79,24 +79,76 @@
 \end{tikzpicture}}
 
 
+
 \PraesentationMasterStandard
 \PraesentationTitelseite
 
-%=========================================================================================== I. VOS, PVS
-\Teil{Segmenting objects in video}
+%=========================================================================================== I. the problem
+\Teil{Fragmented occlusion}
 
 \begin{frame}
-\frametitle{Semi-supervised video object segmentation (SVOS)}
-\centering\includegraphics[width=0.74\textwidth]{plots/talk/DAVIS-VOS.png}
+\frametitle{Fragmented occlusion}
+\centering\only<1>{\includegraphics[width=0.96\textwidth]{plots/talk/scenes_nobox.png}}%
+\only<2>{\includegraphics[width=0.96\textwidth]{plots/talk/scenes.png}}
+
+\medskip\raggedright
+\only<1>{\textbf{Where is the person?} \quad \Klein{(localisation: one box per frame)}}%
+\only<2>{%
+\begin{itemize}
+\item a wall of leaves in front of a moving person: \textbf{never a full view}
+\item unlike usual occlusion: not one occluder hiding a part, not gone and back
+\item tasks: localise, track, detect a person: search and rescue under canopy, forest-edge surveillance, wildlife cameras
+\end{itemize}}
+\note[itemize]{
+\item Overlay 1: ask the room to find the person in each frame; then reveal the boxes.
+\item ``Where is the person?'' is localisation / detection: a box. Hard here, but the easier of the two questions of this talk.
+\item Partial and full occlusion both assume the object was seen clearly at some point. Under fragmented occlusion that view never exists: in the median hand-labelled frame about 60\,\% of the body is visible, always in pieces.
+}
+\end{frame}
+
+\begin{frame}
+\frametitle{A harder task: which pixels are person?}
+\vspace*{2mm}
+\begin{columns}[T]
+\begin{column}{0.46\textwidth}
+\centering\includegraphics[height=6.6cm]{plots/talk/prompt.png}
+\end{column}
+\begin{column}{0.52\textwidth}
+\begin{itemize}
+\item \textbf{modal} segmentation: the visible person only, nothing invented behind the leaves
+\item fragments arbitrarily small: a perfect box is still mostly foliage
+\item \textbf{ambiguous patches}: person and leaf mixed, too fine to label pixel by pixel \textcolor[RGB]{230,184,0}{$\blacksquare$}
+\item \textbf{ambiguous pixels}: camouflage (grayscale, texture, light)
+\end{itemize}
+\end{column}
+\end{columns}
+\note[itemize]{
+\item From where to which pixels: localisation needs one box, segmentation a decision for every pixel. Ask the room which pixels belong to the person.
+\item Why segment at all: a mask says which pixels to trust; it feeds tracking (the box around it) and detection (later in the talk).
+\item Modal segmentation: the visible part. (Amodal would fill in the hidden body from a prior learnt on other images: more compute, hallucinated pixels from priors that do not match this scene, and not what detection on the visible evidence needs.)
+\item Two kinds of ambiguity. Patches: a twig crosses a leg; inside the patch there are person pixels and leaf pixels, but separating them is not worth a human's time. Pixels: a dark trouser against a dark trunk, in grayscale: camouflage, undecidable even when looked at.
+\item Left: the hand-drawn box and the human label of one frame. Green: person. Yellow: the annotator could not decide. This colour code holds for the whole talk. On scenes 2--4 the ambiguous area is a median 0.21 of the person's box, as large as the visible part (0.22).
+}
+\end{frame}
+
+\begin{frame}
+\frametitle{Annotators disagree}
+\centering
+\vspace*{1mm}
+\includegraphics[width=0.74\textwidth]{plots/talk/annot_pair.png}\\[1mm]
+\Klein{green: person,\ yellow: ambiguous;\quad difference: \textcolor{magenta}{\textbf{A only}}, \textcolor{cyan!70!blue}{\textbf{B only}}}\\[1mm]
+$J = \dfrac{|A \cap B|}{|A \cup B|} \approx 0.65$ \quad \Klein{Jaccard index (IoU), ambiguous ignored}
 
 \medskip
-given: the object's mask in frame $t_0$ \quad$\longrightarrow$\quad wanted: its mask in every later frame\\
-\Quelle{DAVIS: Perazzi et al.\ 2016}
+\raggedright
+\begin{itemize}
+\item minutes per frame, and the answer depends on the annotator $\to$ not worth doing by hand
+\end{itemize}
 \note[itemize]{
-\item SVOS: give the object's mask (or box, or clicks) in the first frame; the model keeps segmenting it in every later frame, with one consistent identity.
-\item Any object, not a fixed set of classes. Benchmarks: DAVIS, YouTube-VOS, MOSE, LVOS.
-\item A mask, not a box: a box says where the object is, a mask says which pixels belong to it.
-\item Image source: to fill in.
+\item Two independent annotators, brush in CVAT, 15 frames of scenes 2 and 3. This frame is typical (median J 0.65).
+\item J, the Jaccard index or intersection over union: 1 = identical, 0 = disjoint. Pixels marked ambiguous are left out.
+\item They agree on the clear parts; they differ at the fragments, and in what they call ambiguous: a label of the ambiguous patches is a choice, not a fact.
+\item Expensive, slow, and not reproducible. The natural move: let a model do it.
 }
 \end{frame}
 
@@ -108,141 +160,20 @@ given: the object's mask in frame $t_0$ \quad$\longrightarrow$\quad wanted: its 
 \medskip
 \raggedright
 \begin{itemize}
-\item one prompt (box + point) $\to$ masks for the whole video
-\item SAM2: a \textbf{memory} of its own past masks; SAMURAI manages it better
+\item a \textbf{visual} prompt on one frame (box + point) $\to$ masks for the whole video
+\item a \textbf{memory} of its own past masks; SAMURAI: which ones to keep
+\item trained on clearly visible objects: how well does it do behind foliage? \textbf{unknown}
 \end{itemize}
 \Quelle{SAMURAI: Yang et al.\ 2024}
 \note[itemize]{
-\item Dense masks by hand cost minutes per frame. A promptable model turns one cheap prompt into masks for the whole video; this is now how dense labels are made (SAM2's own data engine).
-\item SAM2: image encoder, prompt encoder, mask decoder, and a memory bank of past frame features fused with SAM2's own past masks. Every frame attends to that memory.
-\item SAMURAI (Kalman motion to pick memories); also SAM2Long, DAM4SAM: all improve \emph{which} past decisions to keep. SAMURAI is our baseline throughout.
-\item Question for the rest of the talk: what happens to this design when the object is behind foliage?
+\item A promptable model turns one cheap prompt into masks for the whole video; this is now how dense labels are made (SAM2's own data engine).
+\item The prompt is visual: a box and a click on the object in the first frame. (Why SAM2.1, not SAM 3: smaller and faster, and a text prompt does not help at this occlusion density.)
+\item SAM2: image encoder, prompt encoder, mask decoder, and a memory bank of past frame features fused with SAM2's own past masks. Every frame attends to that memory. SAMURAI (Kalman motion to pick memories), SAM2Long, DAM4SAM: all improve \emph{which} past decisions to keep. SAMURAI is our baseline throughout.
+\item Its training data never shows an object that is never fully visible, and never asks for ambiguous patches. How well it does here is unknown, and we cannot score it against hand masks (previous slide). We need a benchmark.
 }
 \end{frame}
 
-%=========================================================================================== II. fragmented occlusion
-\Teil{Fragmented occlusion}
-
-\begin{frame}
-\frametitle{Fragmented occlusion}
-\centering\only<1>{\includegraphics[width=0.96\textwidth]{plots/talk/scenes_nobox.png}}%
-\only<2>{\includegraphics[width=0.96\textwidth]{plots/talk/scenes.png}}
-
-\medskip\raggedright
-\only<1>{\textbf{Where is the person?}}%
-\only<2>{%
-\begin{itemize}
-\item partial occlusion: one occluder hides a part
-\item full occlusion: the object disappears and returns
-\item fragmented: a wall of leaves, \textbf{never a full view}
-\end{itemize}}
-\note[itemize]{
-\item First ask the room to find the person in each frame; then reveal.
-\item SVOS models are trained for partial and full occlusion. Both assume the object was seen clearly at some point, typically at the prompt, and memory holds that view.
-\item Under fragmented occlusion that view never exists. Hand labels: in the median frame about 60\,\% of the body is visible, always in pieces.
-\item Where it matters: surveillance at forest edges, search and rescue under canopy, wildlife cameras, fences and blinds.
-}
-\end{frame}
-
-\begin{frame}
-\frametitle{Why fragmented occlusion is hard}
-\vspace*{2mm}
-\begin{columns}[T]
-\begin{column}{0.46\textwidth}
-\centering\includegraphics[height=6.6cm]{plots/talk/prompt.png}
-\end{column}
-\begin{column}{0.52\textwidth}
-\begin{itemize}
-\item fragments can be arbitrarily small
-\item leaves move, light changes; grayscale
-\item a perfect box still holds mostly foliage
-\item some pixels mix person and leaf: \textbf{ambiguous} \textcolor[RGB]{230,184,0}{$\blacksquare$}
-\end{itemize}
-\end{column}
-\end{columns}
-\note[itemize]{
-\item Say: even with a perfect prompt, segmentation is uncertain.
-\item Fragments can be as small as a pixel; a segmentation network decides on a coarse grid and bridges or drops them.
-\item Left: the hand-drawn box and the human label of the same frame. Green: person. Yellow: the annotator could not decide (here: the legs behind twigs). This colour code holds for the whole talk.
-}
-\end{frame}
-
-\begin{frame}
-\frametitle{Annotator agreement}
-\centering
-\vspace*{1mm}
-\only<1>{\includegraphics[width=0.86\textwidth]{plots/talk/annot_pair_q.png}\\[2mm]
-\textbf{Which pixels are person?}}%
-\only<2>{\includegraphics[width=0.86\textwidth]{plots/talk/annot_pair.png}\\[1mm]
-\Klein{green: person,\ yellow: ambiguous;\quad difference: \textcolor{magenta}{\textbf{A only}}, \textcolor{cyan!70!blue}{\textbf{B only}}}\\[1mm]
-$J = \dfrac{|A \cap B|}{|A \cup B|} \approx 0.65$ \quad \Klein{Jaccard index (IoU), ambiguous ignored}}
-\note[itemize]{
-\item Overlay 1: ask the room which pixels belong to the person. Overlay 2: two independent annotators.
-\item J, the Jaccard index or intersection over union, is the standard segmentation score: 1 = identical, 0 = disjoint. Pixels marked ambiguous are left out.
-\item Second annotator: independent, brush in CVAT, 15 frames of scenes 2 and 3. This frame is typical (median J 0.65).
-\item They agree on the clear parts; they differ at the fragments, and in what they call ambiguous.
-\item What a good label is depends on the annotator, and it takes long. The natural move: let a prompted model do it.
-}
-\end{frame}
-
-\begin{frame}
-\frametitle{Modal segmentation and ambiguous pixels}
-\vspace*{2mm}
-\begin{columns}[T]
-\begin{column}{0.56\textwidth}
-\includegraphics[width=\linewidth]{plots/talk/examples.png}
-\end{column}
-\begin{column}{0.42\textwidth}
-\begin{itemize}
-\item \textbf{modal}: the visible person; nothing invented behind the leaves
-\item limited resolution, complex geometry: some pixels are ambiguous
-\item ambiguous patches still hold person pixels
-\item still useful for downstream tasks (tracking, detection)
-\end{itemize}
-\end{column}
-\end{columns}
-\note[itemize]{
-\item Modal segmentation: the visible part. (Amodal would fill in the hidden body from a prior learnt on other images: hallucinated pixels, mixing the layers. We do not do that.)
-\item Yellow: what the annotator marked ambiguous. On scenes 2--4 a median 0.21 of the person's box, as large as the visible part (0.22). These are not regions without a person; they are patches of person and leaf too fine to separate.
-\item Including such a patch is partly wrong (the leaf pixels) and partly right (the person pixels). For tracking and detection the person pixels count more than the leaf pixels cost.
-\item Same trade-off as in medical imaging: a missed lesion costs more than a false alarm, so the visible lesion gets a margin, but nothing is drawn where none was seen.
-}
-\end{frame}
-
-\begin{frame}
-\frametitle{PVS under fragmented occlusion}
-\vspace*{2mm}
-\begin{columns}[T]
-\begin{column}{0.52\textwidth}
-\centering\includegraphics[width=\linewidth]{plots/talk/playsafe.png}
-\end{column}
-\begin{column}{0.46\textwidth}
-\centering
-\begin{tikzpicture}[node distance=7mm]
-\node[sam] (s) {SAM2.1};
-\node[box, left=6mm of s] (f) {frame $t$};
-\node[box, right=6mm of s] (m) {mask $t$};
-\node[box, below=9mm of s] (mem) {memory};
-\draw[ar] (f) -- (s); \draw[ar] (s) -- (m);
-\draw[ar] (m) |- (mem); \draw[ar] (mem) -- (s);
-\end{tikzpicture}
-\raggedright
-\begin{itemize}
-\item ambiguous pixels are left out
-\item that mask goes into memory, and conditions the next
-\item no clear frame to fall back on
-\end{itemize}
-\end{column}
-\end{columns}
-\note[itemize]{
-\item SAM2.1 video, prompted once with box + point; frame 60 of a run in scene 4, against the human label.
-\item Trained on clear objects, the model keeps only what it is sure about: the opposite of what we want here.
-\item Memory is a closed loop: the next mask is conditioned on the cautious ones before it. Memory management (SAMURAI and others) chooses among past decisions; that helps when some past frame was clear. Here none is.
-\item Expect the masks to shrink; the benchmark will show it.
-}
-\end{frame}
-
-%=========================================================================================== III. benchmark
+%=========================================================================================== II. benchmark
 \Teil{The NFO-VOS benchmark}
 
 \begin{frame}
@@ -258,59 +189,69 @@ $J = \dfrac{|A \cap B|}{|A \cup B|} \approx 0.65$ \quad \Klein{Jaccard index (Io
 \end{itemize}
 \Quelle{NFO: Pflugfelder \& Auer, AVSS 2021}
 \note[itemize]{
-\item NFO (Pflugfelder \& Auer 2021): 4 scenes, fixed camera; per scene 8 runs (walk and run, left and right, each twice): 32 runs, 44--155 frames each; a hand-drawn person box in every frame. Made for person localisation.
-\item One run (scene 3), four moments of the crossing, with the hand box. The full clip: plots/talk/clip.mp4.
-\item NFO-VOS extends it into a segmentation benchmark. Hand masks: 43 frames, and two annotators agree only at J 0.65: not a basis for ranking methods. Boxes exist for every frame, so we score masks through tasks the boxes can check.
+\item NFO (Pflugfelder \& Auer 2021): 4 scenes, fixed camera; per scene 8 crossings (walk and run, left and right, each twice): 32 crossings, 44--155 frames each; a hand-drawn person box in every frame. Made for person localisation.
+\item One crossing (scene 3), four moments, with the hand box. The full clip: plots/talk/clip.mp4.
+\item NFO-VOS turns it into a video segmentation benchmark. Hand masks: 43 frames, and annotators agree only at J 0.65: not a basis for ranking methods. Boxes exist for every frame, so we score masks through tasks the boxes can check.
 }
 \end{frame}
 
 \begin{frame}
-\frametitle{Prompt placement}
+\frametitle{Where the prompt is given}
 \centering
 \begin{tikzpicture}[x=2.1cm, y=0.85cm]
 \pgfmathsetseed{7}
 \foreach \i in {0,...,79} { \pgfmathsetmacro{\g}{20 + 70*rnd} \fill[TUMGruen!\g!white] (\i*0.12, 4.6) rectangle (\i*0.12 + 0.12, 5.3); }
-\node[anchor=west, font=\PraesentationSchriftgroesseKlein\selectfont] at (9.7, 4.95) {foliage};
-\foreach \y/\l/\d/\x in {3.6/{walk, right}/1/0.4, 2.6/{walk, left}/-1/6.9, 1.6/{run, right}/1/4.6, 0.6/{run, left}/-1/2.3} {
+\node[above, font=\PraesentationSchriftgroesseKlein\selectfont] at (4.8, 5.3) {the same foliage for all crossings of a scene};
+\foreach \y/\l/\d/\x in {3.6/{crossing 1: walk}/1/0.4, 2.6/{crossing 2: walk}/-1/6.9, 1.6/{crossing 3: run}/1/4.6, 0.6/{crossing 4: run}/-1/2.3} {
   \node[left, font=\PraesentationSchriftgroesseKlein\selectfont] at (0,\y) {\l};
   \ifnum\d=1 \draw[ar, black!25] (0.05,\y) -- (9.6,\y); \draw[ar, black!70, line width=1.2pt] (\x,\y) -- (9.6,\y);
   \else \draw[ar, black!25] (9.6,\y) -- (0.05,\y); \draw[ar, black!70, line width=1.2pt] (\x,\y) -- (0.05,\y); \fi
   \draw[densely dotted, black!50] (\x, \y) -- (\x, 4.6);
   \fill[black] (\x,\y) circle (3pt);
 }
+\fill[black] (0.1, -0.3) circle (3pt);
+\node[anchor=west, font=\PraesentationSchriftgroesseKlein\selectfont] at (0.15, -0.3) {box + point prompt};
+\draw[ar, black!70, line width=1.2pt] (3.2, -0.3) -- (3.9, -0.3);
+\node[anchor=west, font=\PraesentationSchriftgroesseKlein\selectfont] at (3.95, -0.3) {segmented};
 \end{tikzpicture}
 
 \medskip\raggedright
 \begin{itemize}
-\item all runs of a scene pass the same foliage
-\item each kind of run is prompted at a different offset $\to$ at a different visibility
+\item per scene 8 crossings (walk / run, left / right, each twice), directions alternating; all pass the same foliage
+\item each kind of crossing gets its prompt at a different \textbf{place} $\to$ at a different visibility
 \end{itemize}
 \note[itemize]{
-\item Shown: one run of each kind in one scene. Dot: where the prompt is given; dark: the part of the run that is segmented.
-\item Visibility at the same position correlates r $\approx$ 0.65--0.73 between runs. So the runs are variations of one crossing, and we use them to sample the starting point: offsets 0, $\frac14$, $\frac12$, $\frac34$ of a 40-frame step. Twins start at the same offset.
-\item Then we watch what happens over the rest of the run: we cannot assume the person is well visible when prompted.
+\item The labels are the crossings of one scene in recording order, not prompts: the prompt is always a box and a point, at the dot. Dark: the part of the crossing that is segmented.
+\item Visibility at the same position correlates r $\approx$ 0.65--0.73 between crossings. So the crossings are variations of one passage, and we use them to sample the starting place: offsets 0, $\frac14$, $\frac12$, $\frac34$ of a 40-frame step. The two crossings of the same kind (gait and direction) start at the same place.
+\item Then we watch the rest of the crossing: we cannot assume the person is well visible when prompted, and the object is never fully visible anywhere.
 }
 \end{frame}
 
 \begin{frame}
-\frametitle{Evaluation: three downstream tasks}
+\frametitle{Evaluation: two downstream tasks}
 \centering
-\begin{tabular}{@{}c@{\hspace{12mm}}c@{\hspace{12mm}}c@{}}
-\includegraphics[height=4.4cm]{plots/nfo/bench_track.jpg} &
-\includegraphics[height=4.4cm]{plots/nfo/bench_pixels.jpg} &
-\includegraphics[height=4.4cm]{plots/nfo/bench_recog.jpg} \\[1mm]
-\textbf{tracking} & \textbf{segmentation}$^{*}$ & \textbf{detection} \\
-\Klein{box around the mask vs.\ hand box} & \Klein{J vs.\ hand masks} & \Klein{YOLO11 person detector}\\
-\Klein{success AUC} & & \Klein{confidence, AP50}
+\begin{tabular}{@{}c@{\hspace{12mm}}c@{\hspace{16mm}}c@{}}
+\includegraphics[height=4.0cm]{plots/nfo/bench_track.jpg} &
+\includegraphics[height=4.0cm]{plots/nfo/bench_recog.jpg} &
+{\color{black!45}\includegraphics[height=3.0cm]{plots/nfo/bench_pixels.jpg}} \\[1mm]
+\textbf{tracking} & \textbf{detection} & \color{black!60}probe: hand masks \\
+\Klein{box around the mask vs.\ hand box} & \Klein{YOLO11 person detector} & \Klein{J, precision, recall}\\
+\Klein{success AUC} & \Klein{confidence, AP50} & \Klein{43 frames, not a task}
 \end{tabular}
 
 \medskip\raggedright
-\Klein{$^{*}$ experimental: 43 hand frames, two annotators. Reported for both, not used to rank.}
+\begin{itemize}
+\item tracking rewards the person's \textbf{extent}: a mask that misses limbs gives a small box $\to$ \textbf{recall}
+\item detection: past frames averaged \emph{inside the masks}, then YOLO (next slide): leaves inside a mask get averaged in $\to$ mostly \textbf{precision}
+\item[$\Rightarrow$] complementary: neither a box full of leaves nor a cautious mask wins both
+\end{itemize}
 \note[itemize]{
 \item Tracking: the box around the mask against the hand box, every frame; success rate over IoU thresholds, area under the curve (as in LaSOT).
-\item Segmentation: J against the hand masks, ambiguous ignored. Shown for both annotators.
 \item Detection: run the YOLO11 person detector on the image built from the masks (next slide). Confidence: score of the best detection overlapping the hand box (IoU $\ge$ 0.5). AP50: average precision at IoU 0.5 over all frames.
-\item (Called \emph{recognition} on the poster and in the briefing; same metric.)
+\item Why complementary: the box around the mask only reaches the person's true extent if the mask reaches every limb, so tracking rewards recall; a mask with foliage in it puts leaves into the integrated image the detector sees, so detection rewards precision. (Detection still needs enough of the person: YOLO is trained on whole people, a few separate limbs are out of distribution.)
+\item Together they check each other: tracking alone would reward boxes full of leaves, detection alone would reward caution. The results table will show exactly this split: SAM2.1 with memory is best in detection, SAM2.1 given a box every frame is better in tracking.
+\item Hand masks: not a task (43 frames, two annotators at J 0.65), but a probe of how a model behaves: does it take the ambiguous patches or leave them out?
+\item (Detection is called \emph{recognition} on the poster and in the briefing; same metric.)
 }
 \end{frame}
 
@@ -336,86 +277,99 @@ $J = \dfrac{|A \cap B|}{|A \cup B|} \approx 0.65$ \quad \Klein{Jaccard index (Io
 \note[itemize]{
 \item This is the integral image of airborne optical sectioning: drone views of a forest registered on the ground and averaged, so the canopy blurs away and the ground comes into focus. Here the registration is on the moving person.
 \item Masked mean: a pixel is averaged over the frames whose mask covers it; elsewhere the plain mean. Masked with SAM2.1 here. Example: $N = 7$, scene 2; the benchmark uses $N = 5$.
-\item Confidence: score of the best person detection that overlaps the hand box (IoU $\ge$ 0.5), 0 if none. AP50: average precision of the person detections against the hand boxes, a hit at IoU $\ge$ 0.5, over all frames.
-\item AP50: single frame 0.32, plain mean of 5 frames 0.66, masked 0.87.
+\item AP50: single frame 0.32, plain mean of 5 frames 0.66, masked 0.87. Remember the integral image: it comes back as part of the method.
 }
 \end{frame}
 
-%=========================================================================================== IV. what Layer-SAM needs
-\Teil{Where and what}
+%=========================================================================================== III. probing PVS
+\Teil{Probing PVS}
 
 \begin{frame}
-\frametitle{Mask size after a single prompt}
+\frametitle{Probe 1: PVS is cautious}
+\vspace*{2mm}
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\centering\includegraphics[width=\linewidth]{plots/talk/playsafe.png}
+\end{column}
+\begin{column}{0.46\textwidth}
+\centering
+\begin{tikzpicture}[node distance=7mm]
+\node[sam] (s) {SAM2.1};
+\node[box, left=6mm of s] (f) {frame $t$};
+\node[box, right=6mm of s] (m) {mask $t$};
+\node[box, below=9mm of s] (mem) {memory};
+\draw[ar] (f) -- (s); \draw[ar] (s) -- (m);
+\draw[ar] (m) |- (mem); \draw[ar] (mem) -- (s);
+\end{tikzpicture}
+\raggedright
+\begin{itemize}
+\item ambiguous patches are left out: precision $>$ recall
+\item that mask goes into memory, and conditions the next
+\item no clear frame to fall back on
+\end{itemize}
+\end{column}
+\end{columns}
+\note[itemize]{
+\item The hand-mask probe. SAM2.1 video, prompted once with box + point; frame 60 of a crossing in scene 4, against the human label.
+\item Over all hand frames: precision 0.89, recall 0.80. Trained on clear objects, the model keeps only what it is sure about: the opposite of what the downstream tasks want.
+\item Memory is a closed loop: the next mask is conditioned on the cautious ones before it. Memory management (SAMURAI and others) chooses among past decisions; that helps when some past frame was clear. Here none is.
+\item Hint: a memory of cautious masks can only give more of the same. Next probe: does it?
+}
+\end{frame}
+
+\begin{frame}
+\frametitle{Probe 2: memory and mask size}
 \vspace*{2mm}
 \only<1>{%
 \vspace*{2cm}\centering
-{\PraesentationSchriftgroesseGross\selectfont Prompted once, with a perfect box.\\[3mm] 100 frames later, the mask is \dots\\[3mm] bigger \quad the same \quad smaller?}}%
+{\PraesentationSchriftgroesseGross\selectfont Prompted once, with a perfect box.\\[3mm] 50 frames later, the mask is \dots\\[3mm] bigger \quad the same \quad smaller?}}%
 \only<2>{%
 \begin{columns}[T]
 \begin{column}{0.62\textwidth}
-\includegraphics[width=\linewidth]{plots/talk/masksize_sam.png}
+\includegraphics[width=\linewidth]{plots/talk/masksize_trend.png}
 \end{column}
 \begin{column}{0.36\textwidth}
 \begin{itemize}
-\item memory, one prompt: masks shrink
-\item SAMURAI: the same
-\item a box every frame: size kept
-\item[$\Rightarrow$] we need a box every frame, without hand boxes
+\item size = mask area / hand box area, relative to frame 6 (1 = no change)
+\item memory, one prompt: $-4\,\%$ per 10 frames, SAMURAI too
+\item tracker prompt every frame: size kept
 \end{itemize}
 \end{column}
 \end{columns}}
 \note[itemize]{
 \item Overlay 1: let the room guess first.
-\item Mask area / box area relative to frame 6, median over the 32 runs, 95\,\% CI. SAM2.1 variants only.
-\item Prompted once, memory masks shrink about 4\,\% per 10 frames: the cautious masks compound. SAMURAI's memory management changes nothing.
-\item Telling SAM2.1 where to look in every frame (a box per frame, here from our tracker) keeps the size, with or without memory.
+\item Mask area over the hand box's area: invariant to the person's apparent size. Divided by its own value at frame 6 so every crossing starts at 1. Per crossing a straight-line fit of the log size, mean over the 32 crossings; band: 95\,\% CI over crossings (SAM2.1).
+\item Prompted once, memory masks shrink about 4\,\% per 10 frames: the cautious masks compound, a memory collapse. SAMURAI's memory management changes nothing. The drop is front-loaded: about 20\,\% within the first 30 frames, then level.
+\item Telling SAM2.1 where to look in every frame (a box per frame, here from a tracker, next section) keeps the size, with or without memory. The price, in the results table: a box around a fragmented person holds foliage, SAM2.1 takes some of it, and detection drops (0.666 $\to$ 0.596 without memory).
+\item So memory helps detection (precision) and hurts tracking (extent); a box every frame does the opposite: the complementary tasks of the benchmark, in one trade-off.
 }
 \end{frame}
 
-\begin{frame}
-\frametitle{Tracking vs.\ detection}
-\centering
-\begin{tabular}{@{}lcc@{}}
-SAM2.1 & tracking AUC & detection conf \\\hline
-memory, one prompt & .571 & \textbf{.666} \\
-box every frame, no memory & .628 & .596 \\
-box every frame + memory & \textbf{.661} & .636
-\end{tabular}
-
-\bigskip\raggedright
-\begin{itemize}
-\item a box every frame: the whole person, and foliage $\to$ tracking up, detection down
-\item memory: what the person looks like $\to$ detection partly back
-\item[$\Rightarrow$] we also need \emph{what} the person looks like, without a memory of masks
-\end{itemize}
-\note[itemize]{
-\item A box every frame: tracking up (+0.057 without memory, +0.089 with), detection down: a box around a fragmented person holds foliage, and SAM2.1 takes some of it.
-\item This is also why the benchmark has both tasks: tracking alone would reward boxes full of leaves, detection alone would reward caution.
-\item So two things are needed: where (a box every frame) and what (evidence of the person's appearance). Both come from one idea: motion layers.
-}
-\end{frame}
+%=========================================================================================== IV. Layer-SAM
+\Teil{Layer-SAM}
 
 \begin{frame}
-\frametitle{Motion layers}
+\frametitle{Motion layers instead of memory}
 \centering\Schichten{1}
 
 \bigskip
 \raggedright
 \begin{itemize}
-\item static camera: foliage and background do not move
-\item the person: approximately constant velocity $v$
-\item align past frames at velocity $0$ $\to$ where; at $v$ $\to$ what
+\item static camera: foliage and background do not move; the person: about constant velocity $v$
+\item layer at velocity $0$: empty scene $\to$ \textbf{where}: a prompt every frame (tracking)
+\item layer at $v$: integral image $\to$ \textbf{what}: the person's appearance, no memory of masks (detection)
 \end{itemize}
 \Quelle{layers: Wang \& Adelson 1994}
 \note[itemize]{
 \item Wang \& Adelson (1994): describe a video as layers, each with its own motion, ordered in depth. Here: foliage in front, the person in the middle, the background behind.
 \item Static camera: foliage and background move with velocity 0 (up to flutter). The person's motion is more complicated (gait, articulation); a constant horizontal velocity holds for people crossing a static camera's view at a distance: true for this data set.
-\item Next two slides: one image per layer. Velocity 0 gives the empty scene, and from it a tracker (where). Velocity $v$ gives the integral image of the person (what).
+\item What we need, from the probes: the extent in every frame (memory shrinks it: tracking suffers) and the person's appearance (what memory provides: detection), without feeding cautious masks back.
+\item Each layer gives one of the two. Velocity 0 gives the empty scene, and from it a tracker: a prompt every frame (where, recall, tracking). Velocity $v$ gives the integral image of the person: a memory of pixels (what, precision, detection).
 }
 \end{frame}
 
 \begin{frame}
-\frametitle{Empty scene and tracker}
+\frametitle{Where: empty scene and tracker}
 \centering
 \IfFileExists{plots/talk/changemap.png}{\includegraphics[height=4.4cm]{plots/talk/changemap.png}}{\Platzhalter{9cm}{4.6cm}{change map}}\\
 \Klein{frame $t$ + tracker box\hspace{10mm}empty scene $B$\hspace{10mm}change $1 - \cos(F_t, F_B)$}
@@ -423,88 +377,92 @@ box every frame + memory & \textbf{.661} & .636
 \medskip\raggedright
 \begin{itemize}
 \item empty scene $B$: median of frames without the person
-\item change: how unlike $B$, per SAM2.1 feature cell
-\item tracker: a fixed-size box moves to where change is largest, near a constant-velocity prediction
+\item change: how unlike $B$ frame $t$ is, per SAM2.1 feature cell
+\item tracker: a fixed-size box moves to where change is largest, near a constant-velocity prediction $\to$ a prompt every frame
 \end{itemize}
 \note[itemize]{
 \item Empty scene $B$: the static layers at velocity 0, a plain median of person-free frames. Encoded once by SAM2.1's encoder.
-\item Change map: per feature cell, 1 minus the cosine similarity between frame $t$'s and the empty scene's features. The same idea as feature-based anomaly detection: distance to a ``normal'' reference in a pretrained feature space.
+\item Change map: per feature cell (stride 16), 1 minus the cosine similarity between frame $t$'s and the empty scene's features. Like feature-based anomaly detection (e.g.\ PatchCore, Roth et al.\ 2022): each patch's pretrained feature is compared with features of a ``normal'' reference, here the empty scene, and large distance means something new is there. One frame, coarse: it says where, not which pixels.
 \item A box of the prompt's size slides over the change map near the predicted position (robust line fit through the last 8 positions) and moves to where the mean change is largest.
-\item Shares the frame's encoder pass. Centre error 10 px on NFO. Where is solved; which pixels inside the box are person is not. The tracker also gives the person's velocity $v$: next slide.
+\item Shares the frame's encoder pass. Centre error 10 px on NFO. This fixes the shrinking masks of probe 2. It also gives the person's velocity $v$: next slide.
 }
 \end{frame}
 
 \begin{frame}
-\frametitle{Integral image of the person}
+\frametitle{What: the integral image as a memory of pixels}
 \centering
 \begin{tabular}{@{}c@{\hspace{10mm}}c@{\hspace{10mm}}c@{}}
-\includegraphics[height=5.0cm]{plots/nfo/inputs_0.jpg} &
-\includegraphics[height=5.0cm]{plots/nfo/inputs_2.jpg} &
-\includegraphics[height=5.0cm]{plots/nfo/inputs_3.jpg} \\
-frame $t$ & integral image $C$ & evidence mass $a$
+\includegraphics[height=4.2cm]{plots/nfo/inputs_0.jpg} &
+\includegraphics[height=4.2cm]{plots/nfo/inputs_2.jpg} &
+\includegraphics[height=4.2cm]{plots/nfo/inputs_3.jpg} \\
+frame $t$ & integral image $C$ & support $a$
 \end{tabular}
 
 \medskip\raggedright
 \begin{itemize}
-\item the 6 frames before $t$, shifted by the tracker's velocity, averaged
-\item as in the detection score, but with the tracker instead of hand boxes
-\item same history as SAM2's memory: pixels, not masks
-\item evidence mass $a$: how many past frames saw the person at each pixel
+\item the 6 frames before $t$, shifted by the tracker's velocity: a robust (change-gated), recency-weighted average
+\item support $a$: in how many registered frames a pixel differs from the empty scene
 \end{itemize}
+\Merke{Every registered pixel is evidence: the integral image is a memory bank of evidence, not of masks.}
 \note[itemize]{
-\item Each past frame is shifted so the person lands where it is in frame $t$; averaged, the person adds up and the foliage blurs.
-\item Two refinements, for the person layer only: recent frames weigh more (gait makes older frames drift); a pixel enters only where it clearly differs from the empty scene, so foliage does not pile up. The evidence mass $a$ is the weighted count of frames that entered at each pixel (bright: seen often, through gaps; dark: never seen, or only foliage). The adapter gets it as an extra input: it says where $C$ can be trusted.
-\item 6 frames: the number of past frames SAM2 keeps in memory. Same history, but the pixels instead of the decisions.
-\item Both images are the canonical images of a joint alignment of one layer; static camera and constant velocity make the alignment trivial.
+\item Each past frame is shifted so the person lands where it is in frame $t$; averaged, the person adds up and the foliage blurs. As in the detection metric, but with the tracker instead of hand boxes.
+\item Not a plain mean: recent frames weigh more (weights $e^{-\text{age}/3.5}$; gait makes older frames drift), and a pixel enters only where it clearly differs from the empty scene (robust z-score against $B$, adaptive threshold), so foliage does not pile up. $C = \sum w G A / \sum w G$.
+\item Support $a = \sum w G$: the weighted fraction of the registered frames in which this pixel passed the change gate, a per-pixel vote over time (a histogram of agreement along the registered stack). It is the accumulated weight of a running weighted average, as in volumetric fusion (Curless \& Levoy 1996). Bright: seen often, through gaps; dark: never seen, or only foliage. It tells the adapter where $C$ can be trusted.
+\item Different from the tracker's change: that is one frame, in feature space, per 16-pixel cell, and says where the person is. Support is per pixel, across 6 aligned frames, and says how much evidence $C$ has there.
+\item 6 frames: the number of past frames SAM2 keeps in memory. Same history, but the pixels instead of the decisions. This is the main point of the talk.
 }
 \end{frame}
 
-%=========================================================================================== V. Layer-SAM
-\Teil{Layer-SAM}
-
 \begin{frame}
-\frametitle{Layer-SAM}
-\centering\resizebox{!}{7.4cm}{\input{plots/talk/architecture_lr.tex}}
+\frametitle{Layer-SAM: SAM2.1 with motion layers instead of memory}
+\centering\resizebox{!}{7.0cm}{\input{plots/talk/architecture_lr.tex}}
 \note[itemize]{
-\item The tracker gives the prompt (where); the empty scene and the integral image are the two layers; frozen SAM2.1 decides once per frame.
-\item Say: memory stores decisions; the integral image stores pixels. Memory stores masks that already threw the ambiguous pixels away; the integral image brings the information back every frame. No decision is fed back.
+\item A new SAM2 architecture: the memory bank is removed; in its place the two motion layers. The tracker gives the prompt (where); the empty scene and the integral image go through the frozen encoder and an adapter (what); frozen SAM2.1 decides once per frame.
+\item Say: memory stores decisions; the integral image stores pixels. No decision is fed back.
 \item One frozen encoder for all three images; the empty scene once per scene: two encoder passes per frame. 61\,ms per frame vs 53\,ms for SAM2.1 video on a laptop GPU.
 }
 \end{frame}
 
 \begin{frame}
-\frametitle{Adapter architecture}
+\frametitle{The adapter}
 \centering
-\resizebox{!}{5.6cm}{\begin{tikzpicture}[x=1cm, y=1cm, font=\PraesentationSchriftgroesseKlein\selectfont,
+\resizebox{0.8\textwidth}{!}{\begin{tikzpicture}[x=1cm, y=0.8cm, font=\PraesentationSchriftgroesseKlein\selectfont,
     lay/.style={draw=black!60, fill=black!5, rounded corners=2pt, line width=0.7pt, align=center, minimum height=9mm, inner sep=3pt},
-    our/.style={lay, draw=ColOurs, fill=ColOurs!10}]
-  \foreach \s/\y in {16/2.4, 8/0, 4/-2.4} {
-    \node[lay, minimum width=3.4cm] (in\s) at (1.0, \y) {$F_t,\ F_C,\ F_B,\ a$\\{\color{black!60}stride \s}};
-    \node[our] (p\s) at (4.3, \y) {$1{\times}1$ conv};
-    \node[our, minimum width=5.0cm] (b\s) at (8.6, \y) {$2\times$ [$3{\times}3$ conv, GroupNorm, GELU]\\{\color{black!60}64 channels}};
-    \node[our] (o\s) at (12.9, \y) {$1{\times}1$ conv\\{\color{black!60}zero init}};
-    \node[circle, draw=black!80, inner sep=0pt, minimum size=5mm] (pl\s) at (14.6, \y) {$+$};
-    \node[anchor=west] (r\s) at (15.0, \y) {$\hat F_t^{(\s)}$};
-    \draw[ar] (in\s) -- (p\s); \draw[ar] (p\s) -- (b\s); \draw[ar] (b\s) -- (o\s); \draw[ar] (o\s) -- (pl\s);
-    \draw[ar, black!50] (14.6, \y + 0.9) node[above] {$F_t^{(\s)}$} -- (pl\s);
-  }
-  \draw[ar] (b16.south) -- node[right] {upsample $\times 2$} (b8.north);
-  \draw[ar] (b8.south) -- node[right] {upsample $\times 2$} (b4.north);
+    frz/.style={lay, draw=black!50, fill=black!8},
+    our/.style={lay, draw=ColOurs, fill=ColOurs!10, line width=1.2pt}]
+  \node[frz, minimum width=3.6cm] (in) at (0, 1.6) {\Ice\ encoder features\\$F_t,\ F_C,\ F_B$ \ {\color{black!60}strides 16, 8, 4}};
+  \node[lay, minimum width=3.6cm] (a) at (0, 0) {support $a$};
+  \node[our, minimum width=3.6cm, minimum height=3.6cm] (ad) at (5, -0.2) {\Fire\ \textbf{adapter}\\[1mm]small CNN, FPN-like:\\coarse $\to$ fine\\[1mm]{\color{black!60}0.7\,M, starts at 0}};
+  \draw[ar] (in.east) -- (ad.west |- in.east);
+  \draw[ar] (a.east) -- (ad.west |- a.east);
+  % output 1: feature correction
+  \node[circle, draw=black!80, inner sep=0pt, minimum size=6mm] (p1) at (9, 0.8) {$+$};
+  \node[frz] (ft) at (9, 2.9) {$F_t$};
+  \draw[ar] (ft) -- (p1);
+  \draw[ar] (ad.east |- p1) -- node[above] {correction} (p1);
+  \node[frz, minimum width=3.0cm, minimum height=3.6cm] (dec) at (13.2, -0.6) {\Ice\ \textbf{mask}\\\textbf{decoder}};
+  \draw[ar] (p1.east) -- node[above, align=center] {features\\{\color{black!60}16, 8, 4}} (p1.east -| dec.west);
+  % output 2: prompt correction
+  \node[circle, draw=black!80, inner sep=0pt, minimum size=6mm] (p2) at (9, -2.0) {$+$};
+  \node[frz, align=center] (tok) at (9, -4.0) {\Ice\ prompt encoder\\{\color{black!60}tracker box + point}};
+  \draw[ar] (tok) -- (p2);
+  \draw[ar] (ad.east |- p2) -- node[above] {shift $\delta$} (p2);
+  \draw[ar] (p2.east) -- node[above] {prompt} (p2.east -| dec.west);
+  \node[inner sep=0pt] (M) at (16.4, 0) {\includegraphics[height=2.0cm]{plots/nfo/inputs_6.jpg}};
+  \draw[ar] (dec.east) -- (M.west);
 \end{tikzpicture}}
 
 \medskip\raggedright
 \begin{itemize}
-\item inputs: features of frame, integral image, empty scene; evidence mass $a$ of the integral image
-\item output: a correction to SAM2.1's features at each stride; an MLP shifts the tracker's point prompt
-\item starts at zero: exactly SAM2.1 + tracker; 0.7\,M parameters, SAM2.1 frozen
+\item a small CNN next to the frozen ViT: adds what SAM2.1 does not see in frame $t$ alone
+\item prompt head: an MLP on the integral image's mean feature (weighted by $a$) shifts the point token
+\item zero-initialised: starts as SAM2.1 + tracker
 \end{itemize}
 \note[itemize]{
-\item A decoder-style CNN over SAM2.1's multi-scale features, coarse (stride 16, 256 channels) to fine (stride 4, 32 channels).
-\item At each stride: a shared $1{\times}1$ convolution projects the three feature maps; concatenated with the differences frame minus integral image and frame minus empty scene, and the evidence mass $a$ of the integral image (how many frames contributed per pixel).
-\item Two $3{\times}3$ convolutions with GroupNorm and GELU; the coarser level's output is upsampled and concatenated into the next finer one.
-\item A $1{\times}1$ output convolution, initialised to zero, maps back to SAM2.1's channels; its output is added to the frame's features. At step 0 the adapter adds nothing.
-\item Point shift: a 2-layer MLP on the integral image's mean feature (weighted by evidence), zero-initialised last layer, added to the point token from the tracker.
-\item 0.7\,M parameters in total. What it learns: where frame $t$ differs from the empty scene and agrees with the integral image, that is person evidence.
+\item Zoom into the blue block of Layer-SAM. Closest familiar design: a feature pyramid network (FPN) top-down path: at three resolutions of SAM2.1's features, from coarse to fine, each level also gets the upsampled coarser one. Not a ResNet: no backbone of its own, it reads SAM2.1's features.
+\item Output: a correction added to frame $t$'s features at each resolution; SAM2.1's decoder uses the coarsest as its image embedding and the two finer ones as its high-resolution skips. Second output: the prompt head, a 2-layer MLP on the integral image's stride-16 features averaged with the support as weights (one 256-d vector: what the person looks like here). Its output $\delta$ is added to the embedding of the tracker's point after the prompt encoder; the tracker's box and point position stay as they are. It reads the encoder's $F_C$ directly, not an FPN level: one module, two independent outputs.
+\item Zero-initialised output layers (as in ControlNet): at step 0 the adapter adds nothing, so training starts from SAM2.1 + tracker. 0.7\,M parameters; SAM2.1 frozen.
+\item What it learns: where frame $t$ differs from the empty scene and agrees with the integral image, that is person evidence.
 \item Training needs pixel-exact visible masks of people behind foliage. Nobody has them; we make them.
 }
 \end{frame}
@@ -549,7 +507,7 @@ frame $t$ & integral image $C$ & evidence mass $a$
 \begin{itemize}
 \item from small-lesion segmentation in medicine: a miss costs more than a false alarm
 \item Focal Tversky: $1 - \dfrac{TP}{TP + 0.3\,FP + 0.7\,FN}$ \ (+ per-pixel focal loss)
-\item hidden, next to a visible fragment: \textbf{ignored}, the ambiguous band
+\item hidden, next to a visible fragment: \textbf{ignored}, the ambiguous patch
 \item hidden, far from any fragment: background, weight 0.3
 \end{itemize}
 \medskip
@@ -558,83 +516,51 @@ frame $t$ & integral image $C$ & evidence mass $a$
 \end{column}
 \end{columns}
 \note[itemize]{
-\item Same priority as on the ``modal segmentation'' slide. In lesion segmentation the target is small and scattered, and plain Dice under-weights misses; the Tversky index weights false negatives (0.7) above false positives (0.3). Focal: raised to 0.75, as in Abraham \& Khan.
-\item Plus a per-pixel focal cross-entropy ($\gamma = 2$, person pixels weighted about 2:1), scaled by 20 as in SAM's recipe so the per-pixel term matters next to the overlap term.
-\item Pixel weights: visible person and background 1; hidden person within 8 px of a visible fragment 0 (the annotators' ambiguous band, yellow); hidden person far from any fragment 0.3, counted as background: modal, but not harshly.
+\item Against PVS's caution (probe 1), a missed person pixel costs more than a leaf pixel; precision comes from the empty scene and the integral image. In lesion segmentation the target is small and scattered, and plain Dice under-weights misses; the Tversky index weights false negatives (0.7) above false positives (0.3). Focal: raised to 0.75, as in Abraham \& Khan.
+\item Pixel weights: visible person and background 1; hidden person within 8 px of a visible fragment 0: a synthetic ambiguous patch, it must hold some person pixels next to the true positives, so it is not penalised either way, like a time-constrained annotator who marks it yellow; hidden person far from any fragment 0.3, counted as background: modal, but not harshly.
+\item Plus a per-pixel focal cross-entropy ($\gamma = 2$, person pixels weighted about 2:1), scaled by 20 as in SAM's recipe.
 \item AdamW, learning rate $3\cdot10^{-4}$, weight decay $10^{-4}$, cosine schedule; up to 32 target frames per clip. Checkpoint at step 200, chosen on scene 1; scenes 2--4 are the test.
 \item Rejected: a precision-leaning focal default (recall 0.76 $\rightarrow$ 0.61), a balanced loss (J $-$0.026 on scenes 2--4).
 }
 \end{frame}
 
-%=========================================================================================== VI. results
+%=========================================================================================== V. results
 \Teil{Results}
-
-\begin{frame}
-\frametitle{Qualitative comparison}
-\vspace*{4mm}\centering\includegraphics[height=6.4cm]{plots/talk/qual1.png}
-\note[itemize]{
-\item The frame from the ``PVS under fragmented occlusion'' slide again (scene 4, frame 60), against the human label; precision P and recall R in the corners.
-\item SAM2.1 keeps the clearest fragments; Layer-SAM marks the fragments the annotator marked, at a small cost in precision.
-}
-\end{frame}
 
 \begin{frame}
 \frametitle{Results on NFO-VOS}
 \centering
 \setlength{\tabcolsep}{6pt}
-\resizebox{0.85\textwidth}{!}{%
-\begin{tabular}{@{}l c cc cc@{}}
- & \textbf{tracking} & \multicolumn{2}{c}{\textbf{segmentation}$^{*}$} & \multicolumn{2}{c}{\textbf{detection}} \\
- & AUC & J$_A$ & J$_B$ & conf & AP50 \\\hline
-SAM2.1 (memory) & .571 & .733 & \textbf{.657} & .666 & .869 \\
-SAMURAI & .579 & .730 & .647 & .663 & .863 \\
-SAM2.1 + tracker box + memory & .661 & .745 & .614 & .636 & .861 \\
-SAM2.1 + tracker box & .628 & .685 & .588 & .596 & .814 \\
-\color{ColOurs}\textbf{Layer-SAM (no memory)} & \color{ColOurs}\textbf{.678} & \color{ColOurs}\textbf{.756} & \color{ColOurs}.649 & \color{ColOurs}\textbf{.667} & \color{ColOurs}\textbf{.878}
+\resizebox{0.9\textwidth}{!}{%
+\begin{tabular}{@{}l cccc c cc@{}}
+ & & & empty & integral & \textbf{tracking} & \multicolumn{2}{c}{\textbf{detection}} \\
+ & memory & tracker & scene & image & AUC & conf & AP50 \\\hline
+SAM2.1 & $\checkmark$ & -- & -- & -- & .571 & .666 & .869 \\
+SAMURAI & $\checkmark$ & -- & -- & -- & .579 & .663 & .863 \\
+SAM2.1 & $\checkmark$ & $\checkmark$ & -- & -- & .661 & .636 & .861 \\
+SAM2.1 & -- & $\checkmark$ & -- & -- & .628 & .596 & .814 \\
+\color{black!60}Layer-SAM, no integral image & -- & $\checkmark$ & $\checkmark$ & -- & .647 & .651 & .859 \\ % AP50 per seed .871 / .854 / .853 (fullpass recog_N5_uniform_meanfill_fp.csv)
+\color{ColOurs}\textbf{Layer-SAM} & \color{ColOurs}-- & \color{ColOurs}$\checkmark$ & \color{ColOurs}$\checkmark$ & \color{ColOurs}$\checkmark$ & \color{ColOurs}\textbf{.678} & \color{ColOurs}\textbf{.667} & \color{ColOurs}\textbf{.878}
 \end{tabular}}
 
 \medskip\raggedright
 \begin{itemize}
 \item no memory at all: best tracking, +0.10 AUC vs.\ SAMURAI (all 95\,\% CIs $> 0$)
-\item segmentation$^{*}$: +0.02--0.03 $J_A$ vs.\ SAMURAI (all CIs $> 0$); on par in $J_B$
-\item detection: on par in confidence, highest AP50
-\item cost: 61\,ms per frame vs.\ 53\,ms for SAM2.1 with memory (+15\,\%, laptop GPU)
+\item detection: on par in confidence, highest AP50: both sides of the trade-off
+\item integral image: +0.03 tracking, +0.02 detection (every seed, all CIs $> 0$)
+\item cost: 61 vs.\ 53\,ms per frame (+15\,\%, laptop GPU)
 \end{itemize}
-\Klein{32 runs, 4 scenes; Layer-SAM: mean of 3 seeds. $^{*}$ A: 43 frames (scenes 1--4), B: 15 frames (scenes 2, 3).}
+\Klein{tracker: box + point prompt every frame. 32 crossings; Layer-SAM: 3 seeds.}
 \note[itemize]{
 \item Tracking: Layer-SAM vs SAMURAI +0.096 to +0.102 AUC per seed, every paired bootstrap CI above 0; also ahead of SAM2.1 with memory and a box every frame.
-\item CIs: paired window bootstrap per seed vs SAMURAI (resampling runs/clips). Segmentation, annotator A: +0.022 to +0.029 J per seed, every CI above 0; the gain is recall (0.86 vs 0.81) at slightly lower precision (0.86 vs 0.88). Annotator B: 15 frames, no CI; 0.649 vs 0.647 SAMURAI, 0.657 SAM2.1: on par.
 \item Detection confidence vs SAMURAI: $-$0.001 to +0.008 per seed: on par. AP50 0.878 is the highest in the table, but no CI was computed for it.
-\item The point: Layer-SAM uses no memory whatsoever; integrated pixels carry what memory would carry, without compounding caution.
-\item Cost: one shared encoder pass per frame for the frame and one for the integral image (the empty scene once per scene); tracker and adapter are small. 61\,ms vs 53\,ms per frame for SAM2.1 video, RTX PRO 4000 laptop GPU, batch 1.
+\item The trade-off of the probes in rows 1--4: memory best in detection, a box every frame better in tracking. Layer-SAM is on both sides at once: the tracker box alone lost detection; with the integral image it is back, without memory.
+\item Cost: one shared encoder pass per frame for the frame and one for the integral image (the empty scene once per scene); tracker and adapter are small. RTX PRO 4000 laptop GPU, batch 1.
 }
 \end{frame}
 
 \begin{frame}
-\frametitle{Ablation}
-\vspace*{2mm}
-\begin{columns}[T]
-\begin{column}{0.64\textwidth}
-\includegraphics[width=\linewidth]{plots/nfo/ablation.png}
-\end{column}
-\begin{column}{0.34\textwidth}
-\begin{itemize}
-\item tracker: where
-\item empty scene: precision
-\item integral image: recall
-\end{itemize}
-\end{column}
-\end{columns}
-\note[itemize]{
-\item From SAM2.1 video to Layer-SAM, one change per row (J here: annotator A, all 43 frames).
-\item Tracker prompts: tracking up, precision down. Removing memory: everything down.
-\item Adapter with the empty scene only: precision 0.80 $\rightarrow$ 0.88.
-\item Integral image: recall 0.81 $\rightarrow$ 0.85; tracking +0.019 to +0.038 and detection +0.009 to +0.022 per seed.
-}
-\end{frame}
-
-\begin{frame}
-\frametitle{Detection vs.\ number of integrated frames}
+\frametitle{Detection vs.\ number of integrated frames $N$}
 \vspace*{2mm}
 \begin{columns}[T]
 \begin{column}{0.58\textwidth}
@@ -643,50 +569,95 @@ SAM2.1 + tracker box & .628 & .685 & .588 & .596 & .814 \\
 \begin{column}{0.4\textwidth}
 \begin{itemize}
 \item one frame: AP50 .32; three frames: about .8
-\item Layer-SAM best up to $N = 7$; the benchmark uses 5
-\item many frames: the plain mean wins, masks only add their errors
+\item Layer-SAM best for every $N \le 7$, not only at the benchmark's 5
+\item many frames ($N \ge 11$): the plain mean wins, masks only add their errors
 \end{itemize}
 \end{column}
 \end{columns}
 \note[itemize]{
-\item YOLO11 AP50 vs the number of integrated frames $N$, 32 runs (Layer-SAM: one seed).
-\item Integration is what makes detection work. $N = 5$ is where SAM2.1 and SAMURAI score best: the fair choice for the baselines.
-\item At 3 frames Layer-SAM leads (0.81 vs 0.78); at long $N$ it falls below SAM2.1 (0.71 vs 0.77 at 21), probably its lower precision: any foliage its masks include is averaged in.
-\item From $N$ 11 the plain mean wins outright (0.95 at 21): with true motion and enough frames, no mask is needed.
+\item Generalises the detection score over $N$: YOLO11 AP50 vs the number of integrated frames, 32 crossings (Layer-SAM: one seed).
+\item $N = 5$ is where SAM2.1 and SAMURAI score best: the fair choice for the baselines. Layer-SAM leads at every short $N$ (at 3: 0.81 vs 0.78), where masks matter.
+\item At long $N$ it falls below SAM2.1 (0.71 vs 0.77 at 21), probably its lower precision: any foliage its masks include is averaged in. From $N$ 11 the plain mean wins outright (0.95 at 21): with true motion and enough frames, no mask is needed.
 }
 \end{frame}
 
-%=========================================================================================== VII. conclusion
+\begin{frame}
+\frametitle{Probe 1 again: less cautious?}
+\vspace*{2mm}
+\centering\includegraphics[height=4.1cm]{plots/talk/qual1.png}
+
+\medskip
+\setlength{\tabcolsep}{6pt}
+\resizebox{0.6\textwidth}{!}{%
+\begin{tabular}{@{}l cccc c cc@{}}
+ & \multicolumn{4}{c}{annotator A, 43 frames} & & \multicolumn{2}{c}{B, 15 frames} \\
+ & P & R & F1 & J & & F1 & J \\\hline
+SAM2.1 (memory) & \textbf{.893} & .796 & .834 & .733 & & \textbf{.778} & \textbf{.657} \\
+SAMURAI & .879 & .806 & .832 & .730 & & .770 & .647 \\
+\color{ColOurs}\textbf{Layer-SAM} & \color{ColOurs}.861 & \color{ColOurs}\textbf{.851} & \color{ColOurs}\textbf{.851} & \color{ColOurs}\textbf{.756} & & \color{ColOurs}.770 & \color{ColOurs}.649
+\end{tabular}}
+
+\medskip\raggedright
+\Klein{F1 = harmonic mean of precision and recall; experimental: few frames, two annotators. Layer-SAM: mean of 3 seeds.}
+\note[itemize]{
+\item The frame from probe 1 again (scene 4, frame 60): SAM2.1 keeps the clearest fragments (precision 96\,\%, recall 64\,\%); Layer-SAM takes the fragments the annotator marked, at a small cost in precision. F1 77\,\% $\to$ 87\,\%.
+\item Over all frames of annotator A: recall 0.80 $\to$ 0.85 at precision 0.89 $\to$ 0.86: the caution diagnosed in probe 1 is reduced, and the balance (F1) improves. J: +0.022 to +0.029 per seed vs SAMURAI, every CI above 0.
+\item Annotator B labels more generously (every method has recall above 0.9 against B): there the methods are on par. What counts as person in the ambiguous patches depends on the annotator: one more reason not to rank on hand masks.
+\item F1 per frame is the Dice coefficient, a monotone function of J (F1 = 2J / (1 + J)); it ranks like J but reads directly as the balance of precision and recall.
+}
+\end{frame}
+
+\begin{frame}
+\frametitle{What each component adds}
+\vspace*{2mm}
+\begin{columns}[T]
+\begin{column}{0.64\textwidth}
+\includegraphics[width=\linewidth]{plots/nfo/ablation.png}
+\end{column}
+\begin{column}{0.34\textwidth}
+\begin{itemize}
+\item one change per row, from SAM2.1 (memory) to Layer-SAM
+\item tracker: where
+\item empty scene: precision
+\item integral image: recall, tracking and detection
+\end{itemize}
+\end{column}
+\end{columns}
+\note[itemize]{
+\item Each bar: change of a score against the row above (first row: against SAM2.1 video). J here: annotator A, all 43 frames.
+\item Tracker prompts: tracking up, precision down. Removing memory: everything down.
+\item Adapter with the empty scene only: precision 0.80 $\rightarrow$ 0.88.
+\item Integral image: recall 0.81 $\rightarrow$ 0.85; tracking +0.019 to +0.038 and detection +0.009 to +0.022 per seed.
+}
+\end{frame}
+
+%=========================================================================================== VI. conclusion
 \Teil{Conclusion}
 
 \begin{frame}
-\frametitle{Conclusion}
+\frametitle{Conclusion and open questions}
 \begin{enumerate}
-\item behind foliage: never a full view; some pixels stay ambiguous
-\item downstream tasks want them; PVS drops them, and memory compounds it
-\item motion layers: the empty scene says where, the integral image says what
-\item Layer-SAM, no memory: best tracking, on par elsewhere
+\item behind foliage: never a full view; patches stay ambiguous, annotators disagree
+\item NFO-VOS: masks scored on tracking and detection; hand masks as a probe
+\item PVS is cautious, and memory compounds it; a prompt every frame trades it for foliage
+\item Layer-SAM: motion layers instead of memory; best tracking, on par or better in detection
 \end{enumerate}
+\Merke{Remember pixels, not masks: collect the evidence first, then decide.}
 \medskip
-\Merke{When each decision drops evidence, aggregate the evidence first, then decide.}
+\textbf{Open questions}
+\begin{itemize}\setlength{\itemsep}{1.5mm}
+\item moving camera: no single empty scene; the background has to be aligned frame to frame
+\item layers in \textbf{feature space}: one encoder pass less per frame $\to$ faster than SAM2.1 with memory
+\item other settings: other occluders (fences, blinds, rain); distractors, e.g.\ a second person moving differently
+\end{itemize}
 \note[itemize]{
 \item A static wall of leaves in front of a moving person: no frame shows all of it, not at the prompt, not later. Some patches mix person and leaf too finely to resolve, for any model and for annotators (J 0.65).
 \item For tracking and detection, the person pixels in such patches are worth more than the leaf pixels cost. A PVS model leaves them out, stores that mask, and conditions the next one on it: the masks shrink.
 \item What we know about the scene (static camera, moving person) separates it into layers by motion; their images accumulate evidence, and deciding once per frame from them, without memory, works better.
-}
-\end{frame}
-
-\begin{frame}
-\frametitle{Open questions}
-\begin{itemize}
-\item moving camera, articulated motion: \textbf{joint alignment} of all layers
-\item integral image in \textbf{feature space}: one encoder pass?
-\item other use cases: distractors, other occluders, by motion layers?
-\end{itemize}
-\note[itemize]{
-\item A moving camera turns the empty scene into a registered background layer; articulation needs more than one shift per frame. Estimate all layer motions together, with occlusion modelled so static leaves do not bias the registration.
-\item Feature space: averaging features is not encoding the average (the encoder is non-linear), and a feature cell is larger than most gaps. Whether a clean integral image exists there is open.
-\item A look-alike person moves differently, so a motion layer can separate it; other fragmented occluders (fences, blinds, rain).
+\item Moving camera: there is no single empty scene any more; the background has to be aligned frame to frame.
+\item Turning, stopping, waving: one shift per frame no longer lines the person up; the integral image would need a motion per body part.
+\item One encoder pass: today the integral image goes through the encoder separately. Averaging features instead of pixels would save that pass, but the encoder is non-linear and a feature cell is larger than most gaps: open whether it works.
+\item Other occluders with the same structure (fences, blinds, rain); a look-alike second person moves differently, so a motion layer could also separate it.
 }
 \end{frame}
 
@@ -698,12 +669,11 @@ Ravi et al.\ (2024). SAM 2: segment anything in images and videos. arXiv 2408.00
 Yang et al.\ (2024). SAMURAI. arXiv 2411.11922.\\
 Kurmi, Schedl, Bimber (2021, 2022). Airborne optical sectioning. arXiv 2111.06959, 2207.13344.\\
 Wang, Adelson (1994). Representing moving images with layers. IEEE TIP.\\
+Curless, Levoy (1996). A volumetric method for building complex models from range images. SIGGRAPH.\\
 Abraham, Khan (2019). A novel focal Tversky loss function. ISBI.\\
 Jocher et al.\ (2024). Ultralytics YOLO11.\\
 Kwolek et al.\ (2019). Calibrated and synchronized multi-view video and motion capture dataset for evaluation of gait recognition (GPJATK). Multimedia Tools and Applications.\\
-Grondin et al.\ (2023). Tree detection and diameter estimation based on deep learning (CanaTree100). Forestry.\\
-Perazzi et al.\ (2016). A benchmark dataset and evaluation methodology for video object segmentation (DAVIS). CVPR.\\
-Image source (DAVIS strip): to fill in.\par}
+Grondin et al.\ (2023). Tree detection and diameter estimation based on deep learning (CanaTree100). Forestry.\par}
 \end{frame}
 
 \begin{frame}[plain]

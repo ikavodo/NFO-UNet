@@ -38,7 +38,10 @@
   \node[blk, draw=SamDecD, fill=SamDec, minimum width=2.9cm, minimum height=9mm] (dec) at (11.2, 2.5) {\Ice\ \textbf{mask decoder}};
   \draw[a] (plus.east) -- node[above] {$\hat F_t$} (dec.west);
   \node[blk, draw=SamPrmD, fill=SamPrm, minimum width=2.9cm, minimum height=9mm] (pe) at (11.2, 0.3) {\Ice\ \textbf{prompt encoder}};
-  \draw[a] (pe.north) -- (dec.south);
+  % prompt correction: the adapter's second output, added to the point token between prompt encoder and decoder
+  \node[circle, draw=black!80, line width=1pt, minimum size=5.5mm, inner sep=0pt] (plusP) at (11.2, 1.4) {$+$};
+  \draw[a] (pe.north) -- (plusP.south); \draw[a] (plusP.north) -- (dec.south);
+  \draw[a] (ad.east |- 9.3,-2.6) -- (9.3, -2.6) -- (9.3, 1.4) -- node[above, pos=0.45] {$\delta$} (plusP.west);
   \node[blk, draw=black!70, fill=white, line width=1.0pt, minimum width=2.9cm, minimum height=9mm] (trk) at (11.2, -2.0)
         {\textbf{tracker}\\{\color{black!60}box + point}};
   \draw[a] (trk.north) -- (pe.south);
