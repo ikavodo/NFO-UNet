@@ -198,30 +198,32 @@ def masksize_sam():
     save(fig, 'masksize_sam.png')
 
 
-def masksize_trend(kmax=60):
-    """masksize_sam as fitted trends: per crossing the least-squares slope of log(mask / box area) over frames 6...end
-    (mask_fill.trends), mean over the 32 crossings with its 95 % CI over passes, drawn as size relative to frame 6.
-    SAM2.1 variants only."""
+def masksize_trend():
+    """Probe 2 as slopes, not curves: per crossing the least-squares slope of log(mask / box area) over frames 6...end
+    (mask_fill.trends), mean over the 32 crossings with its 95 % CI over passes, as % size change per 10 frames.
+    A CI across 0 = no trend (the box-every-frame arms; drawn curves suggested growth). SAM2.1 variants only."""
     from benchmark.nfo_vos.eval import mask_fill as MF
-    F = MF.fills(list(csv.DictReader(open(MF.CSV))))
-    S = MF.trends(F)
-    k = np.arange(MF.K0, kmax + 1)
-    fig, ax = plt.subplots(figsize=(9.3, 5.0))
-    for a, label, col, ls in (('b0-c2', 'SAM2.1: memory, one prompt', C_B0, '-'), ('t1-c2', 'SAMURAI: memory, one prompt', C_SAMURAI, '-'),
-                              ('trk', 'box every frame, no memory', C_TRK, '--'), ('b0trk-c2', 'box every frame + memory', '#8a5cc2', '--')):
+    S = MF.trends(MF.fills(list(csv.DictReader(open(MF.CSV)))))
+    arms = (('b0-c2', 'SAM2.1', 'memory, one prompt', C_B0), ('t1-c2', 'SAMURAI', 'memory, one prompt', C_SAMURAI),
+            ('b0trk-c2', 'SAM2.1', 'memory + box every frame', '#8a5cc2'), ('trk', 'SAM2.1', 'no memory, box every frame', C_TRK))
+    pc = lambda v: (np.exp(v) - 1) * 100
+    fig, ax = plt.subplots(figsize=(7.4, 4.6))
+    ax.axvspan(-10, 0, color='#f3e3e0', lw=0, zorder=0)
+    ax.axvline(0, color='#52514e', lw=1.2, zorder=1)
+    for j, (a, name, how, col) in enumerate(arms):
+        y = len(arms) - 1 - j
         m, lo, hi, *_ = MF.boot_mean(S[a], list(S[a]))
-        y = lambda s: np.exp(s / 10 * (k - MF.K0))
-        if a == 'b0-c2':
-            ax.fill_between(k, y(lo), y(hi), color=col, alpha=0.12, lw=0)
-        ax.plot(k, y(m), ls, color=col, lw=3, label=label)
-        ax.annotate(f'{(np.exp(m) - 1) * 100:+.0f}% / 10 frames', (k[-1], y(m)[-1]), xytext=(8, 0), textcoords='offset points',
-                    va='center', fontsize=15, color=col, annotation_clip=False, fontweight='bold')
-    ax.axhline(1, color='#52514e', lw=1, ls=':')
-    ax.set_xlim(MF.K0, kmax); ax.set_ylim(0.75, 1.15)
-    ax.set_xlabel('frames since the prompt'); ax.set_ylabel('mask area / box area\n(frame 6 = 1)')
-    ax.legend(loc='lower left', frameon=False, fontsize=14, handlelength=1.6)
-    ax.grid(axis='y', color='#e6e5e0', lw=0.8); ax.set_axisbelow(True)
-    for s in ('top', 'right'):
+        ax.plot([pc(lo), pc(hi)], [y, y], color=col, lw=4, solid_capstyle='round', zorder=2)
+        ax.plot(pc(m), y, 'o', color=col, ms=15, mec='white', mew=2, zorder=3)
+        ax.annotate(f'{pc(m):+.1f}%', (5.6, y), va='center',
+                    fontsize=16, color=col, fontweight='bold')
+        ax.text(-10.6, y + 0.17, name, fontsize=15, fontweight='bold', color=col, va='center', ha='right')
+        ax.text(-10.6, y - 0.17, how, fontsize=13, color='#52514e', va='center', ha='right')
+    ax.text(-0.3, len(arms) - 0.45, 'shrinks', ha='right', fontsize=13, color='#a0453a', style='italic')
+    ax.text(0.3, len(arms) - 0.45, 'grows', ha='left', fontsize=13, color='#52514e', style='italic')
+    ax.set_xlim(-10, 8.5); ax.set_xticks(range(-10, 7, 2)); ax.set_xticklabels([f'{v:+d}' if v else '0' for v in range(-10, 7, 2)]); ax.set_ylim(-0.6, len(arms) - 0.2); ax.set_yticks([])
+    ax.set_xlabel('mask size change per 10 frames (%), 95% CI', x=0.43)
+    for s in ('top', 'right', 'left'):
         ax.spines[s].set_visible(False)
     save(fig, 'masksize_trend.png')
 
