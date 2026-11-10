@@ -581,6 +581,7 @@ SAM2.1 & -- & $\checkmark$ & -- & -- & .680 & .617 & .857 \\
 \end{itemize}
 \end{column}
 \end{columns}
+\Klein{all 4 scenes, 32 crossings; Layer-SAM: one seed.}
 \note[itemize]{
 \item Generalises the detection score over $N$: YOLO11 AP50 vs the number of integrated frames, 32 crossings (Layer-SAM: one seed).
 \item $N = 5$ is where SAM2.1 and SAMURAI score best: the fair choice for the baselines. Layer-SAM leads at every short $N$ (at 3: 0.81 vs 0.78), where masks matter.

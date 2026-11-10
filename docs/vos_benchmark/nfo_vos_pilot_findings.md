@@ -67,7 +67,31 @@ stack*: the evaluation's N = 5 masked frames aligned by GT motion, the same cons
 - The first design filled unmasked pixels with the empty scene. It re-inserted sharp foliage, and masks then lost to
   no-mask (0.48 vs 0.80). Replaced.
 
-## 4. Main result (seq2–4, 46 windows; recognition on all 552 stacks)
+## 4. Main result
+
+**Headline (since 2026-10-23): seq2–4 on whole crossings** (full-pass protocol, §9; 24 crossings, recognition N = 5).
+This is the table in the talk (results slide). AUC, conf and hand scores: `report.py` block "seq2-4" in
+`/storage/slurm/akid/logs/nfo_fullpass_add-1953256.out` (job 1953256, one cluster env). AP50: `recognition.ap50` over
+the 1,085 seq2–4 stacks of `fullpass/downstream/recog_N5_uniform_meanfill_fp.csv` (cluster, 2026-11-10; no CI). Ours =
+3-seed mean.
+
+| method | hand J | P / R | box AUC | recog AP50 | recog conf |
+|---|---|---|---|---|---|
+| B0 (SAM2.1 video) | 0.747 | 0.91 / 0.80 | 0.611 | 0.906 | 0.689 |
+| T1 (SAMURAI) | 0.741 | 0.90 / 0.80 | 0.615 | 0.904 | 0.687 |
+| b0trk (SAM2.1 video + tracker prompts every frame) | 0.757 | 0.83 / 0.89 | 0.694 | 0.893 | 0.646 |
+| trk (SAM2.1 image + tracker prompts, no memory) | 0.698 | 0.81 / 0.84 | 0.680 | 0.857 | 0.617 |
+| ours without integral image (-noC) | 0.753 | 0.89 / 0.82 | 0.691 | 0.899 | 0.675 |
+| **ours** | **0.768** | 0.87 / 0.86 | **0.720** | **0.916** | **0.694** |
+
+Ours − T1 per seed: box AUC +0.102 / +0.109 / +0.103 (every CI > 0); hand J +0.029 / +0.030 / +0.022 (every CI > 0);
+recog conf +0.001 / +0.008 / +0.011 (every CI spans 0: on par). Integral image (ours − noC) per seed: box AUC +0.018 /
++0.032 / +0.037, recog conf +0.011 / +0.022 / +0.023, all CIs > 0. Seeds: AUC .717 / .724 / .718, conf .689 / .696 /
+.698, AP50 .916 / .916 / .917; noC AUC .699 / .692 / .681, conf .677 / .674 / .675, AP50 .910 / .899 / .887.
+
+### 40-frame windows (first protocol, 2026-10-21; superseded as headline, kept for the record)
+
+seq2–4, 46 windows; recognition N = 7 on all 552 stacks. Do not mix these numbers with the table above.
 
 | method | hand J | P / R | box AUC | P@20 | recog AP50 | recog conf |
 |---|---|---|---|---|---|---|
