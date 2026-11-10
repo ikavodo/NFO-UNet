@@ -89,6 +89,19 @@ recog conf +0.001 / +0.008 / +0.011 (every CI spans 0: on par). Integral image (
 +0.032 / +0.037, recog conf +0.011 / +0.022 / +0.023, all CIs > 0. Seeds: AUC .717 / .724 / .718, conf .689 / .696 /
 .698, AP50 .916 / .916 / .917; noC AUC .699 / .692 / .681, conf .677 / .674 / .675, AP50 .910 / .899 / .887.
 
+**Runtime** (laptop RTX PRO 4000, per frame, `benchmark/nfo_vos/tools/timing.py`; independent of the protocol):
+- **ours: 61 ms**, with `adapter/inference.fast_masks` (one encode per frame plus one for the integral image; integral image and SAM2
+  preprocessing on the GPU);
+- **SAM2 video: 53 ms**.
+
+Masks are unchanged against the benchmark code path: box AUC Δ 0.000, hand J Δ +0.001. The benchmark path itself
+takes 445 ms, because it re-encodes everything about 7×.
+
+**Claim supported (seq2–4, whole crossings):** Layer-SAM **tracks clearly better than SAMURAI** (box AUC +0.10, every
+seed's CI > 0), **segments the visible person slightly better** (hand J +0.02 to +0.03, every CI > 0; the gain is
+recall, 0.86 vs 0.80, at some precision, 0.87 vs 0.90), and is **on par in recognition** (conf, every CI spans 0;
+highest AP50, no CI). No other method is at or above T1 on all three: B0 and b0trk lose box AUC or recognition conf.
+
 ### 40-frame windows (first protocol, 2026-10-21; superseded as headline, kept for the record)
 
 seq2–4, 46 windows; recognition N = 7 on all 552 stacks. Do not mix these numbers with the table above.
@@ -123,17 +136,6 @@ node; all masks from the cluster), against T1:
 
 Segment-cluster bootstrap for seed 0 (24 segments): box AUC +0.070 [+0.054, +0.088], with the adapter ahead in 24/24
 segments.
-
-**Runtime** (laptop RTX PRO 4000, per frame, `benchmark/nfo_vos/tools/timing.py`):
-- **ours: 61 ms**, with `adapter/inference.fast_masks` (one encode per frame plus one for the integral image; integral image and SAM2
-  preprocessing on the GPU);
-- **SAM2 video: 53 ms**.
-
-Masks are unchanged against the benchmark code path: box AUC Δ 0.000, hand J Δ +0.001. The benchmark path itself
-takes 445 ms, because it re-encodes everything about 7×.
-
-**Claim supported:** the per-frame layer adapter **tracks clearly better than SAMURAI and ties it on visible-pixel
-segmentation and recognition.** No other method is at or above T1 on all three.
 
 ## 5. What each ingredient does (seq2–4, one variable at a time)
 
@@ -263,7 +265,7 @@ it **ranks methods like the hand masks**.
 - **Recognition at N = 5** frames per recognition stack (was N = 7, chosen a priori). N = 5 is where SAM2.1 video and SAMURAI
   score highest in the N sweep (`eval/recog_vs_N.py`), i.e. the baselines' best case. The sweep stays as a supplement.
 - **Reporting over all sequences** (seq1–4) as the headline, with seq1 and seq2–4 alongside. Step 200 was selected on
-  seq1, so seq1 is not independent; seq2–4 remains the clean held-out check. Hand-label scores stay per group (seq1
+  seq1, so seq1 is not independent; seq2–4 remains the clean held-out check. **Changed 2026-11-10: seq2–4 on whole crossings is the headline (§4, talk); seq1–4 is reported alongside.** Hand-label scores stay per group (seq1
   brush masks have no void class).
 - **Integral-image history** (pre-registered rule): candidates 4, 5, 6 past frames (all inside the training range 4–8; no
   retraining; arms `adapter-<seed>-h4` / `-h5`, `eval/dump_arms.py`). Decided on **seq1 only**: take the shortest
