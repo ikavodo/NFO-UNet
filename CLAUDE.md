@@ -36,8 +36,14 @@ Frozen SAM2.1-b+ **image** predictor, per frame, no memory. Per frame t of an NF
   online per clip. Loss **v3.4** (`fusion_adapter.loss_fn`): 20·focal_W(α 0.67, γ 2) + Focal Tversky (FP 0.3, FN 0.7, γ 0.75)
   with weights W (1 visible / background, 0 occluded within 8 px of a fragment, 0.3 far occluded). AdamW 3e-4,
   cosine, 32 targets per clip. **Checkpoint: step 200** (selected on seq1, never on seq2–4).
-- **Inference** (`adapter/inference.py`, `fast_masks`): one encoder pass per frame shared by tracker, adapter and
-  decoder: 61 ms/frame vs B0 53 ms (RTX PRO 4000 laptop). Frames with < 6 frames of history use the tracker prompts.
+- **Inference** (`adapter/inference.py`, `fast_masks` → `masks_from_arrays`): **two encoder passes per frame**, one on
+  the frame (shared by tracker, adapter and decoder) and one on the integral image C, plus the empty scene once per
+  window: 61 ms/frame vs B0 53 ms (RTX PRO 4000 laptop). Frames with < 6 frames of history use the tracker prompts.
+  Hooks: `feats=` (frame features from a caller's encoder pass), `aux=` (per-frame decoder heads + change-map stats).
+- **On/off switch** (`eval/dual_expert.py`, `policy`): one model per frame. Start in SAM2 video mode. A per-mode logistic
+  switch on the active model's heads + change-map stats in the tracker box decides the next frame's mode. Switching back
+  re-prompts SAM2 from the tracker box. Held-out: matches the better fixed choice on NFO seq2–4 (0.733) and KTH (0.932);
+  details in `docs/panaf/2026-11-11-msc-project-direction.md`.
 
 Things that mattered (each measured; details in the findings doc): the kernel-f16 tracker for integral image alignment
 (v3), the adaptive gate threshold (train/test parity), loss v3.4 over the balanced and simple variants, step 200,

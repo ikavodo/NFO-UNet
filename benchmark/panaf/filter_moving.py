@@ -91,6 +91,8 @@ def main(labels=None, tag='triage'):
         cv2.putText(bar, f'{len(rows):3d} {js["video"]} {f.parent.name} ape {aid}: {beh.most_common(2)}', (3, 13),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1)
         strips.append(np.vstack([bar, s]))
+        os.makedirs(f'images/panaf/{tag}/strips', exist_ok=True)
+        cv2.imwrite(f'images/panaf/{tag}/strips/{js["video"]}.jpg', s, [cv2.IMWRITE_JPEG_QUALITY, 85])   # one per video, for the triage page
     os.makedirs('results/panaf', exist_ok=True); os.makedirs(f'images/panaf/{tag}', exist_ok=True)
     with open('results/panaf/candidates.csv' if tag == 'triage' else f'results/panaf/{tag}.csv', 'w', newline='') as fo:
         w = csv.DictWriter(fo, fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
