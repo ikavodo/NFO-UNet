@@ -120,8 +120,9 @@ class Fusion(nn.Module):
         self.fallback.copy_(sp[0])
 
 
-def decode(sam, f, token=None, point=False):
-    """Frozen SAM2 decoder on f['X*']. token None: tracker box (+ its centre point if point) as the sparse prompt."""
+def decode(sam, f, token=None, point=False, aux=None):
+    """Frozen SAM2 decoder on f['X*']. token None: tracker box (+ its centre point if point) as the sparse prompt.
+    aux: a list that receives (IoU-head prediction, object-score logit) of the first item (gate signals)."""
     pe, dec = sam.sam_prompt_encoder, sam.sam_mask_decoder
     n = f['X16'].shape[0]
     if token is None:
@@ -133,9 +134,11 @@ def decode(sam, f, token=None, point=False):
     else:
         _, dense = pe(points=None, boxes=None, masks=None)
         sparse, dense = token, dense.expand(n, -1, -1, -1)
-    low, _, _, _ = dec(image_embeddings=f['X16'], image_pe=pe.get_dense_pe(), sparse_prompt_embeddings=sparse,
-                       dense_prompt_embeddings=dense, multimask_output=False, repeat_image=False,
-                       high_res_features=[f['X4'], f['X8']])
+    low, ious, _, obj = dec(image_embeddings=f['X16'], image_pe=pe.get_dense_pe(), sparse_prompt_embeddings=sparse,
+                            dense_prompt_embeddings=dense, multimask_output=False, repeat_image=False,
+                            high_res_features=[f['X4'], f['X8']])
+    if aux is not None:
+        aux.append((float(ious[0, 0]), float(obj[0, 0])))
     return low
 
 
