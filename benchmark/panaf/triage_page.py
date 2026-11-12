@@ -2,15 +2,18 @@
 unsure buttons, keyboard shortcuts, autosave in the browser and a CSV download. Open the HTML file in a browser
 (it stays local: images and videos are relative links).
 
-    PYTHONPATH=. python -m benchmark.panaf.triage_page     # -> images/panaf/triage/triage.html
-Download gives triage_occluded.csv (video, split, occluded); put it at results/panaf/triage_occluded.csv.
+    PYTHONPATH=. python -m benchmark.panaf.triage_page [triage|static_moving|rest|all]   # -> images/panaf/<tag>/<tag>.html
+tag 'all' = the three lists merged (each video once), for a second annotator. Type your initials in the page first:
+answers autosave per annotator and the download is <tag>_occluded_<initials>.csv (video, split, occluded = yes/no/unsure).
+Serve it with  python -m http.server 8765 --directory images/panaf  (videos are linked through images/panaf/videos).
 """
 import csv
 import html
 import json
 import os
 
-PANAF_REL = '../../../../PanAf20K/PanAf500/videos'      # from images/panaf/triage/ to the videos (default PANAF_ROOT)
+ROOT = os.path.abspath(os.environ.get('PANAF_ROOT', '../PanAf20K/PanAf500'))
+SRC = {'triage': 'candidates', 'static_moving': 'static_moving', 'rest': 'rest'}
 ORDER = {'test': 0, 'validation': 1, 'train': 2}
 
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -34,10 +37,12 @@ main{padding:8px 16px 80px;max-width:1100px;margin:auto}
 <header><h1>PanAf500 triage: is the moving ape fragmented by vegetation?</h1>
 <p><b>yes</b> = during the moving stretch, foliage/branches in front of the ape split its visible body into pieces (for part of the strip is enough). <b>no</b> = ape clearly visible, or only cut by the frame edge / another ape. <b>unsure</b> = can't tell (click the id to open the video).</p>
 <p>Keys: <b>y</b> / <b>n</b> / <b>u</b> answer and advance, <b>j</b> / <b>k</b> next / previous. Answers autosave in this browser.</p>
-<div class="bar"><span id="prog"></span><button id="dl">Download CSV</button><button id="only">Show unanswered only</button></div></header>
+<div class="bar"><label>annotator <input id="who" size="6" placeholder="initials"></label><span id="prog"></span><button id="dl">Download CSV</button><button id="only">Show unanswered only</button></div></header>
 <main id="list">ROWS</main>
 <script>
-const KEY='panaf-triage-v1';let A={};try{A=JSON.parse(localStorage.getItem(KEY)||'{}')}catch(e){}
+const who=document.getElementById('who');try{who.value=localStorage.getItem('panaf-who')||''}catch(e){}
+let KEY,A={};function load(){KEY='panaf-triage-TAG-'+who.value.trim();try{A=JSON.parse(localStorage.getItem(KEY)||'{}')}catch(e){A={}}}load();
+who.onchange=()=>{try{localStorage.setItem('panaf-who',who.value.trim())}catch(e){}load();paint()};
 const rows=[...document.querySelectorAll('.row')];let cur=0,only=false;
 function save(){try{localStorage.setItem(KEY,JSON.stringify(A))}catch(e){}}
 function paint(){rows.forEach((r,i)=>{const v=A[r.dataset.id];r.querySelectorAll('.ans button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));
@@ -45,32 +50,50 @@ function paint(){rows.forEach((r,i)=>{const v=A[r.dataset.id];r.querySelectorAll
  const n=rows.filter(r=>A[r.dataset.id]).length,y=rows.filter(r=>A[r.dataset.id]==='yes').length;
  document.getElementById('prog').textContent=`${n} / ${rows.length} answered, ${y} yes`}
 function go(i){cur=Math.max(0,Math.min(rows.length-1,i));paint();rows[cur].scrollIntoView({block:'center'})}
-function set(i,v){A[rows[i].dataset.id]=v;save();go(i+1)}
+function set(i,v){if(!who.value.trim()){alert('Type your initials in the annotator box first');who.focus();return}A[rows[i].dataset.id]=v;save();go(i+1)}
 rows.forEach((r,i)=>r.querySelectorAll('.ans button').forEach(b=>b.onclick=()=>{cur=i;set(i,b.dataset.v)}));
 document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return;const k=e.key.toLowerCase();
  if(k==='y')set(cur,'yes');else if(k==='n')set(cur,'no');else if(k==='u')set(cur,'unsure');else if(k==='j')go(cur+1);else if(k==='k')go(cur-1)});
 document.getElementById('only').onclick=e=>{only=!only;e.target.textContent=only?'Show all':'Show unanswered only';paint()};
 document.getElementById('dl').onclick=()=>{const lines=['video,split,occluded'].concat(rows.map(r=>`${r.dataset.id},${r.dataset.split},${A[r.dataset.id]||''}`));
- const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([lines.join('\\n')+'\\n'],{type:'text/csv'}));a.download='triage_occluded.csv';a.click()};
+ const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([lines.join('\\n')+'\\n'],{type:'text/csv'}));a.download='TAG_occluded_'+who.value.trim()+'.csv';a.click()};
 paint();
 </script></body></html>"""
 
 
-def main():
-    rows = sorted(csv.DictReader(open('results/panaf/candidates.csv')), key=lambda r: (ORDER[r['split']], r['video']))
+def main(tag='triage'):
+    """triage: moving-ape candidates; static_moving: apes labelled sitting/standing/hanging whose box moves; rest: all other
+    videos; all: the three merged, each video once (for a second annotator)."""
+    rows, seen = [], set()
+    for t in (SRC if tag == 'all' else [tag]):
+        for r in sorted(csv.DictReader(open(f'results/panaf/{SRC[t]}.csv')), key=lambda r: (ORDER[r['split']], r['video'])):
+            if r['video'] not in seen:
+                seen.add(r['video']); rows.append(dict(r, src=t))
     out = []
     for i, r in enumerate(rows, 1):
         v = html.escape(r['video'])
         out.append(f'<div class="row" data-id="{v}" data-split="{r["split"]}"><div class="meta"><b>{i}.</b>'
-                   f'<b><a href="{PANAF_REL}/{v}.mp4" target="_blank">{v}</a></b><span>{r["split"]}</span>'
+                   f'<b><a href="../videos/{v}.mp4" target="_blank">{v}</a></b><span>{r["split"]}</span>'
                    f'<span>ape {r["ape_id"]}: {html.escape(r["moving_behaviours"])}</span></div>'
-                   f'<img loading="lazy" src="strips/{v}.jpg" alt="{v} strip">'
-                   '<div class="ans"><button data-v="yes">yes (y)</button><button data-v="no">no (n)</button>'
+                   f'<img loading="lazy" src="../{r["src"]}/strips/{v}.jpg" alt="{v} strip">'
+                   '<div class="ans"><button data-v="yes">occluded (y)</button><button data-v="no">not occluded (n)</button>'
                    '<button data-v="unsure">unsure (u)</button></div></div>')
-    os.makedirs('images/panaf/triage', exist_ok=True)
-    open('images/panaf/triage/triage.html', 'w').write(PAGE.replace('ROWS', '\n'.join(out)))
-    print('wrote images/panaf/triage/triage.html,', len(rows), 'videos (test first)')
+    os.makedirs(f'images/panaf/{tag}', exist_ok=True)
+    if not os.path.lexists('images/panaf/videos'):
+        os.symlink(os.path.join(ROOT, 'videos'), 'images/panaf/videos')
+    page = PAGE.replace('ROWS', '\n'.join(out)).replace('TAG', 'v1' if tag == 'triage' else tag)
+    if tag == 'triage':
+        page = page.replace("'v1_occluded_'", "'triage_occluded_'")
+    else:
+        q = {'static_moving': 'apes labelled sitting / standing / hanging whose box moves: fragmented by vegetation?',
+             'rest': 'remaining videos (strip spans the whole track): is the ape fragmented by vegetation at any point?',
+             'all': 'all candidate videos (second annotator): is the ape fragmented by vegetation?'}[tag]
+        page = page.replace('<title>PanAf Occlusion Triage</title>', f'<title>PanAf Triage {tag}</title>').replace(
+            'is the moving ape fragmented by vegetation?', q)
+    open(f'images/panaf/{tag}/{tag}.html', 'w').write(page)
+    print(f'wrote images/panaf/{tag}/{tag}.html,', len(rows), 'videos (test first)')
 
 
 if __name__ == '__main__':
-    main()
+    import sys
+    main(*sys.argv[1:2])

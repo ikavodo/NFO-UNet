@@ -104,6 +104,33 @@ def main(labels=None, tag='triage'):
 
 STATIC_LAB = {'sitting', 'standing', 'hanging'}
 
+
+def main_rest(tag='rest'):
+    """Every video in neither candidates.csv nor static_moving.csv: the ape with the longest track, NSAMP frames spread
+    over the whole track (no moving stretch to pick from). Same strip format, so the triage page works unchanged."""
+    done = {r['video'] for f in ('candidates', 'static_moving') for r in csv.DictReader(open(f'results/panaf/{f}.csv'))}
+    rows = []
+    os.makedirs(f'images/panaf/{tag}/strips', exist_ok=True)
+    for f in sorted(ROOT.glob('annotations/*/*.json')):
+        js = json.load(open(f))
+        if js['video'] in done:
+            continue
+        tr = tracks(js)
+        if not tr:
+            rows.append(dict(video=js['video'], split=f.parent.name, ape_id='-', n_moving=0, moving_behaviours='no boxes', occluded=''))
+            continue
+        aid, fr = max(tr.items(), key=lambda kv: len(kv[1]))
+        ks = sorted(fr)
+        ks = [ks[int(round(x))] for x in np.linspace(0, len(ks) - 1, NSAMP)]
+        beh = Counter(b for _, b in fr.values())
+        rows.append(dict(video=js['video'], split=f.parent.name, ape_id=aid, n_moving=len(fr),
+                         moving_behaviours=' '.join(f'{k}:{v}' for k, v in beh.most_common(3)), occluded=''))
+        cv2.imwrite(f'images/panaf/{tag}/strips/{js["video"]}.jpg', strip(ROOT / 'videos' / f'{js["video"]}.mp4', fr, ks),
+                    [cv2.IMWRITE_JPEG_QUALITY, 85])
+    with open(f'results/panaf/{tag}.csv', 'w', newline='') as fo:
+        w = csv.DictWriter(fo, fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
+    print(len(rows), 'remaining videos ->', Counter(r['split'] for r in rows))
+
 if __name__ == '__main__':
     import sys
-    main(STATIC_LAB, 'static_moving') if sys.argv[1:] == ['static'] else main()
+    {'static': lambda: main(STATIC_LAB, 'static_moving'), 'rest': main_rest}.get((sys.argv[1:] or [''])[0], main)()
