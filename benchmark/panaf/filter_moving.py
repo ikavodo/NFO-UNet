@@ -22,7 +22,7 @@ import cv2
 import numpy as np
 
 ROOT = Path(os.environ.get('PANAF_ROOT', '../PanAf20K/PanAf500')).resolve()
-V_MOVE, MIN_MOVING, PER_SHEET, NSAMP, HT = 0.01, 48, 10, 6, 110
+V_MOVE, MIN_MOVING, PER_SHEET, NSAMP, HT = 0.01, 48, 10, 6, 256   # HT: strip tile px (110 before 2026-11-12; 256 for the zoom view)
 MOV = {'walking', 'running', 'climbing_up', 'climbing_down', 'sitting_on_back'}   # labels of a body that translates
 
 
