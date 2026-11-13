@@ -122,3 +122,44 @@ Plus the SAM2.1 reference and the `-noC` control (integral image removed at infe
 - The x+y shift change to the integral image, and whether the tracker scale should enter the shift.
 - Is the soft alpha threshold at 0.5 the right definition of "hidden"? Report the sensitivity at 0.3 and 0.7.
 - Loss v3.4 weights were tuned for NFO pseudo-GT: keep them fixed (one variable) or re-check?
+
+## Expert pipeline review (2026-11-13), proposed changes (adopt after the user's decisions D-a..D-c)
+**Correction.** "Only the data source changes" was false. Colour, B, the alignment source and the box semantics
+changed too.
+
+**Blockers.**
+1. **Gray vs colour.** The pipeline is grayscale (`fusion_data.py:107,112,132`; `inference.py:67`); the SAM2
+   reference ran on RGB. **D-a**: gray everywhere (recommended for Stage 1, baselines rerun on gray), or port to RGB
+   behind `parity_snapshot`.
+2. **Gate control.** The control is the step-0 `trk` arm: the SAM2 image predictor with the same tracker prompts,
+   windows and frames. The GT-mask-seeded SAM2-video reference (`sam2_gap`) becomes secondary.
+3. **One B estimator** for train and test: the whole-video median. Record the ape-in-B fraction per clip and
+   stratify results by it. A static ape gives gate z ≈ 0 and an empty tracker map.
+4. **Planted foliage must not be noise-free.** Add per-frame noise and flutter (`synth/noise`), or re-encode with
+   x264. Otherwise the shortcut "zero temporal variance = occluder" is available.
+5. **The depth α is the top 20% by construction** (rank normalisation), often ground. Gate pool sources on
+   fragmentation and vegetation, and run the §7.1 check on the accepted pool.
+6. **Camera leakage.** Cluster all videos by background similarity and drop any source that shares a cluster with an
+   eval video.
+
+**Should-fix.**
+7. Fix step 200 a priori, or select on about 10 real occluded non-eval videos. Synthetic val misranked losses on NFO.
+8. Calibrate the training jitter to the measured error of the MD-seeded SAM2 boxes. Put the x+y shift behind a flag
+   (NFO stays x-only; `parity_snapshot` IDENTICAL).
+9. Train with tight boxes of S, as on NFO (`dataset.py:389`). The amodal human box becomes a test-time variant only.
+10. SBR masks are biased GT on occluded videos. **D-b**: the primary GT for that class is SA-FARI verified 6 fps
+    masks, or about 30 hand frames (`cvat_io`).
+11. Log the fraction of H with loss weight 0 under v3.4 (8 px near band). If it is above 0.7, plan a NEAR_PX
+    ablation.
+12. P = procedural α with the same F texture pool. R−P then isolates shape; R−O isolates texture.
+13. Add arm **R0**: everything identical, but 100% unoccluded. This is the domain-adaptation control.
+
+**Nice-to-have.**
+- The gate estimator: pool the seeds, then a paired video bootstrap; clear CI lower bound > −0.02.
+- Reject windows where another ape's mask overlaps R. Prefer FGBG empty clips as foliage sources (deleted boxes
+  leave unboxed apes).
+- Rotate an oversized crop before cutting, so no black corners appear.
+- A void band: W = 0 for 0.3 < α < 0.7.
+- Measure the seek/decode time per clip. Above 0.5 s, cache gray memmaps (about 23 GB) with B precomputed.
+
+**D-c (user):** accept the scope growth. These fixes make Stage 1 several days of work, not one.
