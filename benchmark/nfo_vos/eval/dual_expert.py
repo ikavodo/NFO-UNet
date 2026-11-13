@@ -1,4 +1,4 @@
-"""Dual-expert harness for the adapter gate (2026-11-11; plan in docs/panaf/2026-11-11-msc-project-direction.md, WP3).
+"""Dual-expert harness for the adapter gate (2026-11-11; plan in ../PanAf20K/docs/2026-11-11-msc-project-direction.md, WP3).
 
 Per frame, two experts on ONE image-encoder pass of that frame:
   E0  SAM2.1 video predictor with memory attention (B0; 't1' = SAMURAI's Kalman mode), prompted at t0 with the GT box +

@@ -18,6 +18,11 @@ Results and their numbers live in `docs/vos_benchmark/nfo_vos_pilot_findings.md`
 Code removed in the 2026-10-21 cleanup (≈ 90 experiment scripts, the blob tracker and live-tracker app `tracking/`,
 the SAM2-memory arms) is at git tag **`archive/pre-cleanup-2026-10-21`**; docs older than that cite paths from there.
 
+**PanAf (great apes) lives elsewhere.** The occlusion labels, MegaDetector/SAM2 evaluation and the workshop paper are in
+`../PanAf20K` (its own git repo; start with `docs/2026-11-13-handoff.md`). Layer-SAM *training on apes* stays here, on
+branch `exp/ape-stage1` (`benchmark/nfo_vos/ape/`, design `docs/layer_sam2/2026-11-13-ape-stage1-data-design.md`), and
+reads PanAf data by path (`PANAF_REPO`, `PANAF_ROOT`, `SBR_ROOT`, `FGBG_ROOT`). Nothing PanAf-specific belongs on main.
+
 ## The method (what produced the current results)
 
 Frozen SAM2.1-b+ **image** predictor, per frame, no memory. Per frame t of an NFO window:
@@ -43,7 +48,7 @@ Frozen SAM2.1-b+ **image** predictor, per frame, no memory. Per frame t of an NF
 - **On/off switch** (`eval/dual_expert.py`, `policy`): one model per frame. Start in SAM2 video mode. A per-mode logistic
   switch on the active model's heads + change-map stats in the tracker box decides the next frame's mode. Switching back
   re-prompts SAM2 from the tracker box. Held-out: matches the better fixed choice on NFO seq2–4 (0.733) and KTH (0.932);
-  details in `docs/panaf/2026-11-11-msc-project-direction.md`.
+  details in `../PanAf20K/docs/2026-11-11-msc-project-direction.md`.
 
 Things that mattered (each measured; details in the findings doc): the kernel-f16 tracker for integral image alignment
 (v3), the adaptive gate threshold (train/test parity), loss v3.4 over the balanced and simple variants, step 200,
