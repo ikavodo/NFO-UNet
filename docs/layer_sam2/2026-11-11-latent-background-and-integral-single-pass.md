@@ -15,7 +15,7 @@ Status: **idea, no experiments run.** Written in a PanAf20K session (`../PanAf20
 >    pass to fragmented frames.
 > 3. **For PanAf (§6), B need not be latent.** B is encoded once per window, so a pixel masked median or pixel RPCA
 >    (Candès et al. 2011, video background subtraction) unblocks the WP1 headroom test at no cost. Priority: WP1 first
->    (`docs/panaf/2026-11-11-msc-project-direction.md`).
+>    (`../PanAf20K/docs/2026-11-11-msc-project-direction.md`).
 Every number below is either quoted from a paper or read from this repo's code, and the source is given. Nothing here
 has been measured yet.
 
