@@ -1,4 +1,5 @@
-"""Index of candidate 40-frame training windows on clear ape-source videos (Stage 1 design §3-§4, review fixes).
+"""One training clip per source video: the ape's most-moving 40-frame window (simplified 2026-11-13, user: no sliding
+windows; the integral image needs motion, so only moving apes are used).
 
 Ape sources: PanAf500 videos labelled clear (PanAf20K labels/consensus.csv) in the train split, not in the eval subset,
 not leaked (results/ape/leakage.csv). The 80 PanAf-SBR train-only videos join once their sbr100 labels exist
@@ -18,17 +19,19 @@ import numpy as np, pandas as pd
 from pycocotools import mask as M
 from benchmark.nfo_vos.ape import PANAF, SBR_ROOT, OUT
 
-N, STRIDE, MIN_PRESENT, MARGIN, MAX_OTHER = 40, 8, 36, 0.10, 0.05
+N, STRIDE, MIN_PRESENT, MARGIN, MAX_OTHER = 40, 4, 36, 0.10, 0.05
+OK = ('clear', 'partial')   # partial apes get extra planted occlusion on top; occluded videos are all in the eval subset
+MIN_MOTION = 0.5            # centre path over the 40 frames, in median box widths
 
 
 def sources():
     lab = pd.read_csv(PANAF / 'labels' / 'consensus.csv').set_index('video').occlusion
     leak = pd.read_csv(OUT / 'leakage.csv').set_index('video')
     ann = {p.stem: p for p in SBR_ROOT.glob('annotations*/train/*.json')}
-    v = [x for x in lab[lab == 'clear'].index if x in ann and not leak.in_eval.get(x, False) and not leak.leaked.get(x, False)]
+    v = [x for x in lab[lab.isin(OK)].index if x in ann and not leak.in_eval.get(x, False) and not leak.leaked.get(x, False)]
     extra = sorted(PANAF.glob('labels/sbr100_occlusion_*.csv'))
     if extra:
-        s = pd.read_csv(extra[0]); v += [x for x in s[s.occlusion == 'clear'].video if x in ann and x not in lab.index
+        s = pd.read_csv(extra[0]); v += [x for x in s[s.occlusion.isin(OK)].video if x in ann and x not in lab.index
                                          and not leak.leaked.get(x, False)]
     return v, ann, len(extra) > 0
 
@@ -38,7 +41,10 @@ def windows(video, path):
     tr = defaultdict(dict)
     for a in js['annotations']:
         for d in a['detections']:
-            s = d['segmentation']; H, W = s['size']
+            s = d['segmentation']
+            if not s:   # some SBR detections carry no mask: treat as absent
+                continue
+            H, W = s['size']
             area = M.area({'size': s['size'], 'counts': s['counts'].encode() if isinstance(s['counts'], str) else s['counts']})
             tr[str(d['ape_id'])][a['frame_id']] = (np.array(d['bbox'], float), area)
     out = []
@@ -69,14 +75,19 @@ def windows(video, path):
 
 def main():
     v, ann, has_sbr = sources()
-    rows = [w for x in v for w in windows(x, ann[x])]
-    T = pd.DataFrame(rows); T['keep'] = T.other_overlap <= MAX_OTHER; T.to_csv(OUT / 'clip_index.csv', index=False)
-    K = T[T.keep]
-    print(f'ape-source videos: {len(v)} (sbr100 labels {"used" if has_sbr else "not yet available"})')
-    print(f'windows: {len(T)} candidates, {len(K)} kept ({(~T.keep).sum()} dropped: another ape in R), '
-          f'from {K.video.nunique()} videos; windows per video median {K.groupby("video").size().median():.0f}')
-    print('kept windows: motion (box widths travelled over 40 frames) quartiles', np.round(K.motion.quantile([.25, .5, .75]).to_numpy(), 2),
-          '| median box area', int(K.box_area.median()), '| share touching border', round(float((K.border > 0).mean()), 2))
+    T = pd.DataFrame([w for x in v for w in windows(x, ann[x])])
+    T = T[T.other_overlap <= MAX_OTHER]
+    best = T.loc[T.groupby('video').motion.idxmax()]                       # one clip per video: its most-moving window
+    lab = pd.read_csv(PANAF / 'labels' / 'consensus.csv').set_index('video').occlusion
+    for f in sorted(PANAF.glob('labels/sbr100_occlusion_*.csv')):
+        lab = pd.concat([lab, pd.read_csv(f).set_index('video').occlusion]); lab = lab[~lab.index.duplicated()]
+    best['occlusion'] = best.video.map(lab); best['keep'] = best.motion >= MIN_MOTION
+    best.to_csv(OUT / 'clip_index.csv', index=False)
+    print(f'source videos (clear+partial, train, non-eval, non-leaked): {len(v)} (sbr100 labels {"used" if has_sbr else "missing"}); '
+          f'with a valid window: {len(best)}')
+    for m in (0.3, 0.5, 1.0):
+        k = best[best.motion >= m]; print(f'  motion >= {m}: {len(k)} clips ({dict(k.occlusion.value_counts())})')
+    print(f'kept (>= {MIN_MOTION}): {int(best.keep.sum())} -> results/ape/clip_index.csv')
 
 
 if __name__ == '__main__':
