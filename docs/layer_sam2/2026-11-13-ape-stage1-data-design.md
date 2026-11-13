@@ -163,3 +163,15 @@ changed too.
 - Measure the seek/decode time per clip. Above 0.5 s, cache gray memmaps (about 23 GB) with B precomputed.
 
 **D-c (user):** accept the scope growth. These fixes make Stage 1 several days of work, not one.
+
+## User decisions on the review (2026-11-13)
+- **D-a: gray** for Stage 1 (pseudo-IR). All arms and baselines run on gray.
+- **Comparison:** Layer-SAM (per frame, no memory) against **SAM2.1 video** (memory), with the same initial prompt and
+  frames, on gray. Claim: memory is not needed under partial/occluded conditions. The adapter is zero-initialised as
+  on NFO.
+- **Foliage motion:** cut the same patch from consecutive frames of the source video (frames with no ape in the
+  region). Real sway and compression noise come with it, so synthetic flutter is not needed.
+- **D-b: the SBR masks are the GT, fill-in included.** The adapter is expected to complement what SAM2 misses under
+  occlusion, as the FN-weighted Focal Tversky loss already encodes.
+- **Leakage:** handled with background-similarity clusters (to be implemented with the generator).
+- Near-layer vegetation filter: accepted.
