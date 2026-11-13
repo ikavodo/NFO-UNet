@@ -119,6 +119,16 @@ def _enc(pred, imgs, chunk=8):
     return [torch.cat(o) for o in out]
 
 
+def hist_warps(trk, t, nh, xy=False):
+    """History frames t-nh..t-1 and their shifts onto frame t: Theil–Sen fit of the track over [t-12, t], x only (NFO)
+    or x and y (xy=True, apes)."""
+    hist = list(range(t - nh, t))
+    cs = list(range(max(0, t - 12), t + 1))
+    fx = theil_at(cs, [trk[l, 0] for l in cs], [t] + hist)
+    fy = theil_at(cs, [trk[l, 1] for l in cs], [t] + hist) if xy else None
+    return hist, [np.float32([[1, 0, fx[t] - fx[i]], [0, 1, fy[t] - fy[i] if xy else 0]]) for i in hist]
+
+
 @torch.no_grad()
 def build(pred, raw, max_targets=None, rng=None, dev='cuda', all_targets=False):
     """GPU side of one clip, the test-time path: encode every frame once (+ the empty scene); kernel-f16 tracker
@@ -133,12 +143,15 @@ def build(pred, raw, max_targets=None, rng=None, dev='cuda', all_targets=False):
     with torch.autocast('cuda', dtype=AMP):
         F16, F8, F4 = _enc(pred, X)
         B16, B8, B4 = _enc(pred, bg[None])
-    dmap = 1 - torch.nn.functional.cosine_similarity(F16.float(), B16.float(), dim=1)
-    dmap = torch.nn.functional.interpolate(dmap[:, None], size=(H, W), mode='bilinear', align_corners=False)[:, 0].cpu().numpy()
     cx0, cy0, h0 = raw['bxj'][0]
     S0 = raw['S'][0] if raw['S'][0].any() else raw['S'][int(np.argmax(raw['S'].sum((1, 2))))]
     ys, xs = np.nonzero(S0); asp0 = (np.ptp(xs) + 1) / (np.ptp(ys) + 1)
-    trk = kernel_track(dmap, (cx0, cy0), asp0 * h0, h0)
+    if 'track' in raw:                     # given track (apes: GT box centres + noise) instead of the kernel-f16 tracker
+        trk = raw['track']
+    else:
+        dmap = 1 - torch.nn.functional.cosine_similarity(F16.float(), B16.float(), dim=1)
+        dmap = torch.nn.functional.interpolate(dmap[:, None], size=(H, W), mode='bilinear', align_corners=False)[:, 0].cpu().numpy()
+        trk = kernel_track(dmap, (cx0, cy0), asp0 * h0, h0)
     nh = occ['nh']
     ok = ~np.isnan(raw['boxes']).any(1)
     # all_targets: every frame with history, no GT gate (the memory bank at test time has no V); training default keeps
@@ -150,12 +163,8 @@ def build(pred, raw, max_targets=None, rng=None, dev='cuda', all_targets=False):
     def comp(t):
         if raw['modes'][t] == 2:
             return bg.astype(np.float32), np.zeros((H, W), np.float32)
-        hist = list(range(t - nh, t))
-        cs = list(range(max(0, t - 12), t + 1))
-        fx = theil_at(cs, [trk[l, 0] for l in cs], [t] + hist)
-        return integral_image_and_mass([X[i].astype(np.float32) for i in hist],
-                                  [np.float32([[1, 0, fx[t] - fx[i]], [0, 1, 0]]) for i in hist], bg.astype(np.float32),
-                                  occ['tau'], occ['z0'])
+        hist, Ms = hist_warps(trk, t, nh, occ.get('shift_xy', False))
+        return integral_image_and_mass([X[i].astype(np.float32) for i in hist], Ms, bg.astype(np.float32), occ['tau'], occ['z0'])
     with ThreadPoolExecutor(8) as ex:
         CA = list(ex.map(comp, ts))
     with torch.autocast('cuda', dtype=AMP):

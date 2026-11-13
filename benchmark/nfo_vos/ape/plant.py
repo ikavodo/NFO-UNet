@@ -13,8 +13,8 @@ Scores, with |.| = pixel count on the grid:
   frag    = median_t |edge(O) & S_t| / sqrt|S_t|             occluder boundary inside the ape (fragmentation)
   recov   = mean_t |H_t & U_t| / |H_t|,  H_t = S_t & O,      share of the hidden ape that the last 6 frames saw:
             U_t = OR_{k=1..6} shift(S_{t-k} & ~O, c_t - c_{t-k})   (rigid box-centre motion, as the integral image's shift)
-Per clip and hidden-fraction bin (median h in [.15,.35), [.35,.55), [.55,.75]): the 64 most fragmented valid candidates
-get recov; the top K = 8 by recov, one per source, are kept.
+Per clip and hidden-fraction bin (median h in [.15,.35), [.35,.55), [.55,.75]): valid candidates at least as fragmented
+as the clip's median valid candidate (at most 512, random) get recov; the top K = 8 by recov, one per source, are kept.
     python -m benchmark.nfo_vos.ape.plant  -> results/ape/plants.csv, images/ape/plants.jpg
 Planting itself (plant()) composites the per-frame alpha and pixels of the same source crop over R: real sway.
 """
@@ -30,7 +30,7 @@ from benchmark.nfo_vos.ape.foliage import N
 G, SCALES, NOFF, CHUNK = 128, (0.7, 1.0, 1.4), 64, 4096
 HB, MIN_IN = (0.15, 0.75), N - 6
 BINS = ((0.15, 0.35), (0.35, 0.55), (0.55, 0.75))
-TOPF, K, LAG = 64, 8, 6
+MAXR, K, LAG = 512, 8, 6
 DEV = 'cuda'
 
 
@@ -129,11 +129,12 @@ def search(r, T, P, rng):
         keep.append(np.arange(k0, k0 + len(b))[good.cpu().numpy()]); H_.append(hm[good].cpu().numpy()); F_.append(fm[good].cpu().numpy())
     keep, H_, F_ = np.concatenate(keep), np.concatenate(H_), np.concatenate(F_)
     rows, stats = [], dict(video=r.video, ape_id=r.ape_id, n_cand=len(bx), n_valid=len(keep), ir=ir)
+    fmin = np.median(F_) if len(F_) else 0.0
     for lo, hi in BINS:
-        m = (H_ >= lo) & (H_ < hi); stats[f'n_{lo}'] = int(m.sum())
+        m = (H_ >= lo) & (H_ < hi) & (F_ >= fmin); stats[f'n_{lo}'] = int(m.sum())
         if not m.any():
             continue
-        idx = np.where(m)[0]; idx = idx[np.argsort(-F_[idx])[:TOPF]]
+        idx = np.where(m)[0]; idx = rng.permutation(idx)[:MAXR]
         b = torch.from_numpy(bx[keep[idx], :5]).float().to(DEV)
         O = (roi_align(P, b, (gh, gw), 1.0, 2, True)[:, 0] >= 0.5).float(); rc = recov(O, Sg, c).cpu().numpy()
         stats[f'recov_all_{lo}'] = float(np.median(rc)); used = set()
@@ -204,7 +205,7 @@ def main():
     for lo, _ in BINS:
         q = P_[P_.bin == lo]; n = q.groupby(['video', 'ape_id']).size()
         print(f'bin {lo}: clips with >= 1 plant {len(n)}/{len(C)}, with {K}: {(n == K).sum()}; selected recov median {q.recov.median():.3f} '
-              f'(rank 0: {q[q["rank"] == 0].recov.median():.3f}) vs top-frag pool median {St[f"recov_all_{lo}"].median():.3f}; '
+              f'(rank 0: {q[q["rank"] == 0].recov.median():.3f}) vs median fragmented valid placement {St[f"recov_all_{lo}"].median():.3f}; '
               f'frag median {q.frag.median():.3f}')
     montage(P_, C)
 

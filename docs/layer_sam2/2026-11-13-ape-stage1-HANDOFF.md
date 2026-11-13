@@ -36,3 +36,15 @@ Before that: the foliage pool (offline depth on the source frames, per-frame nea
 - `docs/layer_sam2/2026-11-13-feature-integral-design-notes.md`: learned feature-space integral image. It comes after
   Stage 1; masked attention, no warping; literature pass included.
 - PanAf facts and numbers: `../PanAf20K/docs/2026-11-13-handoff.md`.
+
+## Done 2026-11-13 (evening)
+- Foliage pool `ape/foliage.py`: 189 PanAf500 sources (non-eval, non-leaked), 40 frames of per-frame near-layer alpha
+  each (Depth Anything V2 Small), 70 s. Pixels are re-decoded at plant time.
+- Clash search `ape/plant.py` (user: preferred over blind placement, which yields a valid clip only 4.8% of the time):
+  per clip, foliage crops that hide 15-75% of the ape in >= 34/40 frames, are fragmented, and maximise the share of the
+  hidden ape seen in the last 6 frames (what the integral image can recover). 3 levels x <= 8 plants, 19 s for 119 clips.
+- Loader `ape/data.py` (`ApeClips`, `clip_raw`): fusion_data raw format, 0.7 s/clip CPU. `build()` takes an optional
+  `raw['track']` and `occ['shift_xy']`; NFO `build()` output IDENTICAL before/after (parity_snapshot itself fails on the
+  laptop: missing recog CSV for report.py).
+- Next: wire `ApeClips` into `fusion_adapter` training (env switch), the 9-video planted val set, then the expert review
+  of the training pipeline before the first run.
