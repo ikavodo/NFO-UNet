@@ -1,0 +1,316 @@
+% Reading list for the Layer-SAM project (segmenting animals and people behind fragmented foliage).
+% Read the categories in order. Each entry's `annote` field says why it is on the list and what to take from it.
+% Short vocabulary: B = empty scene (median background without the target); integral image = aligned,
+% background-gated average of the last few frames; tracker = box tracker on SAM 2 features.
+
+% ======================================================================
+% 1. Great apes in camera-trap video: the data we work on (START HERE)
+% Learn what the videos look like, what is annotated (boxes, behaviours, masks) and how the splits work.
+% Our training clips are clear PanAf ape videos with real foliage planted in front of the ape; SBR masks are the ground truth.
+% ======================================================================
+
+@misc{brookes_panaf20k_2024,
+	title = {{PanAf20K}: {A} {Large} {Video} {Dataset} for {Wild} {Ape} {Detection} and {Behaviour} {Recognition}},
+	url = {http://arxiv.org/abs/2401.13554},
+	doi = {10.48550/arXiv.2401.13554},
+	publisher = {arXiv},
+	author = {Brookes, Otto and Mirmehdi, Majid and Stephens, Colleen and Angedakin, Samuel and Corogenes, Katherine and Dowd, Dervla and Dieguez, Paula and Hicks, Thurston C. and Jones, Sorrel and Lee, Kevin and Leinert, Vera and Lapuente, Juan and McCarthy, Maureen S. and Meier, Amelia and Murai, Mizuki and Normand, Emmanuelle and Vergnes, Virginie and Wessling, Erin G. and Wittig, Roman M. and Langergraber, Kevin and Maldonado, Nuria and Yang, Xinyu and Zuberbuhler, Klaus and Boesch, Christophe and Arandjelovic, Mimi and Kuhl, Hjalmar and Burghardt, Tilo},
+	month = jan,
+	year = {2024},
+	note = {arXiv:2401.13554 [cs.CV]},
+	annote = {The main dataset: 20k camera-trap videos of chimpanzees and gorillas with ape boxes and behaviour labels. Read the data collection, annotation and split sections: every ape experiment uses these videos.},
+}
+
+@misc{braszczok_panaf-sbr_2026,
+	title = {The {PanAf}-{SBR} {Dataset}: {Social} {Behaviour} {Recognition} for {Wild} {Great} {Apes}},
+	url = {http://arxiv.org/abs/2607.17399},
+	doi = {10.48550/arXiv.2607.17399},
+	publisher = {arXiv},
+	author = {Braszczok, Maciej and Brookes, Otto and Ma, Xiaoxuan and Rossano, Federico and Zhu, Yixin and Arandjelovic, Mimi and Kühl, Hjalmar and Mirmehdi, Majid and Burghardt, Tilo},
+	month = jul,
+	year = {2026},
+	note = {arXiv:2607.17399 [cs.CV]},
+	annote = {Segmentation masks of apes in PanAf videos. These masks are our ground truth for the ape (what we score against and what we compute the visible part from).},
+}
+
+@article{brookes_panaf-fgbg_nodate,
+	title = {The {PanAf}-{FGBG} {Dataset}: {Understanding} the {Impact} of {Backgrounds} in {Wildlife} {Behaviour} {Recognition}},
+	author = {Brookes, Otto and Kukushkin, Maksim and Mirmehdi, Majid and Stephens, Colleen and Dieguez, Paula and Hicks, Thurston C and Jones, Sorrel and Lee, Kevin and McCarthy, Maureen S and Meier, Amelia and Normand, Emmanuelle and Wessling, Erin G and Wittig, Roman M and Langergraber, Kevin and Zuberbuhler, Klaus and Boesch, Lukas and Schmid, Thomas and Arandjelovic, Mimi and Kuhl, Hjalmar and Burghardt, Tilo},
+	annote = {Pairs ape videos with ape-free background clips from the same cameras, and shows models exploit the background. Relevant twice: our empty-scene estimate B, and our rule that training foliage never comes from an evaluation camera.},
+}
+
+@misc{yang_great_2019,
+	title = {Great {Ape} {Detection} in {Challenging} {Jungle} {Camera} {Trap} {Footage} via {Attention}-{Based} {Spatial} and {Temporal} {Feature} {Blending}},
+	url = {http://arxiv.org/abs/1908.11240},
+	doi = {10.48550/arXiv.1908.11240},
+	publisher = {arXiv},
+	author = {Yang, Xinyu and Mirmehdi, Majid and Burghardt, Tilo},
+	month = aug,
+	year = {2019},
+	note = {arXiv:1908.11240 [cs.CV]},
+	annote = {Detects apes in jungle footage by blending features over time to survive occlusion. Same domain, same idea of using past frames: the prior work our ape results must be compared with.},
+}
+
+@misc{wasmuht_sa-fari_2025,
+	title = {The {SA}-{FARI} {Dataset}: {Segment} {Anything} in {Footage} of {Animals} for {Recognition} and {Identification}},
+	url = {http://arxiv.org/abs/2511.15622},
+	doi = {10.48550/arXiv.2511.15622},
+	publisher = {arXiv},
+	author = {Wasmuht, Dante Francisco and Brookes, Otto and Schall, Maximillian and Palencia, Pablo and Beirne, Chris and Burghardt, Tilo and Mirmehdi, Majid and Kühl, Hjalmar and Arandjelovic, Mimi and Pottie, Sam and Bermant, Peter and Asheim, Brandon and Toh, Yi Jin and Elzinga, Adam and Holmberg, Jason and Whitworth, Andrew and Flatt, Eleanor and Gustafson, Laura and Ryali, Chaitanya and Hu, Yuan-Ting and Guo, Baishan and Westbury, Andrew and Saenko, Kate and Suris, Didac},
+	month = nov,
+	year = {2025},
+	note = {arXiv:2511.15622 [cs.CV]},
+	annote = {SAM-style masks for animals in camera-trap footage. A possible additional evaluation set, and a reference for how SAM behaves on wildlife.},
+}
+
+% ======================================================================
+% 2. SAM 2 and its video trackers: the backbone and the baselines
+% Focus on what each method changes in SAM 2 (memory, motion prior, prompts). We keep SAM 2 frozen and compare against its video mode and SAMURAI.
+% ======================================================================
+
+@article{ravi_sam_2025,
+	title = {{SAM} 2: {SEGMENT} {ANYTHING} {IN} {IMAGES} {AND} {VIDEOS}},
+	author = {Ravi, Nikhila and Gabeur, Valentin and Hu, Yuan-Ting and Hu, Ronghang and Ryali, Chaitanya and Ma, Tengyu and Khedr, Haitham and Rädle, Roman and Rolland, Chloe and Gustafson, Laura and Mintun, Eric and Girshick, Ross and Dollár, Piotr and Feichtenhofer, Christoph},
+	year = {2025},
+	annote = {The frozen backbone. Understand image encoder, prompt encoder, mask decoder and memory bank: we use the image model per frame and bypass the memory. Its video mode is our first baseline.},
+}
+
+@article{yang_samurai_2026,
+	title = {{SAMURAI}: {Motion}-{Aware} {Memory} for {Training}-{Free} {Visual} {Object} {Tracking} {With} {SAM} 2},
+	volume = {35},
+	url = {https://ieeexplore.ieee.org/document/11351313/},
+	doi = {10.1109/TIP.2026.3651835},
+	journal = {IEEE Transactions on Image Processing},
+	author = {Yang, Cheng-Yen and Huang, Hsiang-Wei and Chai, Wenhao and Jiang, Zhongyu and Hwang, Jenq-Neng},
+	year = {2026},
+	pages = {970--982},
+	annote = {SAM 2 plus a Kalman-filter motion prior and smarter memory selection, no training. Our main baseline; also shows how far motion priors alone get under occlusion.},
+}
+
+@misc{carion_sam_2026,
+	title = {{SAM} 3: {Segment} {Anything} with {Concepts}},
+	url = {http://arxiv.org/abs/2511.16719},
+	doi = {10.48550/arXiv.2511.16719},
+	publisher = {arXiv},
+	author = {Carion, Nicolas and Gustafson, Laura and Hu, Yuan-Ting and Debnath, Shoubhik and Hu, Ronghang and Suris, Didac and Ryali, Chaitanya and Alwala, Kalyan Vasudev and Khedr, Haitham and Huang, Andrew and Lei, Jie and Ma, Tengyu and Guo, Baishan and Kalla, Arpit and Marks, Markus and Greer, Joseph and Wang, Meng and Sun, Peize and Rädle, Roman and Afouras, Triantafyllos and Mavroudi, Effrosyni and Xu, Katherine and Wu, Tsung-Han and Zhou, Yu and Momeni, Liliane and Hazra, Rishi and Ding, Shuangrui and Vaze, Sagar and Porcher, Francois and Li, Feng and Li, Siyuan and Kamath, Aishwarya and Cheng, Ho Kei and Dollár, Piotr and Ravi, Nikhila and Saenko, Kate and Zhang, Pengchuan and Feichtenhofer, Christoph},
+	month = mar,
+	year = {2026},
+	note = {arXiv:2511.16719 [cs.CV]},
+	annote = {SAM 3 segments by concept (a text prompt such as 'chimpanzee'), no box needed. A candidate baseline for apes.},
+}
+
+@misc{zheng_segment_2025,
+	title = {Segment {Any} {Change}},
+	url = {http://arxiv.org/abs/2402.01188},
+	doi = {10.48550/arXiv.2402.01188},
+	publisher = {arXiv},
+	author = {Zheng, Zhuo and Zhong, Yanfei and Zhang, Liangpei and Ermon, Stefano},
+	month = feb,
+	year = {2025},
+	note = {arXiv:2402.01188 [cs.CV]},
+	annote = {Zero-shot change detection by comparing SAM features of two images. Our tracker does the same: it compares SAM 2 features of the frame with those of the empty scene.},
+}
+
+@misc{lee_robust_2026,
+	title = {Robust {Promptable} {Video} {Object} {Segmentation}},
+	url = {http://arxiv.org/abs/2605.12006},
+	doi = {10.48550/arXiv.2605.12006},
+	publisher = {arXiv},
+	author = {Lee, Sohyun and Gwon, Yeho and Hoyer, Lukas and Schindler, Konrad and Sakaridis, Christos and Kwak, Suha},
+	month = may,
+	year = {2026},
+	note = {arXiv:2605.12006 [cs.CV]},
+	annote = {A benchmark of promptable video segmentation under real-world corruptions. Check what corruptions it covers: it defines what a 'robust video segmentation' benchmark looks like today.},
+}
+
+@article{zhou_camsam2_nodate,
+	title = {{CamSAM2}: {Segment} {Anything} {Accurately} in {Camouflaged} {Videos}},
+	author = {Zhou, Yuli and Li, Yawei and Fu, Yuqian and Benini, Luca and Konukoglu, Ender and Sun, Guolei},
+	annote = {SAM 2 adapted to camouflaged objects that blend into vegetation. Closest SAM 2 variant in spirit to our foliage problem.},
+}
+
+% ======================================================================
+% 3. Seeing through occluders: the ancestry of our integral image
+% The core idea of the method: when the occluder is static and the target moves, different frames reveal different parts of the target; aligning and averaging them 'sees through' the foliage.
+% Read this category carefully: the novelty of our approach is judged against it.
+% ======================================================================
+
+@article{vaish_reconstructing_2006,
+	title = {Reconstructing {Occluded} {Surfaces} {Using} {Synthetic} {Apertures}: {Stereo}, {Focus} and {Robust} {Measures}},
+	journal = {IEEE Computer Society Conference on Computer Vision and Pattern Recognition},
+	author = {Vaish, V and Levoy, M and Szeliski, R and Zitnick, C L and Kang, Sing Bing},
+	year = {2006},
+	annote = {The original synthetic-aperture argument: average many views and the occluder blurs away; robust statistics reject occluder samples. Our change gate is such a robust measure.},
+}
+
+@article{amalaarokianathanInverseAirborneOptical2022,
+	title = {Inverse {Airborne} {Optical} {Sectioning}},
+	volume = {6},
+	url = {https://www.mdpi.com/2504-446X/6/9/231},
+	doi = {10.3390/drones6090231},
+	number = {9},
+	journal = {Drones},
+	author = {Amala Arokia Nathan, Rakesh John and Kurmi, Indrajit and Bimber, Oliver},
+	month = sep,
+	year = {2022},
+	pages = {231},
+	annote = {Static camera, target moving behind foliage: exactly our setting. The direct ancestor of our integral image.},
+}
+
+@article{amala_arokia_nathan_synthetic_2023,
+	title = {Synthetic {Aperture} {Anomaly} {Imaging} for {Through}-{Foliage} {Target} {Detection}},
+	volume = {15},
+	url = {https://www.mdpi.com/2072-4292/15/18/4369},
+	doi = {10.3390/rs15184369},
+	number = {18},
+	journal = {Remote Sensing},
+	author = {Amala Arokia Nathan, Rakesh John and Bimber, Oliver},
+	month = sep,
+	year = {2023},
+	pages = {4369},
+	annote = {Detects targets through foliage by integrating anomalies against the background. The closest prior art to our gate-against-background-then-integrate step; know precisely what it does.},
+}
+
+@misc{liu_learning_2020,
+	title = {Learning to {See} {Through} {Obstructions}},
+	url = {http://arxiv.org/abs/2004.01180},
+	doi = {10.48550/arXiv.2004.01180},
+	publisher = {arXiv},
+	author = {Liu, Yu-Lun and Lai, Wei-Sheng and Yang, Ming-Hsuan and Chuang, Yung-Yu and Huang, Jia-Bin},
+	month = apr,
+	year = {2020},
+	note = {arXiv:2004.01180 [cs.CV]},
+	annote = {Removes fences and reflections from a few frames using learned flow. The learned, pixel-space way of seeing through obstructions; here the camera moves rather than the target.},
+}
+
+@inproceedings{tsogkas_efficient_2023,
+	address = {Waikoloa, HI, USA},
+	title = {Efficient {Flow}-{Guided} {Multi}-frame {De}-fencing},
+	isbn = {978-1-6654-9346-8},
+	url = {https://ieeexplore.ieee.org/document/10030531/},
+	doi = {10.1109/WACV56688.2023.00188},
+	booktitle = {2023 {IEEE}/{CVF} {Winter} {Conference} on {Applications} of {Computer} {Vision} ({WACV})},
+	publisher = {IEEE},
+	author = {Tsogkas, Stavros and Zhang, Fengjia and Jepson, Allan and Levinshtein, Alex},
+	month = jan,
+	year = {2023},
+	pages = {1838--1847},
+	annote = {A faster flow-guided multi-frame de-fencing. A pixel-space competitor a reviewer would name.},
+}
+
+% ======================================================================
+% 4. Temporal feature aggregation: how to learn the integration
+% Our integral image averages pixels with hand-set weights. These papers combine several frames in feature space with learned weights: the toolbox for a learned version.
+% ======================================================================
+
+@misc{zhu_flow-guided_2017,
+	title = {Flow-{Guided} {Feature} {Aggregation} for {Video} {Object} {Detection}},
+	url = {http://arxiv.org/abs/1703.10025},
+	doi = {10.48550/arXiv.1703.10025},
+	publisher = {arXiv},
+	author = {Zhu, Xizhou and Wang, Yujie and Dai, Jifeng and Yuan, Lu and Wei, Yichen},
+	month = aug,
+	year = {2017},
+	note = {arXiv:1703.10025 [cs.CV]},
+	annote = {Warps features of nearby frames by optical flow and averages them with learned weights. The feature-space version of our integral image; note why warping struggles when most of the object is hidden.},
+}
+
+@misc{zhu_deformable_2021,
+	title = {Deformable {DETR}: {Deformable} {Transformers} for {End}-to-{End} {Object} {Detection}},
+	url = {http://arxiv.org/abs/2010.04159},
+	doi = {10.48550/arXiv.2010.04159},
+	publisher = {arXiv},
+	author = {Zhu, Xizhou and Su, Weijie and Lu, Lewei and Li, Bin and Wang, Xiaogang and Dai, Jifeng},
+	month = mar,
+	year = {2021},
+	note = {arXiv:2010.04159 [cs.CV]},
+	annote = {Attention that samples a few learned offsets instead of all positions. One design option for a learned, efficient integration.},
+}
+
+@misc{liu_objects_2023,
+	title = {Objects do not disappear: {Video} object detection by single-frame object location anticipation},
+	url = {http://arxiv.org/abs/2308.04770},
+	doi = {10.48550/arXiv.2308.04770},
+	publisher = {arXiv},
+	author = {Liu, Xin and Nejadasl, Fatemeh Karimi and Gemert, Jan C. van and Booij, Olaf and Pintea, Silvia L.},
+	month = aug,
+	year = {2023},
+	note = {arXiv:2308.04770 [cs.CV]},
+	annote = {Uses smooth object motion as a prior and as supervision. Same assumption as our constant-velocity tracker.},
+}
+
+@article{zheng_stratiformer_2026,
+	title = {{StratiFormer}: {Stratified} {Temporal} {Transformer} for video object detection},
+	volume = {346},
+	url = {https://linkinghub.elsevier.com/retrieve/pii/S0950705126008439},
+	doi = {10.1016/j.knosys.2026.116117},
+	journal = {Knowledge-Based Systems},
+	author = {Zheng, Wentao and Zheng, Hong and Sun, Yuquan and Jing, Ying},
+	month = jul,
+	year = {2026},
+	pages = {116117},
+	annote = {A recent temporal transformer for video detection under blur and occlusion: where this line of work stands now.},
+}
+
+@misc{chan_basicvsr_2021,
+	title = {{BasicVSR}++: {Improving} {Video} {Super}-{Resolution} with {Enhanced} {Propagation} and {Alignment}},
+	url = {http://arxiv.org/abs/2104.13371},
+	doi = {10.48550/arXiv.2104.13371},
+	publisher = {arXiv},
+	author = {Chan, Kelvin C. K. and Zhou, Shangchen and Xu, Xiangyu and Loy, Chen Change},
+	month = apr,
+	year = {2021},
+	note = {arXiv:2104.13371 [cs.CV]},
+	annote = {Video super-resolution: align neighbouring frames (flow-guided deformable alignment), then fuse. A well-engineered template for align-then-fuse.},
+}
+
+% ======================================================================
+% 5. Video transformers and layered scenes: concepts behind the design
+% ======================================================================
+
+@article{wang_representing_1994,
+	title = {Representing moving images with layers},
+	volume = {3},
+	url = {http://ieeexplore.ieee.org/document/334981/},
+	doi = {10.1109/83.334981},
+	number = {5},
+	journal = {IEEE Transactions on Image Processing},
+	author = {Wang, J.Y.A. and Adelson, E.H.},
+	month = sep,
+	year = {1994},
+	pages = {625--638},
+	annote = {A scene as ordered layers, each with its own motion and transparency. The idea behind the name Layer-SAM: static foliage layer in front, moving target behind.},
+}
+
+@article{patrick_keeping_nodate,
+	title = {Keeping {Your} {Eye} on the {Ball}: {Trajectory} {Attention} in {Video} {Transformers}},
+	author = {Patrick, Mandela and Campbell, Dylan and Asano, Yuki},
+	annote = {Trajectory attention: attention pooled along motion paths in video. The closest prior for a transformer-native integral image.},
+}
+
+@inproceedings{herzig_object-region_2022,
+	address = {New Orleans, LA, USA},
+	title = {Object-{Region} {Video} {Transformers}},
+	isbn = {978-1-6654-6946-3},
+	url = {https://ieeexplore.ieee.org/document/9879712/},
+	doi = {10.1109/CVPR52688.2022.00315},
+	booktitle = {2022 {IEEE}/{CVF} {Conference} on {Computer} {Vision} and {Pattern} {Recognition} ({CVPR})},
+	publisher = {IEEE},
+	author = {Herzig, Roei and Ben-Avraham, Elad and Mangalam, Karttikeya and Bar, Amir and Chechik, Gal and Rohrbach, Anna and Darrell, Trevor and Globerson, Amir},
+	month = jun,
+	year = {2022},
+	pages = {3138--3149},
+	annote = {Object boxes as tokens inside a video transformer. A way to feed our tracker box into a learned temporal model.},
+}
+
+@misc{ye_deformable_2022,
+	title = {Deformable {Sprites} for {Unsupervised} {Video} {Decomposition}},
+	url = {http://arxiv.org/abs/2204.07151},
+	doi = {10.48550/arXiv.2204.07151},
+	publisher = {arXiv},
+	author = {Ye, Vickie and Li, Zhengqi and Tucker, Richard and Kanazawa, Angjoo and Snavely, Noah},
+	month = apr,
+	year = {2022},
+	note = {arXiv:2204.07151 [cs.CV]},
+	annote = {Decomposes a video into moving layers by per-video optimisation. The principled but slow version of what our integral image approximates.},
+}
