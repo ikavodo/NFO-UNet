@@ -101,7 +101,8 @@ def evaluate(pred, net, its, agg=None):
             tp = (pr & H & keep).sum().item()
             res[a].append((tp / max(((pr | H) & keep).sum().item(), 1), tp / max((pr & keep).sum().item(), 1),
                            tp / max((H & keep).sum().item(), 1)))
-        a_np = it['a'][0]; on = a256(it['H'])[...] > 0.5
+        a_np = f['a'][0].float().cpu().numpy() if agg is not None else it['a'][0]   # the mass the adapter actually read
+        on = a256(it['H'])[...] > 0.5
         stats.append((float(a_np.sum()), float(a_np[on].mean()) if on.any() else np.nan))
     net.train()
     out = {a: dict(zip('JPR', np.mean(v, 0))) for a, v in res.items()}

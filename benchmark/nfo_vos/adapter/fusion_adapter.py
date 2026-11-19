@@ -27,7 +27,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.ops import sigmoid_focal_loss
 
-from benchmark.nfo_vos.adapter.fusion_data import Clips, build
+from benchmark.nfo_vos.adapter.fusion_data import Clips, a256, build
 
 OUT = 'results/benchmark/rr/layers_fusion_adapter'
 SAM2_CKPT = os.path.abspath(os.environ.get('NFO_SAM2_CKPT', '../samurai/sam2/checkpoints/sam2.1_hiera_base_plus.pt'))
@@ -198,6 +198,8 @@ def evaluate(pred, net, val, agg=None):
             with torch.autocast('cuda', dtype=AMP):
                 f, _ = with_feat(agg, f)
             meta['a_mass'] = [float(x) for x in f['a'].sum((1, 2)).cpu()]
+            A_ = f['a'].cpu().numpy()                 # learned mass on the visible person (build() leaves it empty in feat mode)
+            meta['a_on'] = [float(A_[i][a256(V) > 0.5].mean()) if V.any() else np.nan for i, V in enumerate(meta['Vn'])]
         fb = dict(f, box=f['box_trk'])          # tracker centre, t0 box size: the same GT-free control as on NFO
         with torch.autocast('cuda', dtype=AMP):
             o = net(f, sam=pred.model)
