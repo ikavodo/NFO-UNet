@@ -398,6 +398,22 @@ foliage:
   - But swapping in the pixel mass changes the adapter by only +0.004 (`MASS=pixel`), so the mass is not the
     bottleneck.
 
+**G2 (2026-11-19, seq1 full passes, 8 crossings / 20 hand frames, laptop env @lap): PASS.** Cluster job (FEAT=1, seed 0,
+1000 steps, RTX 5000 fp16) died at the it-800 validation (allocator fragmentation: 8.5 GB allocated, 5.5 GB reserved-unused;
+fixed in 61ef448 with expandable_segments + empty_cache). Selected it700 = best seq1 selection J (0.597; noC 0.590).
+
+| arm | box AUC | hand J | ms/frame (dump) |
+|---|---|---|---|
+| adapter-feat (one encoder pass, it700) | 0.572 | 0.565 | 41–46 |
+| adapter-feat-noC (integral removed) | 0.568 | 0.569 | 41–45 |
+| adapter-pf (two passes, pixel integral, it200) | 0.544 | 0.523 | |
+| trk (SAM2 + tracker prompts) | 0.468 | 0.483 | |
+
+feat − pf: box AUC +0.028 [+0.015, +0.041], hand J +0.042 [+0.016, +0.072]. **But feat − noC: AUC +0.004 [−0.003, +0.012],
+J −0.004 [−0.025, +0.014]:** on seq1 the learned feature integral adds nothing measurable; the gain over adapter-pf is
+confounded by step (700 vs 200) and is carried by the Fusion residuals on F_t / F_B. Next: the integral's contribution is the
+open question — pixel adapter trained to it700 (same step) and/or seq2–4 feat vs noC over 3 seeds before any claim.
+
 ## Code map
 
 - `benchmark/nfo_vos/downstream/`:
