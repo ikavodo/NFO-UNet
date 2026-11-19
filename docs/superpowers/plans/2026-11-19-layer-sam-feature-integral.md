@@ -485,7 +485,12 @@ TC_BATCH=1 $PY -m benchmark.nfo_vos.tools.timing feat
   - `$PY -m benchmark.nfo_vos.tools.remote_smoke`;
   - `FEAT=1 AGG=results/benchmark/rr/feat_integral/stage0_seed0.pt SEED=0 STEPS=1000 sbatch benchmark/nfo_vos/adapter/fusion_adapter.sbatch`.
   - Copy back `feat_seed0/` and its log.
-- [ ] **Step 2: Score both checkpoints in one environment.** On the laptop, for the seq1 windows only:
+- [ ] **Step 2 (revised 2026-11-19, user: full passes only): score on the full-pass protocol, seq1, one environment.**
+  - `NFO_RUN=fullpass trials --to-pass-end --first-per-pass` gives 32 whole crossings; seq1 = clips 0–7, 772 frames.
+  - `NFO_RUN=fullpass MASK_TAG=@lap dump_arms {adapter-pf, trk, adapter-feat} 0..7`.
+  - Box AUC and hand J from those masks, seq1 rows.
+  - The 40-frame window version below is superseded.
+- [ ] **(superseded) Step 2: Score both checkpoints in one environment.** On the laptop, for the seq1 windows only:
   - `dump_arms adapter-pf` (pixel seed 0) and `dump_arms adapter-feat`;
   - `box_metrics score adapter-pf adapter-feat` (seq1 rows);
   - hand J for both from `fusion_nfo.evaluate(pred, net, items('select'))`.
