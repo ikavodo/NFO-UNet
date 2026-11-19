@@ -180,6 +180,31 @@ Options:
 - **Pass:** p90 ε_16 < ½ median δ_16, for the chosen shift method.
 - Fail for both → the RoPE fallback (a design change, back to the user).
 
+**G0 result (measured 2026-11-19, 30 val clips, `tools/shift_equivariance.py`, commit 81424e2): FAIL by the rule, only at
+sub-cell shifts.** Columns: ε = equivariance error, ε0 = no-shift baseline, δ = person-vs-empty-scene contrast, all
+1 − cos on person cells, centred.
+
+| stride | Δ (s16 cells) | mode | median ε | p90 ε | median ε0 | median δ |
+|---|---|---|---|---|---|---|
+| 16 | 0.25 | bilinear | 0.157 | 0.339 | 0.167 | 0.919 |
+| 16 | 0.5 | bilinear | 0.268 | **0.516** | 0.376 | 0.919 |
+| 16 | 0.5 | roll | 0.376 | 0.700 | 0.376 | 0.919 |
+| 16 | 1 / 2 / 4 | either | 0.037 / 0.034 / 0.043 | 0.137 / 0.155 / 0.169 | 0.686 / 0.849 / 0.930 | 0.92 |
+| 8 | 0.25 (half an s8 cell) | bilinear | 0.350 | 0.811 | 0.425 | 0.637 |
+| 4 | 0.25 (one s4 cell) | either | 0.018 | 0.083 | 0.335 | 0.573 |
+
+- Reading:
+  - The features are close to **equivariant for whole-cell shifts** at every stride: ε ≈ 4% of δ at s16.
+  - A **half-cell phase offset** changes a person cell's s16 feature by ≈ 30% of the person-vs-background contrast
+    (median), and by > 50% at p90.
+  - Bilinear interpolation recovers only part of it (0.376 → 0.268).
+  - This is the sub-stride aliasing known for CNNs/ViTs (Zhang, ICML 2019, arXiv 1904.11486; Azulay & Weiss, JMLR 2019,
+    arXiv 1805.12177).
+- **Not fixable by positional encoding.** The feature at the shifted phase is not in the cached frame, so the RoPE
+  fallback cannot help.
+- Consequence: about half of the history keys carry a phase error > ¼ cell at s16. G1 measures what that costs the
+  integral, end to end at the representation level.
+
 **G1 — representation, after stage 0 (the cheapest test of "learned beats hand-set").**
 - Setup: on Ω (hidden recoverable cells), held-out synthetic clips, compare cos(·, E(X̃_t)) for:
   - Ĉ_learned, after stage 0;
@@ -189,6 +214,35 @@ Options:
 - **Kill** if Ĉ_learned ≤ F_t at stride 16.
 - Ĉ_learned − Ĉ_fixed is reported, with a clip-bootstrap CI.
   - If it is ≤ 0, drop the learned part and run `feat-fixed` as the main arm.
+
+**G1 result (measured 2026-11-19; synthetic val clips 0–29, 16 targets each; stage 0 = 400 steps, best at step 400,
+4.7 s/it on the laptop; `adapter/feat_stage0.py`, commit after 81424e2): verdict LEARNED>FIXED.**
+
+Mean cos(·, E(X̃_t)) on hidden-recoverable person cells, per clip then averaged:
+
+| stride | learned (stage 0) | uniform (step 0, untrained) | fixed (recency × feature gate) | pixel enc(C) (today) | F_t (do nothing) | floor: F_t on visible cells |
+|---|---|---|---|---|---|---|
+| 16 | **0.493** | 0.446 | 0.290 | 0.425 | 0.319 | 0.709 |
+| 8 | 0.502 | 0.504 | 0.446 | 0.410 | 0.355 | |
+| 4 | 0.588 | 0.581 | 0.494 | 0.467 | 0.335 | |
+
+Clip-bootstrap 95% CIs at s16:
+- learned − pixel **+0.068 [+0.046, +0.090]**;
+- learned − F_t +0.174 [+0.145, +0.202];
+- learned − fixed +0.203 [+0.177, +0.229].
+
+Val L_C fell 0.4896 → 0.4724.
+
+Reading:
+1. Even uniform averaging of the cached, shifted features (with the null key) is closer to the clean features on hidden
+   cells than today's re-encoded pixel integral, at every stride.
+2. Stage-0 learning adds +0.047 at s16 over uniform and ≈ 0 at s8/s4. The weights are computed at s16 and upsampled,
+   so finer strides inherit them.
+3. **The fixed control is weak.** The feature-space port of the adaptive gate abstains on most cells, so its Ĉ ≈ B,
+   below F_t at s16. "Learned > fixed" therefore says little. The informative comparisons are learned vs uniform and
+   learned vs pixel.
+4. **Caveat (GPJATK 2026-10-06):** a higher representation cosine did not imply a better decode there. Only G2 (adapter
+   training, seq1 masks) answers the actual question.
 
 ## 7. Arms and decisions
 
