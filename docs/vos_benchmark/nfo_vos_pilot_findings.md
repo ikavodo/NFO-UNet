@@ -391,6 +391,12 @@ foliage:
 
 - PASS: the new arm ≥ pixel − 0.02 on both. If it passes: 3 seeds and the seq2–4 headline, then the occluder mix.
 - If misalignment limits it: neighbourhood / deformable attention around the tracker-aligned position (design §4).
+- **In-run check at step 200** (laptop, 12 seq1 selection frames).
+  - The integral's contribution (adapter − noC) is +0.010; the gain over trk-box is +0.035. The pixel run at step 200
+    had +0.020 / +0.046.
+  - The learned evidence mass is weak on NFO (mean on the visible person 0.13 vs 0.42 synthetic; stage-0 module).
+  - But swapping in the pixel mass changes the adapter by only +0.004 (`MASS=pixel`), so the mass is not the
+    bottleneck.
 
 ## Code map
 
