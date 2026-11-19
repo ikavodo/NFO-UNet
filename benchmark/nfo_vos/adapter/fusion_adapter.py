@@ -259,7 +259,7 @@ def main(steps=1500, seed=0, eval_every=100, max_targets=32, n_val_fast=12, test
     if os.environ.get('FEAT') == '1':
         from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
         agg = FeatIntegral(sam.no_mem_embed).cuda()
-        agg.load_compat(torch.load(os.environ['AGG'], map_location='cuda'))
+        agg.load_compat(torch.load(os.environ.get('AGG') or 'results/benchmark/rr/feat_integral/stage0c_seed0.pt', map_location='cuda'))
     n_par = sum(p_.numel() for p_ in net.parameters()) + (sum(p_.numel() for p_ in agg.parameters()) if agg else 0)
     groups = [{'params': list(net.parameters())}] + ([{'params': list(agg.parameters())}] if agg else [])
     opt = torch.optim.AdamW(groups, lr=3e-4, weight_decay=1e-4)
