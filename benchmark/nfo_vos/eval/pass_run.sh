@@ -41,7 +41,7 @@ elif [ "$STAGE" = vidtrk ]; then
 elif [ "$STAGE" = heldout ]; then
   # One-pass feature adapter (it700, selected on seq1) on the 32 fullpass clips, then ONE scoring job (cluster env, same as
   # the existing b0-c2 / t1-c2 / b0trk-c2 / adapter-pf|s1|s2 masks): box AUC (all arms, Δ vs t1-c2) + seq2–4 hand J.
-  export FEAT_CKPT=${FEAT_CKPT:-results/benchmark/rr/layers_fusion_adapter/feat_seed0/feat_seed0/fusion_it700.pt}
+  export FEAT_CKPT=${FEAT_CKPT:-results/benchmark/rr/layers_fusion_adapter/feat_seed0/fusion_it700.pt}   # cluster layout (the laptop copy is nested feat_seed0/feat_seed0/)
   N=$("$PYTHON" -c "import json; print(len(json.load(open('results/benchmark/fullpass/trials.json'))))")
   J=$(NFO_RUN=fullpass ARM=adapter-feat sbatch --parsable --export=ALL --array=0-$((N - 1)) --time=01:00:00 benchmark/nfo_vos/eval/dump_arms.sbatch)
   A="adapter-feat adapter-pf adapter-s1 adapter-s2 b0-c2 t1-c2 b0trk-c2 trk"
