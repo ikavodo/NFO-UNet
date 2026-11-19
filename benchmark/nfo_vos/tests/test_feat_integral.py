@@ -113,3 +113,21 @@ def test_feat_loss_zero_on_empty_omega():                              # Review 
     Om = {s: torch.zeros(2, 1, x.shape[-2], x.shape[-1], dtype=torch.bool) for s, x in C.items()}
     l = feat_loss(C, {s: torch.randn_like(x) for s, x in C.items()}, Om, torch.zeros(1, 256, 1, 1))
     assert l.item() == 0 and l.requires_grad
+
+
+# ---- Task 3: build(feat=True) ----
+
+@GPU
+def test_build_feat_shapes_and_masks():
+    from benchmark.nfo_vos.adapter.fusion_adapter import image_predictor
+    from benchmark.nfo_vos.adapter.fusion_data import a256, build, clip_raw, specs
+    raw = clip_raw(specs('val')[0], np.random.default_rng(0)); raw['modes'][:] = 0; raw['modes'][-1] = 2
+    f, meta = build(image_predictor(), raw, all_targets=True, feat=True)
+    n, nh = len(meta['ts']), raw['occ']['nh']
+    assert f['K16'].shape == (n, nh, 256, 64, 64) and f['K4'].shape == (n, nh, 32, 256, 256)
+    assert 'C16' not in f and f['T8'].shape == (n, 64, 128, 128)
+    assert not f['Kvalid16'][-1].any() and f['Kvalid16'][0].any()     # mode 2 → all keys invalid (Review Focus 2)
+    S16 = torch.as_tensor(np.stack([a256(raw['S'][t]) for t in meta['ts']]))[:, None, 1::4, 1::4] > 0.5
+    assert f['Om16'].shape == (n, 1, 64, 64) and f['Om4'].shape == (n, 1, 256, 256)
+    assert (f['Om16'].cpu() & ~S16).float().mean() < 0.01            # Ω ⊆ person (up to area-resampling at the rim)
+    assert f['age'][0].tolist() == list(range(nh, 0, -1))

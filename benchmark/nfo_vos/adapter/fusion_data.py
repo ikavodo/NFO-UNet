@@ -132,12 +132,60 @@ def hist_warps(trk, t, nh, xy=False):
 
 
 @torch.no_grad()
-def build(pred, raw, max_targets=None, rng=None, dev='cuda', all_targets=False):
+def _cover(m, hw):
+    """Area coverage > 0.5 of a native-size mask on the hw × hw feature grid (SAM2 resizes anisotropically to 1024²)."""
+    return cv2.resize(m.astype(np.float32), (hw, hw), interpolation=cv2.INTER_AREA) > 0.5
+
+
+def _feat_inputs(pred, raw, ts, trk, nh, Fs, dev):
+    """Inputs of the learned feature integral for targets ts (build(feat=True)):
+    K16/8/4 [n, nh, C, h, w]   cached features of frames t−nh..t−1, shifted onto t by the x-only Theil–Sen track fit
+                               (hist_warps; dx in the 1024 frame), bilinear (feat_integral.shift_keys; G0, 2026-11-19)
+    Kvalid16 [n, nh, 1, 64, 64] source cell inside the image; all False for mode-2 targets (integral image withheld)
+    age [n, nh]                nh..1
+    T16/8/4 [n, C, h, w]       features of Xt (frame t, same noise and sway, no occluder): the clean-feature target
+    Om16/8/4 [n, 1, h, w]      hidden-recoverable person cells: S_t ∧ ¬V_t ∧ (∪_k V_k warped onto t), coverage > 0.5
+    Vis16 [n, 1, 64, 64]       visible person cells (the loss floor)
+    mu16 [1, 256, 1, 1]        SAM2's no_mem_embed (centring for stride-16 cosines)"""
+    from benchmark.nfo_vos.adapter.feat_integral import shift_keys
+    H, W = raw['X'].shape[1:]
+    hidx, dx, Om, Vis = [], [], {s: [] for s in ('16', '8', '4')}, []
+    for t in ts:
+        hist, Ms = hist_warps(trk, t, nh)
+        hidx.append(hist); dx.append([M[0, 2] * 1024 / W for M in Ms])
+        O = np.zeros((H, W), bool)
+        for i, M in zip(hist, Ms):
+            O |= cv2.warpAffine(raw['V'][i].astype(np.uint8), M, (W, H), flags=cv2.INTER_NEAREST) > 0
+        hid = O & raw['S'][t] & ~raw['V'][t]
+        for s, hw in (('16', 64), ('8', 128), ('4', 256)):
+            Om[s].append(_cover(hid, hw))
+        Vis.append(_cover(raw['V'][t], 64))
+    hidx = torch.as_tensor(hidx, device=dev); dx = torch.as_tensor(np.float32(dx), device=dev)
+    o = {}
+    for s, Fx in zip(('16', '8', '4'), Fs):
+        o[f'K{s}'], v = shift_keys(Fx[hidx], dx, int(s))
+        if s == '16':
+            o['Kvalid16'] = v & torch.as_tensor(raw['modes'][ts] != 2, device=dev)[:, None, None, None, None]
+        o[f'Om{s}'] = torch.as_tensor(np.stack(Om[s]), device=dev)[:, None]
+    o['Vis16'] = torch.as_tensor(np.stack(Vis), device=dev)[:, None]
+    o['age'] = torch.arange(nh, 0, -1, device=dev).repeat(len(ts), 1)
+    with torch.autocast('cuda', dtype=AMP):
+        T16, T8, T4 = _enc(pred, raw['Xt'][ts])
+    o.update(T16=T16.float(), T8=T8.float(), T4=T4.float())
+    o['mu16'] = pred.model.no_mem_embed.detach().float().reshape(1, -1, 1, 1)
+    return o
+
+
+def build(pred, raw, max_targets=None, rng=None, dev='cuda', all_targets=False, feat=False, with_pixel=False):
     """GPU side of one clip, the test-time path: encode every frame once (+ the empty scene); kernel-f16 tracker
     (adapter/tracker.kernel_track on 1 − cos(F_t, F_B)) from the jittered t0 box; for each target t, x-only Theil–Sen
     on the track over [t-12, t] aligns frames t-n_h..t-1 into V̂'s gated integral image (integral_image_and_mass with the clip's
     τ, z0); the integral images are encoded. Each frame's F_t is reused as its own target input, so the encode cost per
-    sample is ≈ (T + K + 1) / K. Returns (f, meta)."""
+    sample is ≈ (T + K + 1) / K. Returns (f, meta).
+    feat=True (learned feature integral, adapter/feat_integral.py): no pixel integral image / no enc(C); instead the cached
+    frame features of each target's history, shifted onto t (K16/8/4, Kvalid16, age), the targets T16/8/4 = features of the
+    noise-matched occluder-free frame Xt, and the hidden-recoverable cells Om16/8/4 (see _feat_inputs). with_pixel=True
+    additionally keeps the pixel integral's features as P16/8/4 and its mass as a_pix (G1 comparison)."""
     from concurrent.futures import ThreadPoolExecutor
     from benchmark.nfo_vos.adapter.tracker import kernel_track
     X, bg, occ = raw['X'], raw['bg'], raw['occ']
@@ -167,10 +215,12 @@ def build(pred, raw, max_targets=None, rng=None, dev='cuda', all_targets=False):
             return bg.astype(np.float32), np.zeros((H, W), np.float32)
         hist, Ms = hist_warps(trk, t, nh, occ.get('shift_xy', False))
         return integral_image_and_mass([X[i].astype(np.float32) for i in hist], Ms, bg.astype(np.float32), occ['tau'], occ['z0'])
-    with ThreadPoolExecutor(8) as ex:
-        CA = list(ex.map(comp, ts))
-    with torch.autocast('cuda', dtype=AMP):
-        C16, C8, C4 = _enc(pred, np.stack([u8(c) for c, _ in CA]))
+    pix = not feat or with_pixel
+    if pix:
+        with ThreadPoolExecutor(8) as ex:
+            CA = list(ex.map(comp, ts))
+        with torch.autocast('cuda', dtype=AMP):
+            C16, C8, C4 = _enc(pred, np.stack([u8(c) for c, _ in CA]))
     idx = torch.as_tensor(ts, device=dev)
     sc = np.array([1024 / W, 1024 / H] * 2, np.float32)
     boxes = []
@@ -183,21 +233,26 @@ def build(pred, raw, max_targets=None, rng=None, dev='cuda', all_targets=False):
         boxes.append(np.array([cx - asp * h / 2, cy - h / 2, cx + asp * h / 2, cy + h / 2], np.float32) * sc)
     n = len(ts)
     f = {'X16': F16[idx].float(), 'X8': F8[idx].float(), 'X4': F4[idx].float(),
-         'C16': C16.float(), 'C8': C8.float(), 'C4': C4.float(),
          'B16': B16.float().expand(n, -1, -1, -1), 'B8': B8.float().expand(n, -1, -1, -1), 'B4': B4.float().expand(n, -1, -1, -1),
-         'a': torch.as_tensor(np.stack([a256(a) for _, a in CA]), device=dev),
          'V': torch.as_tensor(np.stack([a256(raw['V'][t]) for t in ts]), device=dev),
          'W': torch.as_tensor(np.stack([loss_weights(raw['S'][t], raw['V'][t]) for t in ts]), device=dev),
          'box': torch.as_tensor(np.stack(boxes), device=dev),
          'mode': torch.as_tensor(raw['modes'][ts].astype(np.float32), device=dev)}
+    if pix:
+        cf = {'C16': C16.float(), 'C8': C8.float(), 'C4': C4.float(),
+              'a': torch.as_tensor(np.stack([a256(a) for _, a in CA]), device=dev)}
+        f.update({('P' + k[1:] if k[0] == 'C' else 'a_pix'): v for k, v in cf.items()} if feat else cf)
+    if feat:
+        f.update(_feat_inputs(pred, raw, ts, trk, nh, (F16, F8, F4), dev))
     f['pt'] = torch.stack([(f['box'][:, 0] + f['box'][:, 2]) / 2, (f['box'][:, 1] + f['box'][:, 3]) / 2], 1)
     f['trk'] = torch.as_tensor(trk[ts] * sc[:2], device=dev).float()        # tracker position, 1024 frame
     hb = np.array([asp0 * h0 / 2, h0 / 2], np.float32)                     # tracker box: t0 size, tracker centre
     f['box_trk'] = torch.as_tensor(np.concatenate([trk[ts] - hb, trk[ts] + hb], 1) * sc, device=dev).float()
     Vn = [raw['V'][t] for t in ts]
-    on = [float(np.asarray(f['a'][i].cpu())[a256(Vn[i]) > 0.5].mean()) if Vn[i].any() else np.nan for i in range(n)]
+    A_ = f.get('a', f.get('a_pix'))
+    on = [float(np.asarray(A_[i].cpu())[a256(Vn[i]) > 0.5].mean()) if Vn[i].any() else np.nan for i in range(n)] if A_ is not None else []
     meta = dict(Vn=Vn, ts=ts, cid=raw['cid'], occ=occ, mode=raw['modes'][ts], trk=trk, a_on=on,
-                a_mass=[float(x) for x in f['a'].sum((1, 2)).cpu()])
+                a_mass=[float(x) for x in A_.sum((1, 2)).cpu()] if A_ is not None else [])
     return f, meta
 
 
