@@ -88,6 +88,8 @@ def evaluate(pred, net, its, agg=None):
             from benchmark.nfo_vos.adapter.fusion_adapter import with_feat
             with torch.autocast('cuda', dtype=AMP):
                 f, _ = with_feat(agg, f)
+            if os.environ.get('MASS') == 'pixel':      # diagnostic: learned Ĉ, but the pixel evidence mass Σ w G
+                f['a'] = torch.as_tensor(it['a'], device='cuda').float()
         fb = dict(f, box=torch.as_tensor(it['box_trk'], device='cuda').float())
         f0 = dict(f, C16=f['B16'], C8=f['B8'], C4=f['B4'], a=torch.zeros_like(f['a']))
         with torch.autocast('cuda', dtype=AMP):
