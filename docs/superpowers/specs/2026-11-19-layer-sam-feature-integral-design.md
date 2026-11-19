@@ -76,6 +76,28 @@ information that enc(C) gives it.
   - The roll's rounding error is up to ±6.25 native px at stride 16.
 - G0 also reports the roll, at no extra cost. A bilinear shift is a 2-tap low-pass in feature space, so it is not free.
 - Box-relative RoPE is the fallback only if G0 fails.
+  - G0 showed it would not help: the sub-cell error is missing information, not position.
+
+### Alternatives if misalignment turns out to limit Ĉ (logged 2026-11-19, user; not built)
+
+The current aggregator is attention with a window of 1: each cell attends over the n_h keys at their single
+tracker-aligned position, plus ∅, with scores from the keys' own content.
+
+If the real-data consistency check (`tools/align_consistency.py`) or G2 shows misalignment, extend the window, with
+the position led by the tracker:
+- **Neighborhood attention.** A k × k window (3 × 3 at s16: 9·n_h keys per cell) around each aligned position, with a
+  learned relative-position bias. It absorbs sub-cell phase, tracker error (median 7.7 native px ≈ 0.6 s16 cell) and
+  articulation. Hassani et al., CVPR 2023, arXiv 2204.07143.
+- **Deformable attention.** A few learned sampling offsets per key around the aligned position (bilinear sampling).
+  Zhu et al., ICLR 2021, arXiv 2010.04159. This is the FGFA lineage without dense flow.
+- **Not content-query attention.** On a hidden cell, the query F_t(p) is foliage and does not encode which person part
+  to look for. This is the limitation of SAM2's memory attention under fragmented occlusion: closed, oracle bound
+  +0.012 J.
+  - Scores should use relative position, change vs B and key content. The query's content enters only as F_k − F_t.
+- **Cost:** at s16, 64² × 54 keys × d = 32 ≈ 7 MFLOP-scale per frame, negligible next to the 24.8 ms encoder pass
+  (derived).
+- **Per-stride weights** (s8 own logits, upsampled to s4) are the first refinement in any case: the phase φ differs per
+  stride, and shared s16 weights down-weight keys at s4 that are fine there (G0: s4 ε 0.018).
 - Key cells shifted in from outside the image are masked (logit −∞).
 
 ### Aggregator `Agg` (≈ 10–20k parameters; logits at stride 16 only). Revision 3: no hand-set logit terms
