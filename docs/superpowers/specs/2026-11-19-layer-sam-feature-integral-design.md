@@ -331,3 +331,17 @@ Reading:
 - Module and file names: Agg in `adapter/feat_integral.py`, imported by `fusion_data.build` and `inference`.
 - Batch layout of the keys (pad n_h to 8, mask).
 - Sbatch flags: `FEAT=1`, `FEAT_FIXED=1`, `OCC=mix`. `remote_smoke` must cover the feature path.
+
+## 11. Task 5b results (measured 2026-11-19, 30 synthetic val clips, warm start from stage 0 + 200 steps, laptop)
+
+| variant | s16 cos on Ω (learned) | learned − pixel, s16 | mass AUC | mass on / off person |
+|---|---|---|---|---|
+| stage 0 (L_C only) | 0.493 | +0.068 [+0.046, +0.090] | 0.799 | 0.876 / 0.817 |
+| 5b, a = 1 − α_∅ supervised by BCE | 0.412 ✗ | −0.013 [−0.042, +0.014] | 0.885 | 0.456 / 0.055 |
+| **5b, decoupled mass head (`stage0c_seed0.pt`)** | **0.500** | **+0.075 [+0.052, +0.097]** | 0.864 | 0.392 / 0.126 |
+| pixel Σ w G (today) | 0.425 (enc C) | — | 0.851 | 0.432 / 0.101 |
+
+**Gate PASS:** AUC ≥ 0.84 ✓; on − off = 0.266 ≥ 0.25 ✓ (margin 0.016); s16 ≥ 0.47 ✓.
+
+Lesson: a single softmax cannot serve both the mixing weights and the evidence mass. Its scalar null bias is the
+cheapest lever for "a ≈ 0 on the 95% background", and it drags Ĉ to B on hidden person cells. Separate heads fix it.
