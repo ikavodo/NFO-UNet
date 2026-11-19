@@ -164,3 +164,21 @@ def test_score_head_layout():
     from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
     h = FeatIntegral(torch.zeros(1, 256, 1, 1)).h
     assert [type(m).__name__ for m in h] == ['Conv2d', 'GELU', 'Conv2d', 'GELU', 'Conv2d'] and h[2].kernel_size == (3, 3)
+
+
+# ---- Task 5b rev: decoupled evidence-mass head ----
+
+def test_mass_head_init_and_invalid():
+    from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
+    m = FeatIntegral(torch.zeros(1, 256, 1, 1)); K, v, Ft, B, age = _inputs()
+    o = m(K, v, Ft, B, age)
+    assert torch.allclose(o['a'], torch.full_like(o['a'], torch.sigmoid(torch.log(torch.tensor(3.))).item()), atol=1e-5)
+    assert m(K, torch.zeros_like(v), Ft, B, age)['a'].abs().max() < 1e-6
+
+
+def test_mass_loss_does_not_touch_mixing_weights():
+    from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral, mass_loss
+    m = FeatIntegral(torch.zeros(1, 256, 1, 1)); o = m(*_inputs())
+    mass_loss(o['a'], torch.zeros_like(o['a'])).backward()
+    assert all(p.grad is None or p.grad.abs().max() == 0 for n, p in m.named_parameters() if n.startswith(('h.', 'null', 'P.', 'e_age')))
+    assert m.hm[-1].weight.grad.abs().max() > 0

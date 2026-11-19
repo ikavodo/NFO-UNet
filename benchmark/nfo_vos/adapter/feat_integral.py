@@ -71,13 +71,24 @@ class FeatIntegral(nn.Module):
                                nn.Conv2d(d, 1, 1))
         nn.init.zeros_(self.h[-1].weight); nn.init.zeros_(self.h[-1].bias)
         self.null = nn.Parameter(torch.zeros(1))
+        # evidence mass, decoupled from the mixing weights (Task 5b rev): a = σ(logsumexp_k m_k + b_m) over valid keys, m_k
+        # from its own head on the DETACHED key inputs, so mass_loss never moves the weights that build Ĉ. At init a =
+        # σ(log k) = k/(k+1) (= 1 − α_∅ of the uniform softmax); all keys invalid → a = 0.
+        self.hm = nn.Sequential(nn.Conv2d(4 * d + 2, d, 1), nn.GELU(), nn.Conv2d(d, d, 3, padding=1), nn.GELU(),
+                                nn.Conv2d(d, 1, 1))
+        nn.init.zeros_(self.hm[-1].weight); nn.init.zeros_(self.hm[-1].bias)
+        self.mbias = nn.Parameter(torch.zeros(1))
 
     def load_compat(self, sd):
         """Load a state dict saved before the phase input (h.0 with 4d input channels): the 2 phase channels get zero
         weights, so the loaded module computes exactly the old function."""
+        sd = dict(sd)
         w = sd['h.0.weight']
         if w.shape[1] == self.h[0].in_channels - 2:
-            sd = dict(sd); sd['h.0.weight'] = torch.cat([w, torch.zeros_like(w[:, :2])], 1)
+            sd['h.0.weight'] = torch.cat([w, torch.zeros_like(w[:, :2])], 1)
+        for k, v in self.state_dict().items():                  # heads added later (mass head): keep their fresh init
+            if k.startswith(('hm.', 'mbias')) and k not in sd:
+                sd[k] = v
         self.load_state_dict(sd)
 
     def logits_learned(self, K16, Ft16, B16, age, phase=None):
@@ -90,6 +101,7 @@ class FeatIntegral(nn.Module):
         ph = torch.stack([ph, ph.abs()], 2)[..., None, None].expand(-1, -1, -1, H, W).to(pk.dtype)
         z = torch.cat([pk, pk - pt, pk - pb, ea, ph], 2).flatten(0, 1)
         lk = self.h(z).view(n, k, H, W).float()
+        self._mk = self.hm(z.detach()).view(n, k, H, W).float()
         return lk, self.null.float().view(1, 1, 1, 1).expand(n, 1, H, W)
 
     def logits_fixed(self, K16, B16, age, valid, tau):
@@ -118,8 +130,13 @@ class FeatIntegral(nn.Module):
             a_s = al if s == '16' else F.interpolate(al, size=Ks.shape[-2:], mode='bilinear', align_corners=False)
             a_s = a_s.to(Ks.dtype)
             o[f'C{s}'] = (a_s[:, :k, None] * Ks).sum(1) + a_s[:, k:k + 1] * Bs
-            if s == '4':
+            if s == '4' and fixed:
                 o['a'] = (1 - a_s[:, k].float()).clamp(0, 1)
+        if not fixed:
+            mk = self._mk.masked_fill(~v, float('-inf'))
+            ml = torch.logsumexp(mk, 1, keepdim=True) + self.mbias.float()            # all invalid → −inf → a = 0
+            o['a'] = torch.sigmoid(F.interpolate(ml.nan_to_num(neginf=-1e4), size=K['4'].shape[-2:], mode='bilinear',
+                                                 align_corners=False))[:, 0]
         return o
 
 
