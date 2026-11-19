@@ -328,6 +328,70 @@ it **ranks methods like the hand masks**.
   - seq2–4 alone: b0trk − trk J +0.059 [+0.012, +0.119], box +0.014, recog +0.029; b0trk − b0 box +0.083
     [+0.059, +0.107], recog −0.043 [−0.066, −0.021].
 
+## 10. One-pass Layer-SAM: a learned integral image from cached encoder features (2026-11-19, in progress)
+
+Branch `exp/layer-sam-feat`.
+- Design: `docs/superpowers/specs/2026-11-19-layer-sam-feature-integral-design.md`.
+- Plan and gates: `docs/superpowers/plans/2026-11-19-layer-sam-feature-integral.md`.
+- Code: `adapter/feat_integral.py`, `fusion_data.build(feat=True)`, `fusion_adapter.train_step` (env `FEAT=1`),
+  `inference.masks_from_arrays` (`net.agg`).
+
+**Idea.** Today's adapter encodes every frame twice: the frame, and the pixel integral image C. Instead, build Ĉ from the
+encoder features of the last n_h frames, which are already computed:
+- shift each past frame's feature grid by the tracker's Theil–Sen x-shift (bilinear);
+- take a per-cell softmax over the shifted frames plus a **null key** (value: the empty scene B; a learned "nothing here"
+  slot);
+- predict the evidence mass a with a **separate** small head.
+
+The module has 35,460 parameters (the Fusion adapter: 730,401). It is trained first alone (stage 0), then jointly with
+Fusion, with two auxiliary losses:
+- 1 − cos(Ĉ, E(X̃_t)) on hidden person cells that were visible in some aligned past frame. X̃_t is frame t without the
+  occluder, with the same noise and sway.
+- BCE(a, person visible in some aligned past frame).
+
+Everything else (Fusion, loss v3.4, step selection on seq1, the tracker) is unchanged.
+
+**What was measured** (synthetic val = 30 held-out clips; laptop RTX PRO 4000):
+
+| test | result |
+|---|---|
+| Shift equivariance of SAM2 features under subject motion (30 clips) | Whole-cell shifts ≈ exact (s16 1 − cos 0.037 vs person/background contrast 0.92). Half-cell shifts not: 0.268 median, 0.516 p90 (bilinear). Missing information (sub-stride aliasing), so positional encoding cannot fix it. |
+| cos(·, clean features) on hidden-recoverable person cells, s16 | **learned 0.500**, uniform average 0.446, pixel enc(C) 0.425, frame t 0.319. Learned − pixel **+0.075 [+0.052, +0.097]** |
+| Evidence mass: person-vs-rest AUC; mean on / off person | learned 0.864; 0.392 / 0.126. Pixel Σ w G: 0.851; 0.432 / 0.101 |
+| Alignment on real NFO (seq1, n = 12) vs synthetic (n = 232): cos(shifted F_{t−k}, F_t) on visible cells, ages 1–6 | NFO 0.765 / 0.515 / 0.455 / 0.378 / 0.348 / 0.324; synthetic 0.726 / 0.581 / 0.488 / 0.429 / 0.391 / 0.364. A modest gap and the same decay: alignment transfers. |
+| Runtime (11 NFO windows, batch 1) | **38.4 ms/frame** (26 fps) vs pixel adapter 59.1 ms, `trk` floor 34.1 ms, SAM2 video 53 ms (2026-10-20). The feature integral costs 4.3 ms. |
+| Training memory | 12.4 GB at 32 targets (smoke step), ≈ 14 GB at n_h = 8 (derived): needs a ≥ 16 GB GPU |
+
+**Occluder model** (`tools/fragment_stats.py`). NFO hand labels lie between perlin 12+24 and the depth-stacked 'stack'
+foliage:
+
+| | visible components | component area | boundary·h / area |
+|---|---|---|---|
+| NFO | 4 | 0.015 h² | 42.8 |
+| perlin 12+24 | 4 | 0.012 h² | 56.7 |
+| stack | 2 | 0.074 h² | 34.2 |
+
+- A 50/50 mix of the two brackets NFO; this is the planned occluder-mix arm.
+- NFO walkers move ≈ 3× faster per frame, relative to their height, than the GPJATK walkers.
+
+**Why it should work (argued, not shown).**
+- Only the adapter reads Ĉ, so averaged features never reach the frozen decoder. That was the failure in the GPJATK
+  feature-fusion test of 2026-10-06.
+- On synthetic data, the cached-feature route is closer to the clean person than re-encoding the pixel composite.
+
+**Next: G2.**
+- One cluster training (seed 0, 1000 steps; launched 2026-11-19).
+- Then seq1 whole crossings (`NFO_RUN=fullpass`, clips 0–7), scored on the laptop: `eval/g2_score.py`.
+- Reference (measured, same protocol and environment):
+
+  | arm | box AUC | hand J |
+  |---|---|---|
+  | pixel adapter seed 0 | 0.544 | 0.523 |
+  | `trk` | 0.468 | 0.483 |
+
+- PASS: the new arm ≥ pixel − 0.02 on both. If it passes: 3 seeds and the seq2–4 headline, then the occluder mix.
+- If misalignment limits it: neighbourhood / deformable attention around the tracker-aligned position (design §4).
+
 ## Code map
 
 - `benchmark/nfo_vos/downstream/`:
