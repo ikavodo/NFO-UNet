@@ -414,6 +414,13 @@ J −0.004 [−0.025, +0.014]:** on seq1 the learned feature integral adds nothi
 confounded by step (700 vs 200) and is carried by the Fusion residuals on F_t / F_B. Next: the integral's contribution is the
 open question — pixel adapter trained to it700 (same step) and/or seq2–4 feat vs noC over 3 seeds before any claim.
 
+**Synthetic val does not reward the integral (2026-11-19, `tools/syn_noC.py`, 30 val clips, adapter − noC J, clip bootstrap):**
+feat it700 −0.002 [−0.005, +0.001], feat it200 −0.004 [−0.007, −0.000], pixel it600 −0.005 [−0.009, −0.002], pixel it200
++0.002 [−0.002, +0.006]. Neither integral helps on synthetic, though the pixel one helps on NFO seq1 (+0.018 box AUC): the
+synthetic task is solvable from F_t / F_B, so training never pays for reading Ĉ. "Make the integral useful" is first a
+training-data problem (frames hidden at t but visible in history), before per-stride weights. Next: adapter − noC in the
+densest occluder group, and the frequency of hidden-at-t / visible-in-history frames in the synthetic mix.
+
 ## Code map
 
 - `benchmark/nfo_vos/downstream/`:

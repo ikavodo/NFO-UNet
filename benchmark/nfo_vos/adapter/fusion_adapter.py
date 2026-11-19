@@ -205,6 +205,10 @@ def evaluate(pred, net, val, agg=None):
             o = net(f, sam=pred.model)
             outs = {'box': decode(pred.model, f), 'box+pt': decode(pred.model, f, point=True),
                     'trk-box': decode(pred.model, fb), 'adapter': decode(pred.model, o, token=o.get('token'))}
+            del o                                    # one adapter output alive at a time (16 GB)
+            o = net(dict(f, C16=f['B16'], C8=f['B8'], C4=f['B4'], a=torch.zeros_like(f['a'])), sam=pred.model)
+            outs['adapter-noC'] = decode(pred.model, o, token=o.get('token'))   # integral removed (C := B, a := 0)
+            del o
         for i, Vn in enumerate(meta['Vn']):
             Vt = torch.from_numpy(Vn).cuda()
             r = dict(mode=int(meta['mode'][i]), clip=meta['cid'], rho=meta['occ']['rho'], clump=str(meta['occ']['clump']))
@@ -220,11 +224,11 @@ def evaluate(pred, net, val, agg=None):
 
 def summarise(rows, rng=None):
     rng = rng or np.random.default_rng(0)
-    arms = ('box', 'box+pt', 'trk-box', 'adapter')
+    arms = ('box', 'box+pt', 'trk-box', 'adapter', 'adapter-noC')
     clips = sorted({r['clip'] for r in rows})
     per = {a: np.array([np.mean([r[a] for r in rows if r['clip'] == c], 0) for c in clips]) for a in arms}
     s = {a: dict(zip('JPR', per[a].mean(0))) for a in arms}
-    for ref in ('box+pt', 'trk-box'):
+    for ref in ('box+pt', 'trk-box', 'adapter-noC'):
         dj = per['adapter'][:, 0] - per[ref][:, 0]
         bs = [dj[rng.integers(0, len(dj), len(dj))].mean() for _ in range(2000)]
         s[f'dJ_{ref}'] = [float(dj.mean()), float(np.percentile(bs, 2.5)), float(np.percentile(bs, 97.5))]
