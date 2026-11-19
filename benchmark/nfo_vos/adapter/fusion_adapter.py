@@ -277,6 +277,7 @@ def main(steps=1500, seed=0, eval_every=100, max_targets=32, n_val_fast=12, test
     rng, log, best, t0 = np.random.default_rng(seed), [], (-1.0, None), time.time()
 
     def validate(it, rows_inp=None):
+        torch.cuda.empty_cache()                     # FEAT: the train graph's freed blocks fragment the 16 GB card (OOM 2026-11-19)
         rows, inp = evaluate(pred, net, val, agg)
         s = summarise(rows); ss = fusion_nfo.evaluate(pred, net, sel, agg)
         s.update(it=it, sec=time.time() - t0, sel=ss, inputs_syn=inp)

@@ -37,7 +37,7 @@ echo "fusion adapter steps=${STEPS:-1500} seed=${SEED:-0} amp=${AMP:-bf16} ckpt=
 # FEAT=1 AGG=<stage-0 aggregator .pt> [LAM=1]: learned feature integral (one encoder pass per frame), out feat_seed<SEED>/
 #   FEAT=1 peaks at ≈ 14 GB (32 targets, n_h = 8; laptop 2026-11-19): submit to a >= 16 GB GPU (remote_smoke checks it)
 echo "FEAT=${FEAT:-0} AGG=${AGG:-} LAM=${LAM:-1}"; export FEAT AGG LAM
-export OMP_NUM_THREADS=2 PYTHONPATH=.
+export OMP_NUM_THREADS=2 PYTHONPATH=. PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # TEST=0: no seq2-4 test at the end (single held-out test is run separately on the selected checkpoint)
 srun "$PYTHON" -m benchmark.nfo_vos.adapter.fusion_adapter "${STEPS:-1500}" "${SEED:-0}" 100 32 12 "${TEST:-0}"
 date
