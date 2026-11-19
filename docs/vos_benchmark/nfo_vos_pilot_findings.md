@@ -452,6 +452,24 @@ noC 0.763 (mode-0 frames), so penalising spill into Ω (W = 1 there) is a legiti
 - all strides (`oracle-all`) − adapter: box IoU **+0.015 [+0.008, +0.024]**, HARD **+0.054 [+0.016, +0.102]**, J +0.000.
 The headroom is in the s16 content of Ĉ (cos to clean 0.50 on hidden cells), not in its fine-stride resolution.
 
+**Held-out seq2–4, feature adapter it700 (seed 0), 2026-11-20, cluster env (jobs 2036262 + dump array; `pass_run.sh heldout`;
+24 whole crossings, 23 polygon hand frames; copy in `results/benchmark/fullpass_cluster/`).** The scoring reproduces the
+headline (adapter-pf/s1/s2 box AUC 0.717 / 0.724 / 0.718).
+
+| arm | box AUC | hand J |
+|---|---|---|
+| adapter-pf / s1 / s2 (pixel integral, two passes) | 0.717 / 0.724 / 0.718 | 0.767 / 0.769 / 0.762 |
+| b0trk (SAM2 video memory + tracker box/point every frame) | 0.694 | 0.752 |
+| **adapter-feat it700 (one pass)** | **0.679** | **0.743** |
+| trk (SAM2 image + tracker prompts) | 0.680 | 0.698 |
+| SAMURAI (t1) / SAM2 video (b0) | 0.615 / 0.611 | 0.739 / 0.743 |
+
+Paired box AUC: feat − pf **−0.038 [−0.047, −0.030]**; feat − trk −0.001 [−0.015, +0.014]; feat − b0trk −0.015
+[−0.037, +0.013]; pf − b0trk **+0.023 [+0.003, +0.048]**. The seq1 G2 advantage of feat over pf (+0.028) reverses on the
+held-out sequences: on the box, the feature adapter equals its own tracker prompts, i.e. it carries none of the pixel
+integral's held-out box gain (+0.018 to +0.037 per seed vs `-noC`). Consistent with feat ≈ noC. The bar for any Ĉ fix is
+now explicit: recover ≈ +0.04 box AUC. The pixel adapter beats SAM2 memory + tracker prompts on box AUC.
+
 ## Code map
 
 - `benchmark/nfo_vos/downstream/`:
