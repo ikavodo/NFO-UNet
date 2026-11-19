@@ -111,7 +111,6 @@ def test_clip_raw_carries_target():
 ```
 
 The second test's mask: pixels at least 16 px from any occluder pixel, because JPEG couples 8×8 blocks (and sway moves the matte by a few px). `make_clip` exposes `d['a']` for it.
-couples 8×8 blocks. Expose `a` from `make_clip` as `d['a']` to build it.
 
 - [ ] **Step 2: Run:** `$PY -m pytest benchmark/nfo_vos/tests/test_feat_integral.py -q -k "target or carries"`.
   Expected: FAIL (`KeyError: 'Xt'`).

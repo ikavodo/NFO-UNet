@@ -51,6 +51,8 @@ def rescale_clip(d, s):
         out = np.zeros((H, W), bool); out[y0:y0 + h, x0:x0 + w] = rs(m) > 0.5; return out
     r = dict(d)
     r['X'] = np.stack([place(x) for x in d['X']])
+    if 'Xt' in d:
+        r['Xt'] = np.stack([place(x) for x in d['Xt']])
     r['bg'] = place(d['bg'])
     if 'warm' in d:
         r['warm'] = np.stack([place(x) for x in d['warm']])
@@ -104,7 +106,7 @@ def clip_raw(spec, rng):
     occ = sample_occlusion(rng)
     occ.update(nh=int(rng.integers(4, 9)), tau=float(rng.uniform(2, 6)), z0='adaptive')   # z0 range [2, 4] broke input parity
     d = rescale_clip(D.make_clip(seq, cam, occ['rho'], seed, flutter=occ['flutter'], clump=occ['clump']), occ['scale'])
-    return dict(X=u8(d['X']), bg=u8(d['bg']), V=d['V'], S=d['S'], boxes=d['boxes'], bxj=D.jitter(d['boxes'], SIGMA_A, rng),
+    return dict(X=u8(d['X']), Xt=u8(d['Xt']), bg=u8(d['bg']), V=d['V'], S=d['S'], boxes=d['boxes'], bxj=D.jitter(d['boxes'], SIGMA_A, rng),
                 modes=rng.choice(4, len(d['X']), p=P_MODES), occ=occ, cid=d['cid'])
 
 

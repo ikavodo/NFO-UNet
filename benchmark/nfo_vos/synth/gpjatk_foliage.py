@@ -211,7 +211,7 @@ def make_layered_clip(seq, cam, rho, seed, mode, out, n=40, K=3, clump=24, blur=
     In all modes occluded person pixels show B itself (MovingMNIST-OcclusionBench occluders.py:450), static scene.
     sway: optional per-frame displacements, each (dx, dy) px (noise.sway_offsets) or a flutter field (noise.displace): B and the matte translate together, the person
     does not; V follows the swayed matte (labels H / void still from frame 0). layers=True (with save=False) also
-    returns dict(X, clean = person on unswayed B, B, a, S, V, I, mf)."""
+    returns dict(X, Xt = X without the occluder (same sway), clean = person on unswayed B, B, a, S, V, I, mf)."""
     rng = np.random.default_rng(seed)
     I, m, s0 = load_person(seq, cam, n)
     ys, xs = np.nonzero(m.any(0))
@@ -258,7 +258,8 @@ def make_layered_clip(seq, cam, rho, seed, mode, out, n=40, K=3, clump=24, blur=
         (f"_c{'-'.join(map(str, clump))}" if isinstance(clump, (tuple, list)) else '')
     if not save:
         if layers:
-            return cid, X, V, S, Hl, void, dict(X=X, clean=mf * I + (1 - mf) * B, B=B, a=a, S=S, V=V, I=I, mf=mf)
+            return cid, X, V, S, Hl, void, dict(X=X, Xt=mf * I + (1 - mf) * Bs, clean=mf * I + (1 - mf) * B, B=B, a=a, S=S, V=V,
+                                              I=I, mf=mf)
         return cid, X, V, S, Hl, void
     cd = f'{out}/{cid}'
     os.makedirs(f'{cd}/frames', exist_ok=True)
