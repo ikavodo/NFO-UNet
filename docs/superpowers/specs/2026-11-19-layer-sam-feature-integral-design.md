@@ -350,3 +350,18 @@ Reading:
 
 Lesson: a single softmax cannot serve both the mixing weights and the evidence mass. Its scalar null bias is the
 cheapest lever for "a ≈ 0 on the 95% background", and it drags Ĉ to B on hidden person cells. Separate heads fix it.
+
+## 12. Timing (measured 2026-11-19, laptop RTX PRO 4000, TC_BATCH=1, `tools/timing.py`, median over 11 NFO windows)
+
+| arm | ms / frame |
+|---|---|
+| `trk`: SAM2 + tracker prompts, no adapter (the floor) | 34.1 |
+| `feat`: one encoder pass + learned feature integral + Fusion (stand-in weights; speed is weight-independent) | **38.4** |
+| `ours`: today's pixel adapter, two encoder passes | 59.1 (61.1 on 2026-10-20) |
+| SAM2 video (B0), reported 2026-10-20, not re-run | 53 |
+
+- G-speed passes: 38.4 ≤ 40 ms (26 fps; NFO runs at 25 fps).
+- The feature integral costs 4.3 ms over the floor, against 25 ms for the pixel path.
+
+**Memory (training):** the full-size FEAT smoke step peaked at 12.4 GB (32 targets). The worst case n_h = 8 is
+≈ 14 GB (derived). A ≥ 16 GB GPU is required; `remote_smoke` enforces it.
