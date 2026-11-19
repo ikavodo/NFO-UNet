@@ -343,6 +343,55 @@ def test_feat_loss_zero_on_empty_omega():
 
 ---
 
+### Task 5b: Revision after G0/G1: supervise the evidence mass, give the aggregator the shift phase, redo stage 0
+
+Why (measured 2026-11-19, 12 val clips, 192 targets; `a` on the 256² grid vs the person silhouette S_t):
+
+| evidence mass | mean a on person | mean a off person | AUC person-vs-rest |
+|---|---|---|---|
+| pixel Σ w G (today) | 0.449 | 0.096 | 0.869 |
+| feature, uniform (untrained) | 0.830 | 0.815 | 0.521 |
+| feature, stage 0 | 0.876 | 0.817 | 0.799 |
+
+- **Finding 1.** L_C only constrains Ĉ on Ω, so nothing trains α_∅ (hence a) off the person.
+  - After stage 0, a ranks the person (AUC 0.80) but is ≈ 0.82 everywhere.
+  - Fusion uses a twice: as an input channel, and as the weights of the token prototype Σ a C16 / Σ a
+    (fusion_adapter.py:104). That prototype is now ≈ the image mean.
+  - G2 could fail for this reason alone, unrelated to the quality of Ĉ.
+- **Finding 2 (G0).** Keys at a half-cell phase offset at s16 are distorted (p90 ε 0.52 vs contrast 0.92), and the
+  aggregator cannot tell which keys those are.
+
+Changes:
+1. **L_a = BCE(a, O_t) on the 256² grid**, λ_a = 1.
+   - O_t is "the person was visible at this cell in at least one aligned history frame": the union already computed in
+     `_feat_inputs`, area-resampled.
+   - Expose it as `f['O4']` [n, 256, 256] float.
+   - This supervises the abstain slot ("history never saw the person here"). It is a target, not a hand-set rule.
+2. **Phase input.** For key k: φ_k = dx_k/16 − round(dx_k/16) ∈ [−½, ½].
+   - Append [φ_k, |φ_k|] as 2 broadcast channels to h's input (first conv 4d → 4d + 2).
+   - `FeatIntegral.forward(..., phase=None)`: phase [n, k]; None → zeros.
+   - `_feat_inputs` returns `f['phase']`.
+3. **Redo stage 0** (400 steps, laptop) with L_C + L_a. Re-run G1 and the a-check (workspace `a_check.py`, promoted to
+   `feat_stage0.py`'s report).
+
+Pre-registered pass criteria (before G2 is launched):
+- **a-check:** stage-0 a has AUC ≥ 0.84 (pixel − 0.03) and on − off ≥ 0.25.
+- **G1:** s16 learned ≥ 0.47 (no worse than the current 0.493 − 0.02).
+- **Fail on the a-check** → report to the user before G2. No fallback to the pixel mass: it would bring back the
+  per-frame pixel gate.
+- **Not changed, deliberately:**
+  - per-stride weights (learning added ≈ 0 at s8/s4 because α is upsampled from s16): deferred, as a memory cost;
+  - the training length, schedule and step-200 selection: the same protocol as the pixel adapter, for comparability.
+
+Tests (Task 2 file):
+- `test_phase_input_changes_logits_only_when_trained`: phase has no effect at init, since the last conv is zero.
+- `test_bce_mass_loss_zero_grad_when_a_equals_target`.
+- `build_feat` test: `O4` in [0, 1], `phase` in [−½, ½].
+
+Commit: "Feature integral rev: supervised evidence mass (BCE to history-visible person), shift-phase input; stage 0 redone".
+
+---
+
 ### Task 6: Fusion training with the feature integral
 
 **Files:**
@@ -360,7 +409,7 @@ def test_feat_loss_zero_on_empty_omega():
       1. `f, _ = build(..., feat=True)`;
       2. `o_agg = agg(f[K..], f['Kvalid16'], {X..}, {B..}, f['age'], fixed)`;
       3. `f.update(C16/8/4 = o_agg[...], a = o_agg['a'])`;
-      4. loss = `loss_fn(...)` + `lam · feat_loss(o_agg C, f[T], f[Om], f['mu16'])`. With `fixed`: no Agg parameters,
+      4. loss = `loss_fn(...)` + `lam · (feat_loss(o_agg C, f[T], f[Om], f['mu16']) + BCE(o_agg['a'], f['O4']))` (Task 5b), Agg initialised from the Task-5b stage-0 checkpoint. With `fixed`: no Agg parameters,
          λ = 0.
     - Agg is its own AdamW parameter group, same lr/wd.
     - Checkpoints `results/benchmark/rr/layers_fusion_adapter/feat_seed{seed}/fusion_it{it}.pt` contain both state dicts
