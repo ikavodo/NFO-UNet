@@ -32,13 +32,15 @@ def hand_windows(split):
     return out
 
 
-def items(split='test', pred=None):
+def items(split='test', pred=None, feat=False):
     """One clip-like dict per hand frame (the format fusion_data.encode consumes), plus 'H' / 'keep' and 'box_trk'.
     split 'test': seq2–4 handAv (modal, void ignored), touched once at the end (remedy 2, 2026-10-16).
     split 'select': seq1 brush masks (handmask_raw, visible-leaning, no void), used for checkpoint selection.
     Alignment (2026-10-16 v3, train/test parity with fusion_data.build): kernel-f16 track of the window
     (tracker.kernel16_track) from the t0 prompt box; x-only Theil–Sen over [j-12, j]; integral image of j-6..j-1 with the
-    test parameters (τ = integral_image.TAU_AGE, z0 = adaptive). box_trk: the tracker's box at j (GT-free control, 'trk-box' arm)."""
+    test parameters (τ = integral_image.TAU_AGE, z0 = adaptive). box_trk: the tracker's box at j (GT-free control, 'trk-box' arm).
+    feat=True: also 'hist' (the 6 native history frames, uint8) and 'dx1024' (their Theil–Sen shifts onto j, 1024 frame) for
+    the learned feature integral (fusion_data.encode(feat=True))."""
     from benchmark.nfo_vos.adapter.tracker import kernel16_track
     out, trk = [], {}
     for seq, k, t, j in hand_windows(split):
@@ -61,11 +63,14 @@ def items(split='test', pred=None):
         out.append(dict(X=TR.native(k, seq)[None], Ct=u8(C)[None], a=a256(a)[None], V=a256(v == 1)[None],
                         Vn=[v == 1], box=box[None], box_trk=bt[None], trk=(kc[j] * s1[:2])[None].astype(np.float32), mode=np.zeros(1, int), bg=u8(bg), cid=f'{seq}_{k:05d}',
                         occ=dict(rho=-1.0, clump='nfo', flutter=0.0), H=v == 1, keep=v != 2))
+        if feat:
+            out[-1].update(hist=np.stack([TR.native(i, seq) for i in hist]),
+                           dx1024=np.float32([[(fx[j] - fx[l]) * 1024 / 800 for l in range(j - 6, j)]]))
     return out
 
 
 @torch.no_grad()
-def evaluate(pred, net, its):
+def evaluate(pred, net, its, agg=None):
     """Frame-mean J / P / R vs the hand label (void ignored). Arms:
       box          SAM2, GT box (oracle prompt)          box+pt   GT box + its centre
       trk-box      SAM2, the kernel tracker's box (the GT-free control the token-mode adapter must beat)
@@ -78,7 +83,11 @@ def evaluate(pred, net, its):
     arms = ('box', 'box+pt', 'trk-box', 'adapter', 'adapter-noC')
     res, stats = {a: [] for a in arms}, []
     for it in its:
-        f = encode(pred, [it])
+        f = encode(pred, [it], feat=agg is not None)
+        if agg is not None:
+            from benchmark.nfo_vos.adapter.fusion_adapter import with_feat
+            with torch.autocast('cuda', dtype=AMP):
+                f, _ = with_feat(agg, f)
         fb = dict(f, box=torch.as_tensor(it['box_trk'], device='cuda').float())
         f0 = dict(f, C16=f['B16'], C8=f['B8'], C4=f['B4'], a=torch.zeros_like(f['a']))
         with torch.autocast('cuda', dtype=AMP):

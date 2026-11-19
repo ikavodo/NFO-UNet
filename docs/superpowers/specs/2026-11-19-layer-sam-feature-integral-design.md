@@ -277,7 +277,12 @@ Reading:
 | `feat-mix` | both; the final model, only if `feat-perlin` and `pix-mix` both pass | 3 |
 
 **Occluder mix.**
-- Per clip, mode ∈ {perlin 0.5, stack 0.25, depth 0.25}. Twigs are excluded (they broke the visible-part labels,
+- Per clip, mode ∈ {perlin clump (12, 24) 0.5, stack 0.5} (revised 2026-11-19, `tools/fragment_stats.py`).
+  - NFO hand labels lie between the two on visible components (4 vs 4 / 2), component area (0.015 h² vs 0.012 / 0.074)
+    and boundary·h/area (42.8 vs 56.7 / 34.2).
+  - 'depth' alone (1 component, 0.120 h²) and perlin 12 (8 components) are off.
+  - NFO walkers move ≈ 3× faster per frame relative to height (0.028 vs 0.009 h). A temporal-subsampling augmentation is
+    the candidate fix, only if G2 looks speed-limited. Twigs are excluded (they broke the visible-part labels,
   failure log 2026-10-15).
 - 'depth' mode's ρ is a depth quantile, not a visible fraction. So ρ is resampled per mode until the **visible-fraction
   histogram matches perlin's**. Otherwise the mix also changes the occlusion level.

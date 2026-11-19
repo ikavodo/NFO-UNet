@@ -93,7 +93,10 @@ class FeatIntegral(nn.Module):
 
     def logits_learned(self, K16, Ft16, B16, age, phase=None):
         n, k, C, H, W = K16.shape
-        P = lambda x: self.P(x - self.mu16.to(x.dtype))
+        # P(x − mu) = P(x) − W·mu: fold the centring into a per-channel constant (no centred copy of the keys, which
+        # autograd would keep for P's weight gradient)
+        wmu = F.conv2d(self.mu16.to(self.P.weight.dtype), self.P.weight)                       # [1, d, 1, 1]
+        P = lambda x: self.P(x) - wmu.to(x.dtype if not torch.is_autocast_enabled() else torch.get_autocast_gpu_dtype())
         pk = P(K16.reshape(n * k, C, H, W)).view(n, k, -1, H, W)
         pt, pb = P(Ft16)[:, None], P(B16)[:, None]
         ea = self.e_age(age)[..., None, None].expand(-1, -1, -1, H, W).to(pk.dtype)
@@ -129,7 +132,10 @@ class FeatIntegral(nn.Module):
             Ks, Bs = K[s], B[s]
             a_s = al if s == '16' else F.interpolate(al, size=Ks.shape[-2:], mode='bilinear', align_corners=False)
             a_s = a_s.to(Ks.dtype)
-            o[f'C{s}'] = (a_s[:, :k, None] * Ks).sum(1) + a_s[:, k:k + 1] * Bs
+            C = a_s[:, k:k + 1] * Bs
+            for q in range(k):                      # accumulate per key: no [n, k, C, h, w] product (training memory)
+                C = C + a_s[:, q:q + 1] * Ks[:, q]
+            o[f'C{s}'] = C
             if s == '4' and fixed:
                 o['a'] = (1 - a_s[:, k].float()).clamp(0, 1)
         if not fixed:
@@ -145,8 +151,11 @@ def feat_loss(C, T, Om, mu16):
     terms = []
     for s in STRIDES:
         m = Om[s][:, 0]
-        if m.any():
-            terms.append((1 - ccos(C[f'C{s}'] if f'C{s}' in C else C[s], T[s], mu16 if s == '16' else None))[m].mean())
+        if m.any():                                  # cosine on the Ω cells only (≈ 1–3% of the map): training memory
+            x = (C[f'C{s}'] if f'C{s}' in C else C[s]).permute(0, 2, 3, 1)[m]
+            y = T[s].permute(0, 2, 3, 1)[m]
+            mu = mu16.reshape(1, -1) if s == '16' else None
+            terms.append((1 - ccos(x[..., None, None], y[..., None, None], None if mu is None else mu[..., None, None])).mean())
     if not terms:
         x = next(iter(C.values()))
         return x.sum() * 0

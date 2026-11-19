@@ -17,12 +17,12 @@ from benchmark.nfo_vos import trials as TR
 def main(method='ours', n=12):
     trials = [t for t in json.load(open(TR.OUT)) if t['admissible']][:int(n)]
     print('GPU', torch.cuda.get_device_name(0), 'torch', torch.__version__)
-    if method == 'ours':
+    if method in ('ours', 'feat', 'trk'):         # feat: the learned feature integral (FEAT_CKPT); trk: SAM2 + tracker prompts
         from benchmark.nfo_vos.adapter.fusion_adapter import image_predictor
         from benchmark.nfo_vos.adapter.inference import fast_masks
-        from benchmark.nfo_vos.eval.dump_arms import CKPT, load_net
+        from benchmark.nfo_vos.eval.dump_arms import ARM_CKPT, CKPT, load_net
         pred = image_predictor()
-        net = load_net(pred, CKPT)
+        net = None if method == 'trk' else load_net(pred, ARM_CKPT['adapter-feat'] if method == 'feat' else CKPT)
         secs = [fast_masks(pred, net, t)[1] for t in trials]
     else:
         from benchmark.nfo_vos.baselines.run_sam2_video import build_predictor, run_trial

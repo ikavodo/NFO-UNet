@@ -25,12 +25,22 @@ from benchmark.nfo_vos.adapter.inference import fast_masks
 CKPT_DIR = 'results/benchmark/rr/layers_fusion_adapter'
 CKPT = f'{CKPT_DIR}/token_seed0/fusion_it200.pt'
 ARM_CKPT = {'adapter-pf': CKPT, 'adapter-s1': f'{CKPT_DIR}/token_seed1/fusion_it200.pt',
-            'adapter-s2': f'{CKPT_DIR}/token_seed2/fusion_it200.pt'}
+            'adapter-s2': f'{CKPT_DIR}/token_seed2/fusion_it200.pt',
+            'adapter-feat': os.environ.get('FEAT_CKPT', f'{CKPT_DIR}/feat_seed0/fusion_it200.pt')}   # learned feature integral
 
 
 def load_net(pred, ckpt):
+    """Fusion from a checkpoint; a FEAT checkpoint ({'fusion', 'agg'}) also attaches the learned feature integral as
+    net.agg, which inference.masks_from_arrays then uses instead of the pixel integral image (one encoder pass)."""
     net = Fusion().cuda(); net.init_fallback(pred.model)
-    net.load_state_dict(torch.load(ckpt)); net.eval()
+    sd = torch.load(ckpt)
+    if isinstance(sd, dict) and 'fusion' in sd:
+        from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
+        net.load_state_dict(sd['fusion'])
+        net.agg = FeatIntegral(pred.model.no_mem_embed).cuda().eval(); net.agg.load_compat(sd['agg'])
+    else:
+        net.load_state_dict(sd)
+    net.eval()
     return net
 
 

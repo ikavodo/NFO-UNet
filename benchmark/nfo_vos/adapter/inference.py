@@ -64,6 +64,8 @@ def fast_masks(pred, net, t, tau=3.5, noC=False, hist=6):
 
 
 def masks_from_arrays(pred, net, Xn, bg, g, tau=3.5, noC=False, hist=6, feats=None, aux=None):
+    from benchmark.nfo_vos.adapter.feat_integral import shift_keys
+    agg = getattr(net, 'agg', None)       # learned feature integral (eval/dump_arms.load_net of a FEAT checkpoint)
     """fast_masks on arrays: Xn = list of [H, W] uint8 gray frames, bg = empty scene [H, W], g = t0 box (x0, y0, x1, y1) px.
     feats: per-frame (f16, f8, f4) from a caller that already ran the image encoder on the same 1024² input (shares the
     pass, eval/dual_expert.py); None encodes here. aux: a list that receives one dict of per-frame signals (decoder IoU
@@ -92,11 +94,12 @@ def masks_from_arrays(pred, net, Xn, bg, g, tau=3.5, noC=False, hist=6, feats=No
             F.append(enc(x) if feats is None else feats[i])
             m = 1 - torch.nn.functional.cosine_similarity(F[-1][0][0], Bf[0][0], dim=0)
             m16.append(torch.nn.functional.interpolate(m[None, None], size=x.shape, mode='bilinear', align_corners=False)[0, 0])
-            G.append(_gate_gpu(torch.as_tensor(x, device='cuda', dtype=torch.float32), Bg))
+            if agg is None or aux is not None:                           # the feature path needs no pixel gate
+                G.append(_gate_gpu(torch.as_tensor(x, device='cuda', dtype=torch.float32), Bg))
     kc = kernel_track(torch.stack(m16).cpu().numpy(), ((g[0] + g[2]) / 2, (g[1] + g[3]) / 2), g[2] - g[0], g[3] - g[1])
     wh = (g[2] - g[0], g[3] - g[1])
     Xg = torch.as_tensor(np.stack(Xn), device='cuda', dtype=torch.float32)
-    Gg = torch.stack(G)
+    Gg = torch.stack(G) if G else None
     wk = torch.as_tensor(np.exp(-np.arange(hist - 1, -1, -1) / tau), device='cuda', dtype=torch.float32)
     wk = (wk / wk.sum())[:, None, None]
     out = np.zeros((len(Xn), H, W), bool)
@@ -111,6 +114,24 @@ def masks_from_arrays(pred, net, Xn, bg, g, tau=3.5, noC=False, hist=6, feats=No
             mass = None
             if j < hist or net is None:                                     # no history yet / trk arm: tracker prompts only
                 low = decode(pred.model, f, point=True, aux=da)
+            elif agg is not None:                                           # learned feature integral: no second encode
+                idx, Ms = FD.hist_warps(kc, j, hist)
+                dx = torch.tensor([[M[0, 2] * 1024 / W for M in Ms]], device='cuda', dtype=torch.float32)
+                K = {}
+                for i, l in enumerate(('16', '8', '4')):
+                    K[l], v = shift_keys(torch.stack([F[q][i][0] for q in idx])[None], dx, int(l))
+                    valid = v if l == '16' else valid
+                f.update({f'B{l}': Bf[i] for i, l in enumerate(('16', '8', '4'))})
+                if noC:
+                    f.update({f'C{l}': Bf[i] for i, l in enumerate(('16', '8', '4'))}, a=torch.zeros(1, 256, 256, device='cuda'))
+                else:
+                    oa = agg(K, valid, {l: F[j][i] for i, l in enumerate(('16', '8', '4'))},
+                             {l: Bf[i] for i, l in enumerate(('16', '8', '4'))}, torch.arange(hist, 0, -1, device='cuda')[None],
+                             phase=dx / 16 - torch.round(dx / 16))
+                    f.update({f'C{l}': oa[f'C{l}'].float() for l in ('16', '8', '4')}, a=oa['a'].float())
+                mass = torch.nn.functional.interpolate(f['a'][None], size=(H, W), mode='bilinear', align_corners=False)[0, 0]
+                o = net(f, sam=pred.model)
+                low = decode(pred.model, o, token=o['token'], aux=da)
             else:
                 cs = list(range(max(0, j - 12), j + 1))
                 fx = theil_at(cs, [kc[l, 0] for l in cs], [j] + list(range(j - hist, j)))

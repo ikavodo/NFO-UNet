@@ -160,14 +160,44 @@ def loss_fn(low, V, W=None, a_fp=0.3, b_fn=0.7, gamma=0.75, alpha=ALPHA):
     return (20 * focal + ft).mean()
 
 
+def with_feat(agg, f, fixed=False):
+    """Fusion inputs from the learned feature integral (adapter/feat_integral.py): f from build(feat=True) or
+    encode(feat=True); returns (f with C16/8/4 := Ĉ and a := the aggregator's evidence mass, the aggregator's output)."""
+    S = ('16', '8', '4')
+    o = agg({s: f[f'K{s}'] for s in S}, f['Kvalid16'], {s: f[f'X{s}'] for s in S}, {s: f[f'B{s}'] for s in S}, f['age'],
+            fixed=fixed, phase=f.get('phase'))
+    return dict(f, C16=o['C16'].float(), C8=o['C8'].float(), C4=o['C4'].float(), a=o['a'].float()), o
+
+
+def train_step(pred, net, agg, raw, rng, lam=1.0, max_targets=32):
+    """Loss of one training clip. agg None: today's pixel integral image. agg given (FEAT=1): the learned feature integral,
+    loss v3.4 + lam · (clean-feature loss on hidden-recoverable cells + evidence-mass BCE) (plan Tasks 5b / 6)."""
+    from benchmark.nfo_vos.adapter.feat_integral import feat_loss, mass_loss
+    sam = pred.model
+    f, _ = build(pred, raw, max_targets=max_targets, rng=rng, feat=agg is not None)
+    with torch.autocast('cuda', dtype=AMP):
+        aux = 0.0
+        if agg is not None:
+            f, oa = with_feat(agg, f)
+            S = ('16', '8', '4')
+            aux = lam * (feat_loss(oa, {s: f[f'T{s}'] for s in S}, {s: f[f'Om{s}'] for s in S}, f['mu16'])
+                         + mass_loss(oa['a'], f['O4']))
+        o = net(f, sam=sam)
+        return loss_fn(decode(sam, o, token=o.get('token')).float(), f['V'], f.get('W')) + aux
+
+
 @torch.no_grad()
-def evaluate(pred, net, val):
+def evaluate(pred, net, val, agg=None):
     """Synthetic val (raw clips, built with the test-time path): J / P / R vs native V; arms box, box+pt, trk-box,
-    adapter. Also the input statistics used for the parity check against NFO."""
+    adapter. Also the input statistics used for the parity check against NFO. agg: the feature-integral path."""
     net.eval()
     rows, a_mass, a_on = [], [], []
     for raw in val:
-        f, meta = build(pred, raw)
+        f, meta = build(pred, raw, feat=agg is not None)
+        if agg is not None:
+            with torch.autocast('cuda', dtype=AMP):
+                f, _ = with_feat(agg, f)
+            meta['a_mass'] = [float(x) for x in f['a'].sum((1, 2)).cpu()]
         fb = dict(f, box=f['box_trk'])          # tracker centre, t0 box size: the same GT-free control as on NFO
         with torch.autocast('cuda', dtype=AMP):
             o = net(f, sam=pred.model)
@@ -207,6 +237,9 @@ def fmt(d, arms):
 
 
 def main(steps=1500, seed=0, eval_every=100, max_targets=32, n_val_fast=12, test=True):
+    """FEAT=1 AGG=<stage-0 checkpoint> [LAM=1]: the learned feature integral (one encoder pass per frame) instead of the
+    pixel integral image; the aggregator is fine-tuned jointly (own AdamW group); checkpoints {'fusion', 'agg'} in
+    feat_seed<seed>/."""
     """One clip per step (≤ max_targets frames), built with the test-time path (fusion_data.build). Fast validation every
     `eval_every` steps: 12 synthetic val clips + the seq1 brush SELECTION set, with the parity statistics and the
     integral-image-removal sanity arm; best checkpoint by seq1 adapter J. At the end: full synthetic val (30 clips) and ONE
@@ -220,23 +253,30 @@ def main(steps=1500, seed=0, eval_every=100, max_targets=32, n_val_fast=12, test
         p_.requires_grad_(False)
     net = Fusion().cuda()
     net.init_fallback(sam)
-    n_par = sum(p_.numel() for p_ in net.parameters())
-    opt = torch.optim.AdamW(net.parameters(), lr=3e-4, weight_decay=1e-4)
+    agg, lam = None, float(os.environ.get('LAM', 1.0))
+    if os.environ.get('FEAT') == '1':
+        from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
+        agg = FeatIntegral(sam.no_mem_embed).cuda()
+        agg.load_compat(torch.load(os.environ['AGG'], map_location='cuda'))
+    n_par = sum(p_.numel() for p_ in net.parameters()) + (sum(p_.numel() for p_ in agg.parameters()) if agg else 0)
+    groups = [{'params': list(net.parameters())}] + ([{'params': list(agg.parameters())}] if agg else [])
+    opt = torch.optim.AdamW(groups, lr=3e-4, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, steps)
     scaler = torch.amp.GradScaler('cuda', enabled=AMP == torch.float16)
     dl = iter(torch.utils.data.DataLoader(Clips('train', seed), batch_size=None, num_workers=6, prefetch_factor=2,
                                           collate_fn=_ident, persistent_workers=True))
     val_all = list(torch.utils.data.DataLoader(Clips('val'), batch_size=None, num_workers=6, collate_fn=_ident))
     val = val_all[:n_val_fast]
-    sel = fusion_nfo.items('select', pred)
-    out = f'{OUT}/token_seed{seed}'
+    sel = fusion_nfo.items('select', pred, feat=agg is not None)
+    out = f'{OUT}/{"feat" if agg else "token"}_seed{seed}'
+    save = lambda p: torch.save({'fusion': net.state_dict(), 'agg': agg.state_dict()} if agg else net.state_dict(), p)
     os.makedirs(out, exist_ok=True)
     print(f'params {n_par}; val clips {len(val)} fast / {len(val_all)} final; seq1 select frames {len(sel)}', flush=True)
     rng, log, best, t0 = np.random.default_rng(seed), [], (-1.0, None), time.time()
 
     def validate(it, rows_inp=None):
-        rows, inp = evaluate(pred, net, val)
-        s = summarise(rows); ss = fusion_nfo.evaluate(pred, net, sel)
+        rows, inp = evaluate(pred, net, val, agg)
+        s = summarise(rows); ss = fusion_nfo.evaluate(pred, net, sel, agg)
         s.update(it=it, sec=time.time() - t0, sel=ss, inputs_syn=inp)
         gap_syn = s['adapter']['J'] - s['trk-box']['J']; gap_sel = ss['adapter']['J'] - ss['trk-box']['J']
         print(f"VAL it {it}: " + fmt(s, ('box+pt', 'trk-box', 'adapter')) + f" | ΔJ vs trk-box {s['dJ_trk-box'][0]:+.3f}", flush=True)
@@ -248,27 +288,28 @@ def main(steps=1500, seed=0, eval_every=100, max_targets=32, n_val_fast=12, test
 
     log.append(validate(0))
     for it in range(1, steps + 1):
-        f, _ = build(pred, next(dl), max_targets=max_targets, rng=rng)
-        with torch.autocast('cuda', dtype=AMP):
-            o = net(f, sam=sam)
-            loss = loss_fn(decode(sam, o, token=o.get('token')).float(), f['V'], f.get('W'))
+        loss = train_step(pred, net, agg, next(dl), rng, lam, max_targets)
         opt.zero_grad(set_to_none=True); scaler.scale(loss).backward(); scaler.step(opt); scaler.update(); sched.step()
         if it % 25 == 0:
             print(f'it {it} loss {loss.item():.4f} {(time.time() - t0) / it:.2f} s/it', flush=True)
         if it % eval_every == 0 or it == steps:
             s = validate(it)
             log.append(s)
-            torch.save(net.state_dict(), f'{out}/fusion_it{it}.pt')
+            save(f'{out}/fusion_it{it}.pt')
             if s['sel']['adapter']['J'] > best[0]:
                 best = (s['sel']['adapter']['J'], it)
             json.dump(log, open(f'{out}/log.json', 'w'), indent=1, default=float)
-    net.load_state_dict(torch.load(f'{out}/fusion_it{best[1]}.pt'))
-    rows, inp = evaluate(pred, net, val_all if test else val)
+    sd = torch.load(f'{out}/fusion_it{best[1]}.pt')
+    if agg:
+        net.load_state_dict(sd['fusion']); agg.load_state_dict(sd['agg'])
+    else:
+        net.load_state_dict(sd)
+    rows, inp = evaluate(pred, net, val_all if test else val, agg)
     full = summarise(rows)
     print(f"FINAL synthetic val ({len(val_all)} clips, checkpoint it {best[1]}): " + fmt(full, ('box+pt', 'trk-box', 'adapter')), flush=True)
     if not test:                                     # smoke runs never touch the test set
         return
-    test = fusion_nfo.evaluate(pred, net, fusion_nfo.items('test', pred))
+    test = fusion_nfo.evaluate(pred, net, fusion_nfo.items('test', pred, feat=agg is not None), agg)
     pf = test.pop('per_frame'); d = np.array(pf['adapter']) - np.array(pf['trk-box'])
     bs = [d[rng.integers(0, len(d), len(d))].mean() for _ in range(5000)]
     log.append(dict(final_val=full, test=test, test_dJ_trk=[float(d.mean()), float(np.percentile(bs, 2.5)), float(np.percentile(bs, 97.5))],

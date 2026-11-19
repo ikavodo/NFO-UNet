@@ -51,7 +51,10 @@ def _gpu():
     assert cc >= (7, 5), f'sm {cc[0]}.{cc[1]}: Pascal or older (no usable fp16/bf16 tensor cores)'
     assert bf16 or os.environ.get('AMP') == 'fp16', f'sm {cc[0]}.{cc[1]} has no native bf16: run with AMP=fp16'
     assert torch.cuda.get_device_properties(0).total_memory >= 11 * 2**30, 'training peaks at 9.8 GB (32 targets, 2026-10-21): needs >= 12 GB'
+    if os.environ.get('FEAT') == '1':                # learned feature integral: ≈ 14 GB at 32 targets, n_h = 8 (laptop, 2026-11-19)
+        assert torch.cuda.get_device_properties(0).total_memory >= 15 * 2**30, 'FEAT=1 training peaks at ≈ 14 GB: needs a >= 16 GB GPU'
     torch.zeros(1, device='cuda').sum().item()                 # "no kernel image" fails here
+    from benchmark.nfo_vos.adapter.fusion_adapter import image_predictor
     image_predictor()
 
 
@@ -65,16 +68,20 @@ def _train():
     t0 = time.time()
     raw = FD.clip_raw(FD.specs('train')[0], np.random.default_rng(0))
     t1 = time.time()
-    f, meta = FD.build(pred, raw, max_targets=8, rng=np.random.default_rng(0))
     net = FA.Fusion().cuda(); net.init_fallback(pred.model)
-    opt = torch.optim.AdamW(net.parameters(), lr=1e-4)
-    with torch.autocast('cuda', dtype=FD.AMP):
-        o = net(f, sam=pred.model)
-        loss = FA.loss_fn(FA.decode(pred.model, o, token=o.get('token')).float(), f['V'], f.get('W'))
+    agg = None
+    if os.environ.get('FEAT') == '1':                    # the learned feature integral path (plan Task 6)
+        from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
+        agg = FeatIntegral(pred.model.no_mem_embed).cuda()
+        if os.environ.get('AGG'):
+            agg.load_compat(torch.load(os.environ['AGG'], map_location='cuda'))
+    params = list(net.parameters()) + (list(agg.parameters()) if agg else [])
+    opt = torch.optim.AdamW(params, lr=1e-4)
+    loss = FA.train_step(pred, net, agg, raw, np.random.default_rng(0), max_targets=32)   # 32 = the training peak
     loss.backward(); opt.step()
     torch.cuda.synchronize()
-    print(f'  loss {loss.item():.4f}; clip synthesis {t1 - t0:.1f} s, build+step {time.time() - t1:.1f} s '
-          f'({len(meta["ts"])} targets), peak mem {torch.cuda.max_memory_allocated() / 2**30:.1f} GB')
+    print(f'  {"FEAT " if agg else ""}loss {loss.item():.4f}; clip synthesis {t1 - t0:.1f} s, build+step '
+          f'{time.time() - t1:.1f} s (≤ 32 targets), peak mem {torch.cuda.max_memory_allocated() / 2**30:.1f} GB')
     assert np.isfinite(loss.item())
 
 

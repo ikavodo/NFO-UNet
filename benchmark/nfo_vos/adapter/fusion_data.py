@@ -176,7 +176,7 @@ def _feat_inputs(pred, raw, ts, trk, nh, Fs, dev):
     o['age'] = torch.arange(nh, 0, -1, device=dev).repeat(len(ts), 1)
     with torch.autocast('cuda', dtype=AMP):
         T16, T8, T4 = _enc(pred, raw['Xt'][ts])
-    o.update(T16=T16.float(), T8=T8.float(), T4=T4.float())
+    o.update(T16=T16, T8=T8, T4=T4)                     # half: only gathered Ω cells enter the (float) cosine
     o['mu16'] = pred.model.no_mem_embed.detach().float().reshape(1, -1, 1, 1)
     return o
 
@@ -284,9 +284,11 @@ class Clips(torch.utils.data.IterableDataset):
 
 
 @torch.no_grad()
-def encode(pred, clips, dev='cuda'):
+def encode(pred, clips, dev='cuda', feat=False):
     """Frozen SAM2 (bf16) on a list of clip batches: features of every target frame X, its integral image C, and each clip's
-    empty scene B (encoded once per clip, broadcast to its frames). Returns one flat batch."""
+    empty scene B (encoded once per clip, broadcast to its frames). Returns one flat batch.
+    feat=True (one target per clip, NFO hand items with 'hist' / 'dx1024'): no C encode; instead the history keys
+    K16/8/4 shifted onto the target (feat_integral.shift_keys), Kvalid16, age, phase — the inputs of with_feat."""
     rgb = lambda a: [np.stack([x] * 3, -1) for x in a]
     f = {}
 
@@ -296,11 +298,22 @@ def encode(pred, clips, dev='cuda'):
         return pred._features['image_embed'].float(), hr[1].float(), hr[0].float()
 
     with torch.autocast('cuda', dtype=AMP):
-        for key, src in (('X', 'X'), ('C', 'Ct')):
+        for key, src in (('X', 'X'),) + ((('C', 'Ct'),) if not feat else ()):
             parts = [run(c[src]) for c in clips]
             for i, l in enumerate(('16', '8', '4')):
                 f[f'{key}{l}'] = torch.cat([p[i] for p in parts])
         bparts = run([c['bg'] for c in clips])
+        if feat:
+            from benchmark.nfo_vos.adapter.feat_integral import shift_keys
+            hp = [run(c['hist']) for c in clips]
+            dx = torch.as_tensor(np.concatenate([c['dx1024'] for c in clips]), device=dev)
+            for i, l in enumerate(('16', '8', '4')):
+                f[f'K{l}'], v = shift_keys(torch.stack([p[i] for p in hp]), dx, int(l))
+                if l == '16':
+                    f['Kvalid16'] = v
+            nh = dx.shape[1]
+            f['age'] = torch.arange(nh, 0, -1, device=dev).repeat(len(clips), 1)
+            f['phase'] = dx / 16 - torch.round(dx / 16)
         idx = torch.cat([torch.full((len(c['X']),), j) for j, c in enumerate(clips)]).to(dev)
         for i, l in enumerate(('16', '8', '4')):
             f[f'B{l}'] = bparts[i][idx]

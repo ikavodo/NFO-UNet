@@ -182,3 +182,72 @@ def test_mass_loss_does_not_touch_mixing_weights():
     mass_loss(o['a'], torch.zeros_like(o['a'])).backward()
     assert all(p.grad is None or p.grad.abs().max() == 0 for n, p in m.named_parameters() if n.startswith(('h.', 'null', 'P.', 'e_age')))
     assert m.hm[-1].weight.grad.abs().max() > 0
+
+
+# ---- Task 6: Fusion training on the feature integral ----
+
+@GPU
+def test_train_step_feat_reaches_fusion_and_aggregator():
+    from benchmark.nfo_vos.adapter import fusion_adapter as FA
+    from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
+    from benchmark.nfo_vos.adapter.fusion_data import clip_raw, specs
+    pred = FA.image_predictor()
+    net = FA.Fusion().cuda(); net.init_fallback(pred.model)
+    agg = FeatIntegral(pred.model.no_mem_embed).cuda()
+    raw = clip_raw(specs('val')[0], np.random.default_rng(0))
+    loss = FA.train_step(pred, net, agg, raw, np.random.default_rng(0), lam=1.0, max_targets=4)
+    loss.backward()
+    assert np.isfinite(loss.item())
+    assert any(net.out[l].weight.grad.abs().max() > 0 for l in net.out)
+    for name in ('h', 'hm'):
+        gr = getattr(agg, name)[-1].weight.grad
+        assert gr is not None and gr.abs().max() > 0, name
+
+
+@GPU
+def test_nfo_select_item_feat_inputs():
+    from benchmark.nfo_vos.adapter import fusion_nfo
+    from benchmark.nfo_vos.adapter.fusion_adapter import image_predictor, with_feat
+    from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
+    from benchmark.nfo_vos.adapter.fusion_data import encode
+    pred = image_predictor()
+    it = fusion_nfo.items('select', pred, feat=True)[0]
+    f = encode(pred, [it], feat=True)
+    assert f['K16'].shape == (1, 6, 256, 64, 64) and 'C16' not in f
+    g, _ = with_feat(FeatIntegral(pred.model.no_mem_embed).cuda(), f)
+    assert g['C4'].shape == (1, 32, 256, 256) and g['a'].shape == (1, 256, 256)
+
+
+# ---- Task 7: one-pass inference ----
+
+def test_inference_dx_equals_pixel_path_dx():
+    """The feature path takes its shifts from fusion_data.hist_warps; the pixel path computes them inline (inference.py).
+    Same Theil–Sen fit over [j−12, j], so the same dx."""
+    from benchmark.nfo_vos.adapter.fusion_data import hist_warps
+    from utils.stats_utils import theil_at
+    rng = np.random.default_rng(0)
+    kc = np.stack([np.cumsum(rng.normal(4, 1, 40)) + 100, rng.normal(300, 2, 40)], 1)
+    for j in (6, 13, 39):
+        cs = list(range(max(0, j - 12), j + 1))
+        fx = theil_at(cs, [kc[l, 0] for l in cs], [j] + list(range(j - 6, j)))
+        inline = [fx[j] - fx[l] for l in range(j - 6, j)]
+        _, Ms = hist_warps(kc, j, 6)
+        assert np.allclose([M[0, 2] for M in Ms], inline)
+
+
+@GPU
+def test_inference_feat_matches_pixel_before_history():               # Review Focus 5
+    from benchmark.nfo_vos.adapter import fusion_adapter as FA
+    from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
+    from benchmark.nfo_vos.adapter.fusion_data import clip_raw, specs
+    from benchmark.nfo_vos.adapter.inference import masks_from_arrays
+    pred = FA.image_predictor()
+    raw = clip_raw(specs('val')[0], np.random.default_rng(0))
+    Xn, bg = list(raw['X'][:10]), raw['bg']
+    cx, cy, h = raw['bxj'][0]; g = np.array([cx - h / 6, cy - h / 2, cx + h / 6, cy + h / 2], np.float32)
+    net = FA.Fusion().cuda(); net.init_fallback(pred.model); net.eval()
+    with torch.no_grad():                                              # as dump_arms / timing call it
+        m_pix, _ = masks_from_arrays(pred, net, Xn, bg, g)
+        net.agg = FeatIntegral(pred.model.no_mem_embed).cuda().eval()
+        m_feat, _ = masks_from_arrays(pred, net, Xn, bg, g)
+    assert (m_pix[:6] == m_feat[:6]).all() and m_feat.shape == m_pix.shape

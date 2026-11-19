@@ -47,7 +47,7 @@ def nfo():
             r = stats(V, (x0, y0, x0 + b.w * s, y0 + b.h * s))
             if r:
                 c = [bb[j][0].x + bb[j][0].w / 2 for j in (k - 1, k + 1) if j in bb]
-                r['speed'] = abs(c[-1] - c[0]) / (len(c) - 1 or 1) / b.h if len(c) == 2 else np.nan
+                r['speed'] = abs(c[-1] - c[0]) / 2 / b.h if len(c) == 2 else np.nan          # frames k−1 → k+1
                 rows.append(dict(src='NFO', **r))
     return rows
 
