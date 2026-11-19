@@ -131,3 +131,36 @@ def test_build_feat_shapes_and_masks():
     assert f['Om16'].shape == (n, 1, 64, 64) and f['Om4'].shape == (n, 1, 256, 256)
     assert (f['Om16'].cpu() & ~S16).float().mean() < 0.01            # Ω ⊆ person (up to area-resampling at the rim)
     assert f['age'][0].tolist() == list(range(nh, 0, -1))
+    assert f['O4'].shape == (n, 256, 256) and 0 <= f['O4'].min() and f['O4'].max() <= 1 and f['O4'][-1].max() == 0
+    assert f['phase'].shape == (n, nh) and f['phase'].abs().max() <= 0.5
+
+
+# ---- Task 5b: phase input, supervised evidence mass ----
+
+def test_phase_input_no_effect_at_init():
+    from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
+    m = FeatIntegral(torch.zeros(1, 256, 1, 1)); x = _inputs()
+    a = m(*x)['alpha16']; b = m(*x, phase=torch.full((2, 3), 0.4))['alpha16']
+    assert torch.allclose(a, b)
+
+
+def test_old_checkpoint_loads_with_zero_phase_weights():
+    from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
+    m = FeatIntegral(torch.zeros(1, 256, 1, 1)); sd = m.state_dict()
+    sd['h.0.weight'] = sd['h.0.weight'][:, :-2].clone()                # the pre-5b layout (4d input channels)
+    m2 = FeatIntegral(torch.zeros(1, 256, 1, 1)); m2.load_compat(sd)
+    assert (m2.h[0].weight[:, -2:] == 0).all() and torch.equal(m2.h[0].weight[:, :-2], sd['h.0.weight'])
+
+
+def test_mass_loss_zero_grad_at_target():
+    from benchmark.nfo_vos.adapter.feat_integral import mass_loss
+    y = torch.rand(2, 8, 8) * 0.9 + 0.05
+    a = y.clone().requires_grad_(True)
+    mass_loss(a, y).backward()
+    assert a.grad.abs().max() < 1e-5
+
+
+def test_score_head_layout():
+    from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
+    h = FeatIntegral(torch.zeros(1, 256, 1, 1)).h
+    assert [type(m).__name__ for m in h] == ['Conv2d', 'GELU', 'Conv2d', 'GELU', 'Conv2d'] and h[2].kernel_size == (3, 3)

@@ -146,16 +146,19 @@ def _feat_inputs(pred, raw, ts, trk, nh, Fs, dev):
     T16/8/4 [n, C, h, w]       features of Xt (frame t, same noise and sway, no occluder): the clean-feature target
     Om16/8/4 [n, 1, h, w]      hidden-recoverable person cells: S_t ∧ ¬V_t ∧ (∪_k V_k warped onto t), coverage > 0.5
     Vis16 [n, 1, 64, 64]       visible person cells (the loss floor)
+    O4 [n, 256, 256]           person visible in ≥ 1 aligned history frame (area fraction; 0 for mode 2): mass target
+    phase [n, nh]              dx/16 − round(dx/16): each key's sub-cell phase at stride 16
     mu16 [1, 256, 1, 1]        SAM2's no_mem_embed (centring for stride-16 cosines)"""
     from benchmark.nfo_vos.adapter.feat_integral import shift_keys
     H, W = raw['X'].shape[1:]
-    hidx, dx, Om, Vis = [], [], {s: [] for s in ('16', '8', '4')}, []
+    hidx, dx, Om, Vis, Os = [], [], {s: [] for s in ('16', '8', '4')}, [], []
     for t in ts:
         hist, Ms = hist_warps(trk, t, nh)
         hidx.append(hist); dx.append([M[0, 2] * 1024 / W for M in Ms])
         O = np.zeros((H, W), bool)
         for i, M in zip(hist, Ms):
             O |= cv2.warpAffine(raw['V'][i].astype(np.uint8), M, (W, H), flags=cv2.INTER_NEAREST) > 0
+        Os.append(np.clip(cv2.resize(O.astype(np.float32), (256, 256), interpolation=cv2.INTER_AREA), 0, 1) * (raw['modes'][t] != 2))
         hid = O & raw['S'][t] & ~raw['V'][t]
         for s, hw in (('16', 64), ('8', 128), ('4', 256)):
             Om[s].append(_cover(hid, hw))
@@ -168,6 +171,8 @@ def _feat_inputs(pred, raw, ts, trk, nh, Fs, dev):
             o['Kvalid16'] = v & torch.as_tensor(raw['modes'][ts] != 2, device=dev)[:, None, None, None, None]
         o[f'Om{s}'] = torch.as_tensor(np.stack(Om[s]), device=dev)[:, None]
     o['Vis16'] = torch.as_tensor(np.stack(Vis), device=dev)[:, None]
+    o['O4'] = torch.as_tensor(np.stack(Os), device=dev)                       # target of the evidence mass (mass_loss)
+    o['phase'] = dx / 16 - torch.round(dx / 16)                               # sub-cell shift phase at s16 (G0)
     o['age'] = torch.arange(nh, 0, -1, device=dev).repeat(len(ts), 1)
     with torch.autocast('cuda', dtype=AMP):
         T16, T8, T4 = _enc(pred, raw['Xt'][ts])

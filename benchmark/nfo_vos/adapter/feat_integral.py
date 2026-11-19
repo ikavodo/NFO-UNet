@@ -66,18 +66,29 @@ class FeatIntegral(nn.Module):
         self.register_buffer('mu16', mu16.detach().float().reshape(1, -1, 1, 1).clone())
         self.P = nn.Conv2d(256, d, 1)
         self.e_age = nn.Embedding(nh_max + 1, d)
-        self.h = nn.Sequential(nn.Conv2d(4 * d, d, 1), nn.GELU(), nn.Conv2d(d, d, 3, padding=1), nn.GELU(),
+        # input: [P F_k, P F_k − P F_t, P F_k − P B, e_age, φ, |φ|], φ = the key's sub-cell shift phase at s16
+        self.h = nn.Sequential(nn.Conv2d(4 * d + 2, d, 1), nn.GELU(), nn.Conv2d(d, d, 3, padding=1), nn.GELU(),
                                nn.Conv2d(d, 1, 1))
         nn.init.zeros_(self.h[-1].weight); nn.init.zeros_(self.h[-1].bias)
         self.null = nn.Parameter(torch.zeros(1))
 
-    def logits_learned(self, K16, Ft16, B16, age):
+    def load_compat(self, sd):
+        """Load a state dict saved before the phase input (h.0 with 4d input channels): the 2 phase channels get zero
+        weights, so the loaded module computes exactly the old function."""
+        w = sd['h.0.weight']
+        if w.shape[1] == self.h[0].in_channels - 2:
+            sd = dict(sd); sd['h.0.weight'] = torch.cat([w, torch.zeros_like(w[:, :2])], 1)
+        self.load_state_dict(sd)
+
+    def logits_learned(self, K16, Ft16, B16, age, phase=None):
         n, k, C, H, W = K16.shape
         P = lambda x: self.P(x - self.mu16.to(x.dtype))
         pk = P(K16.reshape(n * k, C, H, W)).view(n, k, -1, H, W)
         pt, pb = P(Ft16)[:, None], P(B16)[:, None]
         ea = self.e_age(age)[..., None, None].expand(-1, -1, -1, H, W).to(pk.dtype)
-        z = torch.cat([pk, pk - pt, pk - pb, ea], 2).flatten(0, 1)
+        ph = torch.zeros(n, k, device=pk.device) if phase is None else phase.float()
+        ph = torch.stack([ph, ph.abs()], 2)[..., None, None].expand(-1, -1, -1, H, W).to(pk.dtype)
+        z = torch.cat([pk, pk - pt, pk - pb, ea, ph], 2).flatten(0, 1)
         lk = self.h(z).view(n, k, H, W).float()
         return lk, self.null.float().view(1, 1, 1, 1).expand(n, 1, H, W)
 
@@ -91,14 +102,14 @@ class FeatIntegral(nn.Module):
         ln = torch.log((1 - wg.sum(1, keepdim=True)).clamp(min=1e-6))
         return lk, ln
 
-    def forward(self, K, valid16, Ft, B, age, fixed=False, tau=3.5):
+    def forward(self, K, valid16, Ft, B, age, fixed=False, tau=3.5, phase=None):
         K16 = K['16']
         n, k = K16.shape[:2]
         v = valid16[:, :, 0]
         if fixed:
             lk, ln = self.logits_fixed(K16, B['16'], age, v, tau)
         else:
-            lk, ln = self.logits_learned(K16, Ft['16'], B['16'], age)
+            lk, ln = self.logits_learned(K16, Ft['16'], B['16'], age, phase)
         lk = lk.masked_fill(~v, float('-inf'))
         al = torch.softmax(torch.cat([lk, ln], 1), 1)                                       # float32 [n, k+1, H, W]
         o = {'alpha16': al}
@@ -123,3 +134,10 @@ def feat_loss(C, T, Om, mu16):
         x = next(iter(C.values()))
         return x.sum() * 0
     return torch.stack(terms).mean()
+
+
+def mass_loss(a, O):
+    """BCE of the evidence mass a = 1 − α_∅ [n, 256, 256] against O = fraction of the cell where the person was visible in
+    at least one aligned history frame (supervises the abstain slot; plan Task 5b)."""
+    a, O = a.float().clamp(1e-4, 1 - 1e-4), O.float()               # explicit BCE: F.binary_cross_entropy refuses autocast
+    return -(O * a.log() + (1 - O) * (1 - a).log()).mean()
