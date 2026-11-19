@@ -109,9 +109,10 @@ def main(steps=200, seed=0, eval_every=200, n_val=30, init='', tag='stage0b', ma
     pred = image_predictor()
     for p in pred.model.parameters():
         p.requires_grad_(False)
-    agg = FeatIntegral(pred.model.no_mem_embed).cuda()
+    agg = FeatIntegral(pred.model.no_mem_embed, nbr=int(os.environ.get('NBR', 0))).cuda()   # NBR=1: 3×3 neighbourhood keys
     if init:
-        agg.load_compat(torch.load(init, map_location='cuda'))
+        sd = torch.load(init, map_location='cuda')
+        agg.load_compat(sd['agg'] if 'agg' in sd else sd)       # a FEAT training checkpoint {'fusion', 'agg'} or a stage-0 one
     opt = torch.optim.AdamW(agg.parameters(), lr=3e-4, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, steps)
     scaler = torch.amp.GradScaler('cuda', enabled=AMP == torch.float16)

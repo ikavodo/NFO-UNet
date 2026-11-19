@@ -37,7 +37,8 @@ def load_net(pred, ckpt):
     if isinstance(sd, dict) and 'fusion' in sd:
         from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
         net.load_state_dict(sd['fusion'])
-        net.agg = FeatIntegral(pred.model.no_mem_embed).cuda().eval(); net.agg.load_compat(sd['agg'])
+        nbr = int(round((sd['agg']['b_off'].numel() ** 0.5 - 1) / 2)) if 'b_off' in sd['agg'] else 0
+        net.agg = FeatIntegral(pred.model.no_mem_embed, nbr=nbr).cuda().eval(); net.agg.load_compat(sd['agg'])
     else:
         net.load_state_dict(sd)
     net.eval()

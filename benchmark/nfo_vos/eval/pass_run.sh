@@ -6,6 +6,7 @@
 #   bash benchmark/nfo_vos/eval/pass_run.sh ours trk adapter-pf ...   # our arms (e.g. adapter-pf-h4 once chosen)
 #   bash benchmark/nfo_vos/eval/pass_run.sh fullpass adapter-pf-noC ...  # arms needed only on the 32 fullpass clips
 #   bash benchmark/nfo_vos/eval/pass_run.sh vidtrk                    # B0 + tracker prompts on the 32 clips -> b0trk-c2
+#   bash benchmark/nfo_vos/eval/pass_run.sh heldout                   # feat adapter it700 on fullpass + box AUC / seq2–4 hand J
 #   bash benchmark/nfo_vos/eval/pass_run.sh recogN                    # recognition vs N on the 32 clips (36 parallel
 #                                                                     # tasks) + the plot once all finish
 # Then (cluster or locally after copying results/benchmark/pass/masks back):
@@ -37,6 +38,17 @@ elif [ "$STAGE" = vidtrk ]; then
   # SAM2.1 video (memory) + tracker box/point every frame; needs fullpass/masks/trkbox (boxes). Ids 0..N-1 = B0 only.
   N=$("$PYTHON" -c "import json; print(len(json.load(open('results/benchmark/fullpass/trials.json'))))")
   NFO_RUN=fullpass NFO_TAG=-c2 NFO_TRK_PROMPTS=1 sbatch --export=ALL --array=0-$((N - 1)) benchmark/nfo_vos/baselines/run_sam2_video.sbatch
+elif [ "$STAGE" = heldout ]; then
+  # One-pass feature adapter (it700, selected on seq1) on the 32 fullpass clips, then ONE scoring job (cluster env, same as
+  # the existing b0-c2 / t1-c2 / b0trk-c2 / adapter-pf|s1|s2 masks): box AUC (all arms, Δ vs t1-c2) + seq2–4 hand J.
+  export FEAT_CKPT=${FEAT_CKPT:-results/benchmark/rr/layers_fusion_adapter/feat_seed0/feat_seed0/fusion_it700.pt}
+  N=$("$PYTHON" -c "import json; print(len(json.load(open('results/benchmark/fullpass/trials.json'))))")
+  J=$(NFO_RUN=fullpass ARM=adapter-feat sbatch --parsable --export=ALL --array=0-$((N - 1)) --time=01:00:00 benchmark/nfo_vos/eval/dump_arms.sbatch)
+  A="adapter-feat adapter-pf adapter-s1 adapter-s2 b0-c2 t1-c2 b0trk-c2 trk"
+  sbatch --dependency=afterok:$J --job-name=nfo_heldout --cpus-per-task=4 --mem=16G --time=00:30:00 \
+    --output=/storage/slurm/akid/logs/nfo_heldout-%j.out \
+    --wrap="cd $PWD && export NFO_RUN=fullpass PYTHONPATH=. && NFO_BASE=t1-c2 $PYTHON -m benchmark.nfo_vos.eval.box_metrics score $A && $PYTHON -m benchmark.nfo_vos.eval.heldout_j t1-c2 $A"
+  echo "dump array $J -> scoring job waits for it: /storage/slurm/akid/logs/nfo_heldout-<id>.out"
 elif [ "$STAGE" = recogN ]; then
   J=$(sbatch --parsable benchmark/nfo_vos/eval/recog_sweep.sbatch)
   sbatch --dependency=afterok:$J --job-name=nfo_recogN_plot --cpus-per-task=4 --mem=16G --time=00:30:00 \
@@ -44,5 +56,5 @@ elif [ "$STAGE" = recogN ]; then
     --wrap="cd $PWD && NFO_RUN=fullpass PYTHONPATH=. $PYTHON -m benchmark.nfo_vos.eval.recog_vs_N"
   echo "sweep $J (36 tasks) -> plot job waits for it: images/benchmark/downstream/recog_vs_N_fullpass.png"
 else
-  echo "usage: $0 baselines | ours ARM... | fullpass ARM... | vidtrk | recogN"; exit 1
+  echo "usage: $0 baselines | ours ARM... | fullpass ARM... | vidtrk | heldout | recogN"; exit 1
 fi

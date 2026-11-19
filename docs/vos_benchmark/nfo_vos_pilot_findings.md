@@ -421,6 +421,37 @@ synthetic task is solvable from F_t / F_B, so training never pays for reading Ĉ
 training-data problem (frames hidden at t but visible in history), before per-stride weights. Next: adapter − noC in the
 densest occluder group, and the frequency of hidden-at-t / visible-in-history frames in the synthetic mix.
 
+**Where the integral acts on synthetic data (2026-11-19, `tools/syn_noC.py` grouped, 30 val clips, frames with history,
+964 frames; rows in `results/benchmark/rr/feat_integral/syn_noC_rows_*.json`).** Per frame: vis = |V_t|/|S_t|, rec = share
+of the person hidden at t but visible in the aligned history (Ω). Median vis 0.64, rec 0.22; HARD frames (vis < 0.5 and
+≥ half the hidden part seen in history) are 12.1% (117 frames): not rare.
+
+| adapter − noC (J) | feat it700 | pixel it600 |
+|---|---|---|
+| all | −0.002 [−0.006, +0.001] | −0.006 [−0.009, −0.002] |
+| HARD | −0.012 [−0.018, −0.006] | −0.020 [−0.038, −0.001] |
+| rec ≥ 0.3 | −0.009 [−0.016, −0.003] | −0.015 [−0.022, −0.009] |
+| ρ 0.4–0.6 | −0.005 [−0.011, +0.001] | −0.008 [−0.014, −0.001] |
+| HARD: ΔP / ΔR | −0.018 / +0.009 | −0.039 / +0.030 |
+
+The adapter does read the integral: it raises recall and lowers precision more, and most where Ω is large. The integral
+carries the *amodal* person (hidden parts seen in history; Airborne Optical Sectioning's purpose), the target is the
+*visible* mask, and loss v3.4 gives occluded pixels within 8 px of a fragment weight 0, so spill into Ω is free in training
+and an FP in J. The stage-0 L_C target (clean features on hidden cells Ω) is amodal as well. So enriching HARD frames would
+enrich exactly the frames where the integral hurts J; it is not the fix. Consistent with NFO: pf − noC is +0.018 on box AUC
+(GT boxes are amodal) and +0.016 [−0.001, +0.040] on hand J (not significant).
+
+**Downstream surrogate and the stride oracle (2026-11-19).** NFO has no trustworthy person segmentations, so downstream
+metrics decide. Synthetic stand-in for box AUC: IoU of the mask's bbox with the amodal person box (bbox of S_t;
+`fusion_adapter._box_iou`). adapter − noC box IoU: pixel it600 **+0.018 [+0.006, +0.031]** (ρ 0.4–0.6: +0.026), feat it700
++0.008 [+0.000, +0.018]: the same ordering as seq1 box AUC (+0.018 / +0.004). For the current model the spill that costs J
+buys the box, but this is not a necessary trade: a perfect visible-only mask V_t has box IoU 0.944 vs pixel adapter 0.781 /
+noC 0.763 (mode-0 frames), so penalising spill into Ω (W = 1 there) is a legitimate candidate, tested by box IoU. Oracle (`ORACLE=1`, feat it700, no retraining), clean-frame features T in place of Ĉ:
+- s8 + s4 only (`oracle-fine`) − adapter: J +0.001, box IoU +0.002 [−0.000, +0.005] (HARD −0.003). Below the
+  pre-registered +0.01: per-stride mixing weights cannot matter for this adapter. Not pursued.
+- all strides (`oracle-all`) − adapter: box IoU **+0.015 [+0.008, +0.024]**, HARD **+0.054 [+0.016, +0.102]**, J +0.000.
+The headroom is in the s16 content of Ĉ (cos to clean 0.50 on hidden cells), not in its fine-stride resolution.
+
 ## Code map
 
 - `benchmark/nfo_vos/downstream/`:

@@ -209,17 +209,48 @@ def evaluate(pred, net, val, agg=None):
             o = net(dict(f, C16=f['B16'], C8=f['B8'], C4=f['B4'], a=torch.zeros_like(f['a'])), sam=pred.model)
             outs['adapter-noC'] = decode(pred.model, o, token=o.get('token'))   # integral removed (C := B, a := 0)
             del o
+            if agg is not None and os.environ.get('ORACLE'):   # upper bounds for better mixing: clean-frame features Xt
+                for nm, ks in (('oracle-fine', ('8', '4')), ('oracle-all', ('16', '8', '4'))):
+                    o = net(dict(f, **{f'C{k}': f[f'T{k}'].to(f[f'C{k}'].dtype) for k in ks}), sam=pred.model)
+                    outs[nm] = decode(pred.model, o, token=o.get('token')); del o
         for i, Vn in enumerate(meta['Vn']):
             Vt = torch.from_numpy(Vn).cuda()
+            St = torch.from_numpy(raw['S'][meta['ts'][i]]).cuda()
             r = dict(mode=int(meta['mode'][i]), clip=meta['cid'], rho=meta['occ']['rho'], clump=str(meta['occ']['clump']))
+            r.update(_hist_cover(raw, meta, i))
             for a, low in outs.items():
                 pr = F.interpolate(low[i:i + 1].float(), Vt.shape, mode='bilinear', align_corners=False)[0, 0] > 0
                 tp = (pr & Vt).sum().item()
-                r[a] = (tp / max((pr | Vt).sum().item(), 1), tp / max(pr.sum().item(), 1), tp / max(Vt.sum().item(), 1))
+                r[a] = (tp / max((pr | Vt).sum().item(), 1), tp / max(pr.sum().item(), 1), tp / max(Vt.sum().item(), 1),
+                        _box_iou(pr.cpu().numpy(), raw['S'][meta['ts'][i]]),   # 4th: mask bbox vs AMODAL person box
+                        (pr & St & ~Vt).sum().item() / max((pr & ~Vt).sum().item(), 1))   # 5th: share of FP in the hidden person
             rows.append(r)
         a_mass += meta['a_mass']; a_on += meta['a_on']
     net.train()
     return rows, dict(a_mass=float(np.median(a_mass)), a_on=float(np.nanmean(a_on)))
+
+
+def _box_iou(m, S):
+    """IoU of the bounding boxes of mask m and amodal person mask S (the synthetic stand-in for NFO's GT boxes)."""
+    if not m.any() or not S.any():
+        return 0.0
+    b = [(ys.min(), xs.min(), ys.max() + 1, xs.max() + 1) for ys, xs in (np.nonzero(m), np.nonzero(S))]
+    ih = max(0, min(b[0][2], b[1][2]) - max(b[0][0], b[1][0])); iw = max(0, min(b[0][3], b[1][3]) - max(b[0][1], b[1][1]))
+    ar = [(y1 - y0) * (x1 - x0) for y0, x0, y1, x1 in b]
+    return float(ih * iw / (ar[0] + ar[1] - ih * iw))
+
+
+def _hist_cover(raw, meta, i):
+    """Per target t (pixel level, native res): vis = |V_t|/|S_t| (visible person share); rec = |S_t ∧ ¬V_t ∧ ∪_k V_k
+    warped onto t| / |S_t| (share hidden at t but visible in the aligned history t−n_h..t−1; the Ω of _feat_inputs)."""
+    import cv2
+    from benchmark.nfo_vos.adapter.fusion_data import hist_warps
+    t = meta['ts'][i]; S, V = raw['S'][t], raw['V'][t]; H, W = S.shape
+    O = np.zeros((H, W), bool)
+    for k, M in zip(*hist_warps(meta['trk'], t, meta['occ']['nh'])):
+        O |= cv2.warpAffine(raw['V'][k].astype(np.uint8), M, (W, H), flags=cv2.INTER_NEAREST) > 0
+    n = max(int(S.sum()), 1)
+    return dict(vis=float(V.sum() / n), rec=float((O & S & ~V).sum() / n))
 
 
 def summarise(rows, rng=None):

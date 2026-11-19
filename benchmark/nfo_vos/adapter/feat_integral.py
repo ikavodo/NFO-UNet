@@ -60,9 +60,24 @@ def _robust_gate(m, valid):
     return torch.sigmoid(zq - th).view_as(m) * valid
 
 
+def _shift(x, dy, dx, r):
+    """out[..., y, x] = x[..., y + dy, x + dx], zero outside; |dy|, |dx| ≤ r."""
+    H, W = x.shape[-2:]
+    return F.pad(x, (r, r, r, r))[..., r + dy:r + dy + H, r + dx:r + dx + W]
+
+
 class FeatIntegral(nn.Module):
-    def __init__(self, mu16, d=32, nh_max=8):
+    def __init__(self, mu16, d=32, nh_max=8, nbr=0):
+        """nbr = r > 0: neighbourhood keys (2r+1)² per history frame at s16: key (q, o) = frame q's aligned features
+        shifted by o ∈ {−r..r}² cells (o·16/s px-cells at stride s), so the content-based softmax can pick the best-aligned
+        neighbour (sub-cell / sway misalignment; design §4, NATTEN-style local attention). Offset embedding zero-init,
+        offset bias 0 at the centre and −4 elsewhere (≈ the r = 0 function at init). Mass head: centre keys only."""
         super().__init__()
+        self.nbr = nbr
+        self.offs = [(dy, dx) for dy in range(-nbr, nbr + 1) for dx in range(-nbr, nbr + 1)]
+        if nbr:
+            self.e_off = nn.Embedding(len(self.offs), d); nn.init.zeros_(self.e_off.weight)
+            self.b_off = nn.Parameter(torch.tensor([0. if o == (0, 0) else -4. for o in self.offs]))
         self.register_buffer('mu16', mu16.detach().float().reshape(1, -1, 1, 1).clone())
         self.P = nn.Conv2d(256, d, 1)
         self.e_age = nn.Embedding(nh_max + 1, d)
@@ -87,7 +102,7 @@ class FeatIntegral(nn.Module):
         if w.shape[1] == self.h[0].in_channels - 2:
             sd['h.0.weight'] = torch.cat([w, torch.zeros_like(w[:, :2])], 1)
         for k, v in self.state_dict().items():                  # heads added later (mass head): keep their fresh init
-            if k.startswith(('hm.', 'mbias')) and k not in sd:
+            if k.startswith(('hm.', 'mbias', 'e_off', 'b_off')) and k not in sd:
                 sd[k] = v
         self.load_state_dict(sd)
 
@@ -102,6 +117,16 @@ class FeatIntegral(nn.Module):
         ea = self.e_age(age)[..., None, None].expand(-1, -1, -1, H, W).to(pk.dtype)
         ph = torch.zeros(n, k, device=pk.device) if phase is None else phase.float()
         ph = torch.stack([ph, ph.abs()], 2)[..., None, None].expand(-1, -1, -1, H, W).to(pk.dtype)
+        if self.nbr:                     # P is 1×1, so shifting P(K) = P(shifted K) (padding cells are masked invalid)
+            nO, c = len(self.offs), len(self.offs) // 2
+            zc = torch.cat([pk, pk - pt, pk - pb, ea, ph], 2).flatten(0, 1)
+            pk = torch.stack([_shift(pk, dy, dx, self.nbr) for dy, dx in self.offs], 2).flatten(1, 2)   # [n, k·O, d, H, W]
+            ea = (ea[:, :, None] + self.e_off.weight.to(ea.dtype)[None, None, :, :, None, None]).flatten(1, 2)
+            ph = ph.repeat_interleave(nO, 1)
+            z = torch.cat([pk, pk - pt, pk - pb, ea, ph], 2).flatten(0, 1)
+            lk = self.h(z).view(n, k, nO, H, W).float() + self.b_off.float().view(1, 1, nO, 1, 1)
+            self._mk = self.hm(zc.detach()).view(n, k, H, W).float()
+            return lk.flatten(1, 2), self.null.float().view(1, 1, 1, 1).expand(n, 1, H, W)
         z = torch.cat([pk, pk - pt, pk - pb, ea, ph], 2).flatten(0, 1)
         lk = self.h(z).view(n, k, H, W).float()
         self._mk = self.hm(z.detach()).view(n, k, H, W).float()
@@ -125,19 +150,28 @@ class FeatIntegral(nn.Module):
             lk, ln = self.logits_fixed(K16, B['16'], age, v, tau)
         else:
             lk, ln = self.logits_learned(K16, Ft['16'], B['16'], age, phase)
-        lk = lk.masked_fill(~v, float('-inf'))
-        al = torch.softmax(torch.cat([lk, ln], 1), 1)                                       # float32 [n, k+1, H, W]
+        r, nO = (0, 1) if fixed else (self.nbr, len(self.offs))       # the fixed control has no neighbourhood keys
+        vk = v if not r else torch.stack([_shift(v, dy, dx, r) for dy, dx in self.offs], 2).flatten(1, 2)
+        lk = lk.masked_fill(~vk, float('-inf'))
+        al = torch.softmax(torch.cat([lk, ln], 1), 1)                                # float32 [n, k·O+1, H, W]
         o = {'alpha16': al}
         for s in STRIDES:
             Ks, Bs = K[s], B[s]
             a_s = al if s == '16' else F.interpolate(al, size=Ks.shape[-2:], mode='bilinear', align_corners=False)
             a_s = a_s.to(Ks.dtype)
-            C = a_s[:, k:k + 1] * Bs
+            kn, f = k * nO, 16 // int(s)
+            C = a_s[:, kn:kn + 1] * Bs
             for q in range(k):                      # accumulate per key: no [n, k, C, h, w] product (training memory)
-                C = C + a_s[:, q:q + 1] * Ks[:, q]
+                if not r:
+                    C = C + a_s[:, q:q + 1] * Ks[:, q]
+                    continue
+                R = r * f; Kp = F.pad(Ks[:, q], (R, R, R, R)); h_, w_ = Ks.shape[-2:]   # one padded copy, views per offset
+                for j, (dy, dx) in enumerate(self.offs):
+                    i = q * nO + j
+                    C = C + a_s[:, i:i + 1] * Kp[..., R + dy * f:R + dy * f + h_, R + dx * f:R + dx * f + w_]
             o[f'C{s}'] = C
             if s == '4' and fixed:
-                o['a'] = (1 - a_s[:, k].float()).clamp(0, 1)
+                o['a'] = (1 - a_s[:, kn].float()).clamp(0, 1)
         if not fixed:
             mk = self._mk.masked_fill(~v, float('-inf'))
             ml = torch.logsumexp(mk, 1, keepdim=True) + self.mbias.float()            # all invalid → −inf → a = 0
