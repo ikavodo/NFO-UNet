@@ -46,7 +46,7 @@ def load_net(pred, ckpt):
 
 def main(arm, idx):
     t = json.load(open(TR.OUT))[int(idx)]
-    path = f'{TR.RES}/masks/{arm}/{t["id"]}.npz'
+    path = f'{TR.RES}/masks/{arm}{os.environ.get("MASK_TAG", "")}/{t["id"]}.npz'   # MASK_TAG: e.g. '@lap' (one environment)
     if os.path.exists(path):
         return print('exists', path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
