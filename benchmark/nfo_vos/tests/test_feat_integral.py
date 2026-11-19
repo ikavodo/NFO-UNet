@@ -32,3 +32,84 @@ def test_clip_raw_carries_target():
     from benchmark.nfo_vos.adapter.fusion_data import clip_raw, specs
     r = clip_raw(specs('val')[0], np.random.default_rng(0))
     assert r['Xt'].shape == r['X'].shape and r['Xt'].dtype == np.uint8
+
+
+# ---- Task 2: key shift, aggregator, loss ----
+
+def _inputs(n=2, k=3, h=8, seed=0):
+    g = torch.Generator().manual_seed(seed)
+    chans = {'16': (256, h), '8': (64, 2 * h), '4': (32, 4 * h)}
+    K = {s: torch.randn(n, k, c, w, w, generator=g) for s, (c, w) in chans.items()}
+    Ft = {s: torch.randn(n, c, w, w, generator=g) for s, (c, w) in chans.items()}
+    B = {s: torch.randn(n, c, w, w, generator=g) for s, (c, w) in chans.items()}
+    valid = torch.ones(n, k, 1, h, h, dtype=torch.bool)
+    age = torch.arange(k, 0, -1).repeat(n, 1)
+    return K, valid, Ft, B, age
+
+
+def test_shift_integer_equals_roll_interior():
+    from benchmark.nfo_vos.adapter.feat_integral import shift_keys
+    F = torch.randn(1, 1, 4, 8, 8)
+    for mode in ('bilinear', 'roll'):
+        Fs, v = shift_keys(F, torch.tensor([[32.]]), 16, mode)        # 2 cells right
+        assert torch.allclose(Fs[..., 2:], F[..., :-2], atol=1e-5) and not v[..., :2].any() and v[..., 2:].all()
+
+
+def test_shift_zero_is_identity():
+    from benchmark.nfo_vos.adapter.feat_integral import shift_keys
+    F = torch.randn(2, 3, 4, 8, 8)
+    Fs, v = shift_keys(F, torch.zeros(2, 3), 16)
+    assert torch.allclose(Fs, F, atol=1e-5) and v.all()
+
+
+def test_weights_sum_to_one_and_init_uniform():
+    from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
+    o = FeatIntegral(torch.zeros(1, 256, 1, 1))(*_inputs())
+    assert torch.allclose(o['alpha16'].sum(1), torch.ones(1), atol=1e-5)
+    assert torch.allclose(o['alpha16'], torch.full_like(o['alpha16'], 1 / 4), atol=1e-6)   # k = 3 valid + null
+    assert o['a'].shape == (2, 32, 32) and o['C4'].shape == (2, 32, 32, 32)
+
+
+def test_all_keys_invalid_gives_background():                          # Review Focus 1 and 2
+    from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
+    K, v, Ft, B, age = _inputs()
+    for fixed in (False, True):
+        o = FeatIntegral(torch.zeros(1, 256, 1, 1))(K, torch.zeros_like(v), Ft, B, age, fixed=fixed)
+        assert torch.allclose(o['C16'], B['16'], atol=1e-5) and o['a'].abs().max() < 1e-5
+        assert all(torch.isfinite(o[c]).all() for c in ('C16', 'C8', 'C4', 'a'))
+
+
+def test_fixed_mode_equals_recency_mass_where_gate_open():
+    """Keys ≈ B except a 2×2 block (6% of cells, below the q90 threshold's 10%) that differs strongly: there the gate is
+    open in every key, so a ≈ Σ w = 1 and Ĉ16 ≈ Σ_k w_k K_k (recency weights, τ = 3.5)."""
+    from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
+    K, v, Ft, B, age = _inputs(n=1)
+    g = torch.Generator().manual_seed(1)
+    K['16'] = B['16'][:, None] + 0.01 * torch.randn(K['16'].shape, generator=g)
+    K['16'][..., 3:5, 3:5] = 5 * torch.randn(1, 3, 256, 2, 2, generator=g)
+    o = FeatIntegral(torch.zeros(1, 256, 1, 1))(K, v, Ft, B, age, fixed=True)
+    w = torch.exp(-age[0].float() / 3.5); w = w / w.sum()
+    ref = (w[:, None, None, None] * K['16'][0]).sum(0)
+    assert o['alpha16'][0, :3, 3:5, 3:5].sum(0).min() > 0.99
+    assert torch.allclose(o['C16'][0, :, 3:5, 3:5], ref[:, 3:5, 3:5], atol=5e-2)
+    assert o['alpha16'][0, :3, 0, 0].sum() < 0.1                     # unchanged cell: mostly null (empty scene)
+
+
+@GPU
+def test_fp16_autocast_finite():                                       # Review Focus 4
+    from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
+    K, v, Ft, B, age = _inputs()
+    cu = lambda d: {s: x.cuda() for s, x in d.items()}
+    m = FeatIntegral(torch.zeros(1, 256, 1, 1)).cuda()
+    with torch.autocast('cuda', dtype=torch.float16):
+        for fixed in (False, True):
+            o = m(cu(K), v.cuda(), cu(Ft), cu(B), age.cuda(), fixed=fixed)
+            assert all(torch.isfinite(o[c]).all() for c in ('C16', 'C8', 'C4', 'a', 'alpha16'))
+
+
+def test_feat_loss_zero_on_empty_omega():                              # Review Focus 3 (Task 5's test, lives here)
+    from benchmark.nfo_vos.adapter.feat_integral import feat_loss
+    C = {s: torch.randn(2, c, h, h, requires_grad=True) for s, c, h in (('16', 256, 8), ('8', 64, 16), ('4', 32, 32))}
+    Om = {s: torch.zeros(2, 1, x.shape[-2], x.shape[-1], dtype=torch.bool) for s, x in C.items()}
+    l = feat_loss(C, {s: torch.randn_like(x) for s, x in C.items()}, Om, torch.zeros(1, 256, 1, 1))
+    assert l.item() == 0 and l.requires_grad
