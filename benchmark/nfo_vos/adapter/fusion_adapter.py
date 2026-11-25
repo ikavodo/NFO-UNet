@@ -184,18 +184,19 @@ class AmHead(nn.Module):
         return self.h(torch.cat([o['_x4'], F.interpolate(o['_x16'], scale_factor=4, mode='bilinear', align_corners=False)], 1))
 
 
-def am_loss(head, o, f):
+def am_loss(head, o, f, omega_only=False):
     """Amodal loss restricted to what history can supply: weight 1 on Ω (hidden at t, visible in the aligned history; Om4) and on
     background outside S, 0 on V and on unrecoverable hidden cells. None if Ω is (almost) empty."""
-    Wa = (1 - f['S'].float()) + f['Om4'][:, 0].float()
+    Wa = f['Om4'][:, 0].float() if omega_only else (1 - f['S'].float()) + f['Om4'][:, 0].float()
     if f['Om4'].sum() < 50:
         return None
     return loss_fn(head(o).float(), f['S'], Wa)
 
 
-def train_step(pred, net, agg, raw, rng, lam=1.0, max_targets=32, am=None):
+def train_step(pred, net, agg, raw, rng, lam=1.0, max_targets=32, am=None, lam_mass=None):
     """Loss of one training clip. agg None: today's pixel integral image. agg given (FEAT=1): the learned feature integral,
-    loss v3.4 + lam · (clean-feature loss on hidden-recoverable cells + evidence-mass BCE) (plan Tasks 5b / 6)."""
+    loss v3.4 + lam · clean-feature loss on hidden-recoverable cells + lam_mass · evidence-mass BCE (plan Tasks 5b / 6;
+    lam_mass None = lam, the old coupled switch). A tied aggregator (a = 1 − α_∅) gets no mass loss."""
     from benchmark.nfo_vos.adapter.feat_integral import feat_loss, mass_loss
     sam = pred.model
     f, _ = build(pred, raw, max_targets=max_targets, rng=rng, feat=agg is not None)
@@ -204,8 +205,11 @@ def train_step(pred, net, agg, raw, rng, lam=1.0, max_targets=32, am=None):
         if agg is not None:
             f, oa = with_feat(agg, f)
             S = ('16', '8', '4')
-            aux = 0.0 if lam == 0 else lam * (feat_loss(oa, {s: f[f'T{s}'] for s in S}, {s: f[f'Om{s}'] for s in S}, f['mu16'])
-                         + mass_loss(oa['a'], f['O4']))
+            lm = 0.0 if getattr(agg, 'tie', False) else (lam if lam_mass is None else lam_mass)
+            if lam:
+                aux = aux + lam * feat_loss(oa, {s: f[f'T{s}'] for s in S}, {s: f[f'Om{s}'] for s in S}, f['mu16'])
+            if lm:
+                aux = aux + lm * mass_loss(oa['a'], f['O4'])
         o = net(f, sam=sam)
         loss = loss_fn(decode(sam, o, token=o.get('token')).float(), f['V'], f.get('W')) + aux
         return loss, (am_loss(am, o, f) if am is not None else None)
@@ -216,7 +220,7 @@ def evaluate(pred, net, val, agg=None, am=None):
     """Synthetic val (raw clips, built with the test-time path): J / P / R vs native V; arms box, box+pt, trk-box,
     adapter. Also the input statistics used for the parity check against NFO. agg: the feature-integral path."""
     net.eval()
-    rows, a_mass, a_on, am_gap = [], [], [], []
+    rows, a_mass, a_on, am_gap, tie_rd, gap_c = [], [], [], [], [], []
     for raw in val:
         f, meta = build(pred, raw, feat=agg is not None)
         if agg is not None:
@@ -225,6 +229,7 @@ def evaluate(pred, net, val, agg=None, am=None):
             meta['a_mass'] = [float(x) for x in f['a'].sum((1, 2)).cpu()]
             A_ = f['a'].cpu().numpy()                 # learned mass on the visible person (build() leaves it empty in feat mode)
             meta['a_on'] = [float(A_[i][a256(V) > 0.5].mean()) if V.any() else np.nan for i, V in enumerate(meta['Vn'])]
+            tie_rd.append(_tie_readout(f))
         fb = dict(f, box=f['box_trk'])          # tracker centre, t0 box size: the same GT-free control as on NFO
         with torch.autocast('cuda', dtype=AMP):
             o = net(f, sam=pred.model)
@@ -237,6 +242,10 @@ def evaluate(pred, net, val, agg=None, am=None):
             if la is not None:                       # kill readout: does the aux head need Ĉ on Ω? gap = L_am(noC) − L_am(Ĉ)
                 am_gap.append(float(am_loss(am, o, f) - la))
             del o
+            if la is not None and agg is not None:   # Ω only, appearance only: C := B with a kept (review §10.x 26)
+                l0 = am_loss(am, net(f, sam=pred.model), f, omega_only=True)
+                o = net(dict(f, C16=f['B16'], C8=f['B8'], C4=f['B4']), sam=pred.model)
+                gap_c.append(float(am_loss(am, o, f, omega_only=True) - l0)); del o
             for sc in os.environ.get('SCALE', '').split(','):   # C' = B + s (C − B): is the change signal too weak?
                 if sc:
                     o = net(dict(f, **{f'C{k}': f[f'B{k}'] + float(sc) * (f[f'C{k}'] - f[f'B{k}']) for k in ('16', '8', '4')}), sam=pred.model)
@@ -263,7 +272,19 @@ def evaluate(pred, net, val, agg=None, am=None):
             rows.append(r)
         a_mass += meta['a_mass']; a_on += meta['a_on']
     net.train()
-    return rows, dict(a_mass=float(np.median(a_mass)), a_on=float(np.nanmean(a_on)), am_gap=am_gap)
+    tr = {k: float(np.nanmean([d[k] for d in tie_rd])) for k in tie_rd[0]} if tie_rd else {}
+    return rows, dict(a_mass=float(np.median(a_mass)), a_on=float(np.nanmean(a_on)), am_gap=am_gap, tie=tr, am_gap_c=gap_c)
+
+
+def _tie_readout(f):
+    """Pre-registered tie checks (findings §10.x 26), one clip: cos16 = mean over Ω cells of cos(Ĉ¹⁶ − μ, T¹⁶ − μ) (Ĉ vs the
+    clean frame where history must fill in); a_om / a_bg = mean evidence mass a on Ω (s4) / on background (outside S, s4)."""
+    from benchmark.nfo_vos.adapter.feat_integral import ccos
+    m16, m4, bg = f['Om16'][:, 0] > 0, f['Om4'][:, 0] > 0, F.interpolate(f['S'][:, None].float(), size=f['a'].shape[-2:])[:, 0] < 0.5
+    c = ccos(f['C16'].float(), f['T16'].float(), f['mu16'].reshape(1, -1, 1, 1).float())
+    nan = float('nan')
+    return dict(cos16=float(c[m16].mean()) if m16.any() else nan, a_om=float(f['a'][m4].mean()) if m4.any() else nan,
+                a_bg=float(f['a'][bg].mean()) if bg.any() else nan)
 
 
 def _box_iou(m, S):
@@ -326,12 +347,14 @@ def main(steps=1500, seed=0, eval_every=100, max_targets=32, n_val_fast=12, test
         p_.requires_grad_(False)
     net = Fusion().cuda()
     net.init_fallback(sam)
-    agg, lam = None, float(os.environ.get('LAM', 1.0))
+    agg, lam = None, float(os.environ.get('LAM', 1.0))                # LAM: clean-feature loss; LAM_MASS (default LAM): mass BCE
+    lam_mass = float(os.environ['LAM_MASS']) if 'LAM_MASS' in os.environ else None
     if os.environ.get('FEAT') == '1':
         from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
-        agg = FeatIntegral(sam.no_mem_embed).cuda()
-        sd0 = torch.load(os.environ.get('AGG') or 'results/benchmark/rr/feat_integral/stage0c_seed0.pt', map_location='cuda')
-        agg.load_compat(sd0.get('agg', sd0))                       # an adapter checkpoint {'fusion', 'agg'} also works
+        agg = FeatIntegral(sam.no_mem_embed, tie=os.environ.get('TIE') == '1').cuda()   # TIE=1: a = 1 − α_∅, no mass head
+        if os.environ.get('AGG') != 'none':                        # AGG=none: from scratch (uniform α at step 0)
+            sd0 = torch.load(os.environ.get('AGG') or 'results/benchmark/rr/feat_integral/stage0c_seed0.pt', map_location='cuda')
+            agg.load_compat(sd0.get('agg', sd0))                   # an adapter checkpoint {'fusion', 'agg'} also works
         if os.environ.get('REFINED'):                              # distilled aggregator + s16 refiner (feat_refine)
             from benchmark.nfo_vos.adapter.feat_integral import Refined
             sdr = torch.load(os.environ['REFINED'], map_location='cuda')
@@ -340,7 +363,7 @@ def main(steps=1500, seed=0, eval_every=100, max_targets=32, n_val_fast=12, test
             from benchmark.nfo_vos.adapter.feat_integral import BigS16
             agg = BigS16(agg).cuda(); agg.load_state_dict(torch.load(os.environ['BIGS16'], map_location='cuda'))
         if os.environ.get('AGG_FREEZE') == '1':                    # fixed history signal, as for the pixel integral
-            agg.requires_grad_(False); agg.eval(); lam = 0.0
+            agg.requires_grad_(False); agg.eval(); lam = lam_mass = 0.0
     n_par = sum(p_.numel() for p_ in net.parameters()) + (sum(p_.numel() for p_ in agg.parameters()) if agg else 0)
     am = AmHead().cuda() if AMODAL else None
     groups = [{'params': list(net.parameters()) + (list(am.parameters()) if am is not None else [])}] + ([{'params': list(agg.parameters())}] if agg and any(p_.requires_grad for p_ in agg.parameters()) else [])
@@ -354,7 +377,7 @@ def main(steps=1500, seed=0, eval_every=100, max_targets=32, n_val_fast=12, test
     sel = fusion_nfo.items('select', pred, feat=agg is not None)
     out = os.environ.get('RUN_DIR') or f'{OUT}/{"feat" if agg else "token"}_seed{seed}'
     stop = int(os.environ.get('STOP', steps))                     # end early at a pre-fixed step, schedule still over `steps`
-    save = lambda p: torch.save(({'fusion': net.state_dict(), 'agg': agg.state_dict()} | ({'am': am.state_dict()} if am is not None else {})) if agg else net.state_dict(), p)
+    save = lambda p: torch.save(({'fusion': net.state_dict(), 'agg': agg.state_dict(), 'tie': bool(getattr(agg, 'tie', False))} | ({'am': am.state_dict()} if am is not None else {})) if agg else net.state_dict(), p)
     os.makedirs(out, exist_ok=True)
     print(f'params {n_par}; val clips {len(val)} fast / {len(val_all)} final; seq1 select frames {len(sel)}', flush=True)
     rng, log, best, t0 = np.random.default_rng(seed), [], (-1.0, None), time.time()
@@ -362,8 +385,12 @@ def main(steps=1500, seed=0, eval_every=100, max_targets=32, n_val_fast=12, test
     def validate(it, rows_inp=None):
         torch.cuda.empty_cache()                     # FEAT: the train graph's freed blocks fragment the 16 GB card (OOM 2026-11-19)
         rows, inp = evaluate(pred, net, val, agg, am)
+        if inp.get('tie'):
+            t_ = inp['tie']; print(f"TIE it {it}: cos(Ĉ16, T16) on Ω {t_['cos16']:.3f} | a on Ω {t_['a_om']:.3f} vs background {t_['a_bg']:.3f}", flush=True)
         if inp['am_gap']:
             g = np.array(inp['am_gap']); print(f'AMGAP it {it}: L_am(noC) − L_am(C) on Ω {g.mean():+.4f} (pos {np.mean(g > 0):.2f}, {len(g)} clips)', flush=True)
+            if inp.get('am_gap_c'):
+                g = np.array(inp['am_gap_c']); print(f'AMGAPC it {it}: Ω-only, C := B with a kept {g.mean():+.4f} (pos {np.mean(g > 0):.2f})', flush=True)
         s = summarise(rows); ss = fusion_nfo.evaluate(pred, net, sel, agg)
         s.update(it=it, sec=time.time() - t0, sel=ss, inputs_syn=inp)
         gap_syn = s['adapter']['J'] - s['trk-box']['J']; gap_sel = ss['adapter']['J'] - ss['trk-box']['J']
@@ -376,7 +403,7 @@ def main(steps=1500, seed=0, eval_every=100, max_targets=32, n_val_fast=12, test
 
     log.append(validate(0))
     for it in range(1, steps + 1):
-        loss, la = train_step(pred, net, agg, next(dl), rng, lam, max_targets, am)
+        loss, la = train_step(pred, net, agg, next(dl), rng, lam, max_targets, am, lam_mass)
         if la is not None:     # λ_am = 1: same normalised loss_fn as the modal term (a step-1 grad-norm match is 0: out[l] is zero-init)
             if it % 25 == 0:
                 print(f'it {it} modal {loss.item():.4f} amodal {la.item():.4f}', flush=True)

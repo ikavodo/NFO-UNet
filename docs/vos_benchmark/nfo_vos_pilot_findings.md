@@ -745,6 +745,41 @@ between different checkpoints are never screened on 4 clips (per-clip SD ≈ 0.0
    Ported into `adapter/tracker.kernel_track` (2026-11-25; device of the input map, numpy input runs on CPU torch): identical
    tracks on all 32 full-pass windows (3027 frames, 0.000 px), 0.35 vs 4.55 ms/frame.
 
+26. **Light, tied, teacher-free integral, from scratch (2026-11-25, pre-registered).** Question: can the 6-key `FeatIntegral`
+   (≈ 40k parameters, no `Refined` / `BigS16`, no pixel teacher) with its evidence mass tied to the softmax, a = 1 − α_∅
+   (`TIE=1`, no mass head, no mass_loss), replace item 24's frozen distilled BigS16 integral? This changes integral,
+   teacher, tie and initialisation together. It is a replacement test, not an ablation.
+   Recipe: `AMODAL=1 FEAT=1 TIE=1 AGG=none LAM=1`, Fusion and aggregator from scratch, 200 of 1000 cosine steps, seed 0
+   (`feat_integral/tie/run.sh`). Losses: v3.4 + amodal on Ω (λ 1) + feat_loss on Ω (λ 1; synthetic clean-frame features, not
+   a teacher). `train_step` now weights feat_loss (`LAM`) and mass_loss (`LAM_MASS`) separately.
+   **Why the earlier tie failed, and why this one may not (derived).** Write ℓ_k for the key logits, ℓ_∅ for the null logit,
+   Z = Σ e^ℓ. Then α = e^ℓ / Z, Ĉ = Σ α_k K_k + α_∅ B and a = σ(LSE_k ℓ_k − ℓ_∅). The gradients are
+   ∂L/∂ℓ_k = α_k (⟨g_C, K_k − Ĉ⟩ + α_∅ g_a) and ∂L/∂ℓ_∅ = α_∅ (⟨g_C, B − Ĉ⟩ − a g_a).
+   In background cells K_k ≈ B, so Ĉ ≈ B and only g_a moves α there: Ĉ does not identify α_∅ in background.
+   The failed tie (fea385f) is consistent with this. The mass BCE covers the whole 256² map (Ω is ≈ 1–3% of it), and a
+   at s4 is a bilinear upsample of α_∅ at s16. So at Ω edges the BCE pulled α_∅ up while feat_loss on Ω pulled it down,
+   and Ĉ shrank toward B (s16 cos 0.493 → 0.412).
+   Without mass_loss no term targets a directly, so that fight is gone by construction. Two risks remain:
+   (R1) a is not anchored in background and may carry no person evidence. The review expects this: the reader's g_a ≈ 0 early,
+   since the Fusion residuals are zero-initialised.
+   (R2) The modal loss (hidden cells target 0, weight 0.3) could push a down on Ω through the reader.
+   Pre-registered readouts on 12 synthetic val clips at it 200 (lines `TIE`, `AMGAP`, `AMGAPC`):
+   - **kill** if AMGAP ≤ 0 or positive on < 8/12 clips (item 24's rule);
+   - **tie failed for Ĉ (R2)** if cos(Ĉ16 − μ, T16 − μ) on Ω is no higher than the untied stage-0c light integral's value on the
+     same clips (`tie/smoke.log`);
+   - **tie gives no evidence mass (R1)** if mean a on Ω − mean a on background < 0.05. This is not a kill: the run then tests Ĉ only,
+     and "a = 1 − α_∅ is evidence mass" cannot be claimed;
+   - `AMGAPC` (Ω-only loss, C := B with a kept) separates use of Ĉ's appearance from a acting as a global flag, which AMGAP
+     (C := B and a := 0, background-dominated weights) cannot.
+   If synthetic passes, screen on seq1's 8 crossings @lap against featbigam, each arm with its -noC control, all scored in one run.
+   **Primary: reliance** (with-C − noC). Box reliance > 0 with CI > 0 counts as using the integral.
+   Secondary: the arm-vs-arm comparison. featbigam's BigS16 was distilled on unlabelled seq1 s4–s7 frames, so it has seen
+   the screen sequence and the arm-vs-arm contrast is biased against this arm. "Viable" = box AUC and recognition each within
+   −0.01 of featbigam; "better" = both > 0. One seed: a pass means "run seeds", not a claim.
+   Smoke (`tie/smoke.log`, same 12 clips; one train step ran clean). Tied from scratch at init: cos16 on Ω **0.451**,
+   a on Ω 0.852 vs background 0.807, AMGAP −0.091. Untied stage-0c reference: cos16 **0.508**, a 0.440 vs 0.125.
+   So the R2 bar is cos16 > 0.508 at it 200.
+
 ## Code map
 
 - `benchmark/nfo_vos/downstream/`:

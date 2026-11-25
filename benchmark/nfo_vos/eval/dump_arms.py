@@ -35,7 +35,8 @@ ARM_CKPT = {'adapter-pf': CKPT, 'adapter-s1': f'{CKPT_DIR}/token_seed1/fusion_it
             'adapter-featbig': f'{CKPT_DIR}/feat_big_seed0/fusion_it200.pt',
             'adapter-featbigam': f'{CKPT_DIR}/feat_bigam_seed0/fusion_it200.pt',
             'adapter-featbigpf': f'{CKPT_DIR}/feat_bigpf/plug.pt',
-            'adapter-featbigpft': f'{CKPT_DIR}/feat_bigpf/trained_it1000.pt'}
+            'adapter-featbigpft': f'{CKPT_DIR}/feat_bigpf/trained_it1000.pt',
+            'adapter-feattie': f'{CKPT_DIR}/feat_tie_seed0/fusion_it200.pt'}     # light, tied a = 1 − α_∅, from scratch (26)
 
 
 def load_net(pred, ckpt):
@@ -56,7 +57,8 @@ def load_net(pred, ckpt):
             net.agg = Refined(FeatIntegral(pred.model.no_mem_embed).cuda(), full='g8.0.weight' in sd['agg']).cuda().eval()
             net.agg.load_state_dict(sd['agg'])
         else:
-            net.agg = FeatIntegral(pred.model.no_mem_embed, nbr=nbr).cuda().eval(); net.agg.load_compat(sd['agg'])
+            tie = bool(sd.get('tie', False))                          # tied evidence mass (findings §10.x 26), explicit flag
+            net.agg = FeatIntegral(pred.model.no_mem_embed, nbr=nbr, tie=tie).cuda().eval(); net.agg.load_compat(sd['agg'])
     else:
         net.load_state_dict(sd)
     net.eval()

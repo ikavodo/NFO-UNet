@@ -67,13 +67,15 @@ def _shift(x, dy, dx, r):
 
 
 class FeatIntegral(nn.Module):
-    def __init__(self, mu16, d=32, nh_max=8, nbr=0):
+    def __init__(self, mu16, d=32, nh_max=8, nbr=0, tie=False):
         """nbr = r > 0: neighbourhood keys (2r+1)² per history frame at s16: key (q, o) = frame q's aligned features
         shifted by o ∈ {−r..r}² cells (o·16/s px-cells at stride s), so the content-based softmax can pick the best-aligned
         neighbour (sub-cell / sway misalignment; design §4, NATTEN-style local attention). Offset embedding zero-init,
-        offset bias 0 at the centre and −4 elsewhere (≈ the r = 0 function at init). Mass head: centre keys only."""
+        offset bias 0 at the centre and −4 elsewhere (≈ the r = 0 function at init). Mass head: centre keys only.
+        tie=True (findings §10.x 26): no mass head; the evidence mass is the softmax's own a = 1 − α_∅ (at stride 4, from the
+        upsampled α), so one set of weights both builds Ĉ and says how much history evidence there is."""
         super().__init__()
-        self.nbr = nbr
+        self.nbr, self.tie = nbr, tie
         self.offs = [(dy, dx) for dy in range(-nbr, nbr + 1) for dx in range(-nbr, nbr + 1)]
         if nbr:
             self.e_off = nn.Embedding(len(self.offs), d); nn.init.zeros_(self.e_off.weight)
@@ -86,6 +88,8 @@ class FeatIntegral(nn.Module):
                                nn.Conv2d(d, 1, 1))
         nn.init.zeros_(self.h[-1].weight); nn.init.zeros_(self.h[-1].bias)
         self.null = nn.Parameter(torch.zeros(1))
+        if tie:
+            return
         # evidence mass, decoupled from the mixing weights (Task 5b rev): a = σ(logsumexp_k m_k + b_m) over valid keys, m_k
         # from its own head on the DETACHED key inputs, so mass_loss never moves the weights that build Ĉ. At init a =
         # σ(log k) = k/(k+1) (= 1 − α_∅ of the uniform softmax); all keys invalid → a = 0.
@@ -104,6 +108,8 @@ class FeatIntegral(nn.Module):
         for k, v in self.state_dict().items():                  # heads added later (mass head): keep their fresh init
             if k.startswith(('hm.', 'mbias', 'e_off', 'b_off')) and k not in sd:
                 sd[k] = v
+        if self.tie:                                            # an untied checkpoint loaded tied: its mass head is unused
+            sd = {k: v for k, v in sd.items() if not k.startswith(('hm.', 'mbias'))}
         self.load_state_dict(sd)
 
     def logits_learned(self, K16, Ft16, B16, age, phase=None):
@@ -125,11 +131,13 @@ class FeatIntegral(nn.Module):
             ph = ph.repeat_interleave(nO, 1)
             z = torch.cat([pk, pk - pt, pk - pb, ea, ph], 2).flatten(0, 1)
             lk = self.h(z).view(n, k, nO, H, W).float() + self.b_off.float().view(1, 1, nO, 1, 1)
-            self._mk = self.hm(zc.detach()).view(n, k, H, W).float()
+            if not self.tie:
+                self._mk = self.hm(zc.detach()).view(n, k, H, W).float()
             return lk.flatten(1, 2), self.null.float().view(1, 1, 1, 1).expand(n, 1, H, W)
         z = torch.cat([pk, pk - pt, pk - pb, ea, ph], 2).flatten(0, 1)
         lk = self.h(z).view(n, k, H, W).float()
-        self._mk = self.hm(z.detach()).view(n, k, H, W).float()
+        if not self.tie:
+            self._mk = self.hm(z.detach()).view(n, k, H, W).float()
         return lk, self.null.float().view(1, 1, 1, 1).expand(n, 1, H, W)
 
     def logits_fixed(self, K16, B16, age, valid, tau):
@@ -170,9 +178,9 @@ class FeatIntegral(nn.Module):
                     i = q * nO + j
                     C = C + a_s[:, i:i + 1] * Kp[..., R + dy * f:R + dy * f + h_, R + dx * f:R + dx * f + w_]
             o[f'C{s}'] = C
-            if s == '4' and fixed:
+            if s == '4' and (fixed or self.tie):                                   # a = 1 − α_∅ (tied mass)
                 o['a'] = (1 - a_s[:, kn].float()).clamp(0, 1)
-        if not fixed:
+        if not (fixed or self.tie):
             mk = self._mk.masked_fill(~v, float('-inf'))
             ml = torch.logsumexp(mk, 1, keepdim=True) + self.mbias.float()            # all invalid → −inf → a = 0
             o['a'] = torch.sigmoid(F.interpolate(ml.nan_to_num(neginf=-1e4), size=K['4'].shape[-2:], mode='bilinear',

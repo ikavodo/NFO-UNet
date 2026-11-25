@@ -251,3 +251,20 @@ def test_inference_feat_matches_pixel_before_history():               # Review F
         net.agg = FeatIntegral(pred.model.no_mem_embed).cuda().eval()
         m_feat, _ = masks_from_arrays(pred, net, Xn, bg, g)
     assert (m_pix[:6] == m_feat[:6]).all() and m_feat.shape == m_pix.shape
+
+
+def test_tied_mass_is_one_minus_null_weight():                          # findings §10.x 26
+    from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
+    m = FeatIntegral(torch.zeros(1, 256, 1, 1), tie=True); K, v, Ft, B, age = _inputs()
+    assert not any(k.startswith(('hm.', 'mbias')) for k in m.state_dict())
+    o = m(K, v, Ft, B, age)
+    a4 = torch.nn.functional.interpolate(o['alpha16'][:, -1:], size=K['4'].shape[-2:], mode='bilinear', align_corners=False)[:, 0]
+    assert torch.allclose(o['a'], 1 - a4, atol=1e-6)
+    assert abs(o['a'].max().item() - 3 / 4) < 1e-5                       # init: uniform over 3 keys + ∅
+    assert m(K, torch.zeros_like(v), Ft, B, age)['a'].abs().max() < 1e-6        # no valid key: a = 0
+
+
+def test_tied_loads_untied_checkpoint():
+    from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
+    sd = FeatIntegral(torch.zeros(1, 256, 1, 1)).state_dict()
+    FeatIntegral(torch.zeros(1, 256, 1, 1), tie=True).load_compat(sd)
