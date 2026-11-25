@@ -77,7 +77,7 @@ def _train():
             agg.load_compat(torch.load(os.environ['AGG'], map_location='cuda'))
     params = list(net.parameters()) + (list(agg.parameters()) if agg else [])
     opt = torch.optim.AdamW(params, lr=1e-4)
-    loss = FA.train_step(pred, net, agg, raw, np.random.default_rng(0), max_targets=32)   # 32 = the training peak
+    loss = FA.train_step(pred, net, agg, raw, np.random.default_rng(0), max_targets=32)[0]   # 32 = the training peak
     loss.backward(); opt.step()
     torch.cuda.synchronize()
     print(f'  {"FEAT " if agg else ""}loss {loss.item():.4f}; clip synthesis {t1 - t0:.1f} s, build+step '

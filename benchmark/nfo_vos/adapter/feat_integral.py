@@ -180,6 +180,74 @@ class FeatIntegral(nn.Module):
         return o
 
 
+class Refined(nn.Module):
+    """Ĉ' = Ĉ + g([Ĉ − μ, B − μ]) at stride 16 (tools/feat_refine.py, findings §10.x item 15): a small residual
+    refiner, distilled from the pixel route's enc(C), that approximates 'encode the averaged image' (E(Σ w X) ≠ Σ w E(X)).
+    full=False: strides 8 / 4 keep the plain mix. full=True (tools/feat_refine_full.py): refiners g8 / g4 on [Ĉ, B] at
+    strides 8 / 4 too (SAM2 adds no_mem_embed only at s16, so no centring there)."""
+    def __init__(self, agg, full=False):
+        super().__init__()
+        self.agg, self.full = agg, full
+
+        def mk(cin, hid, cout):
+            g = nn.Sequential(nn.Conv2d(cin, hid, 1), nn.GELU(), nn.Conv2d(hid, hid, 3, padding=1), nn.GELU(),
+                              nn.Conv2d(hid, cout, 1))
+            nn.init.zeros_(g[-1].weight); nn.init.zeros_(g[-1].bias)
+            return g
+        self.g = mk(512, 128, 256)
+        if full:
+            self.g8, self.g4 = mk(128, 64, 64), mk(64, 32, 32)
+
+    def refine_s(self, s, C, B):
+        if s == '16':
+            return self.refine(C, B)
+        g = self.g8 if s == '8' else self.g4
+        return C + g(torch.cat([C, B], 1).to(g[0].weight.dtype)).float()
+
+    def refine(self, C, B):
+        mu = self.agg.mu16
+        return C + self.g(torch.cat([C - mu, B - mu], 1).to(self.g[0].weight.dtype)).float()
+
+    def forward(self, K, valid16, Ft, B, age, phase=None, fixed=False, **kw):
+        o = self.agg(K, valid16, Ft, B, age, phase=phase, fixed=fixed)
+        for s in (('16', '8', '4') if self.full else ('16',)):
+            o[f'C{s}'] = self.refine_s(s, o[f'C{s}'].float(), B[s].float())
+        return o
+
+
+def big_net(cin=6 * 256 + 2 * 6 + 2 * 256):
+    """tools/feat_capacity 'big' student: unmixed keys + validity + phase + F_t + B -> C16 (5.9 M params, 0.83 ms/frame)."""
+    return nn.Sequential(nn.Conv2d(cin, 512, 1), nn.GELU(), nn.Conv2d(512, 512, 3, padding=1), nn.GELU(),
+                         nn.Conv2d(512, 512, 3, padding=1), nn.GELU(), nn.Conv2d(512, 256, 1))
+
+
+def big_inputs(K16, v, ph, Ft16, B16, k=6):
+    """K16 [n, nh, C, h, w], v [n, nh, h, w] (bool/float), ph [n, nh] -> student input; the k most recent keys
+    (keys are ordered oldest first), zero-padded with valid = 0 when nh < k (synthetic nh is 4..8, NFO 6)."""
+    K16, v, ph = K16[:, -k:].float(), v[:, -k:].float(), ph[:, -k:].float()
+    n, nh, c, h, w = K16.shape
+    if nh < k:
+        K16 = torch.cat([K16.new_zeros(n, k - nh, c, h, w), K16], 1); v = torch.cat([v.new_zeros(n, k - nh, h, w), v], 1)
+        ph = torch.cat([ph.new_zeros(n, k - nh), ph], 1)
+    return torch.cat([(K16 * v[:, :, None]).reshape(n, k * c, h, w), v, ph[..., None, None].expand(n, k, h, w),
+                      Ft16.float(), B16.float()], 1)
+
+
+class BigS16(nn.Module):
+    """A Refined aggregator (strides 8 / 4 and the evidence mass) whose stride-16 output is replaced by the big
+    distilled student on the unmixed keys (tools/feat_bigstudent.py; findings §10.x 18-20)."""
+    def __init__(self, base):
+        super().__init__()
+        self.base, self.net = base, big_net()
+        self.mu16 = base.agg.mu16
+
+    def forward(self, K, valid16, Ft, B, age, phase=None, fixed=False, **kw):
+        o = self.base(K, valid16, Ft, B, age, phase=phase, fixed=fixed)
+        x = big_inputs(K['16'], valid16[:, :, 0], phase, Ft['16'], B['16'])
+        o['C16'] = self.net(x.to(self.net[0].weight.dtype) if not torch.is_autocast_enabled() else x).float()
+        return o
+
+
 def feat_loss(C, T, Om, mu16):
     """Mean over strides of the mean over Ω cells of 1 − cos(Ĉ^s, T^s) (stride 16 centred by mu16); 0 if Ω is empty."""
     terms = []

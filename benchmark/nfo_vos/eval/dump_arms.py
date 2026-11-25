@@ -6,6 +6,7 @@ Writes results/benchmark/rr/masks/<arm>/<trial_id>.npz in the B0/T1 schema (mask
   adapter-pf      per-frame adapter, v3.4 loss, step 200, seed 0 (frames < 6 have no integral image -> trk)
   adapter-s1/-s2  the same, seeds 1 / 2
   <arm>-noC       the adapter with the integral image removed at inference (C := empty scene, a := 0)
+  <arm>-noA       only the evidence mass removed (a := 0), integral C kept
   <arm>-h<n>      the adapter with n past frames in the integral image instead of 6 (n in the training range 4..8)
 
     PYTHONPATH=. ../samurai/.venv/bin/python -m benchmark.nfo_vos.eval.dump_arms ARM TRIAL_INDEX
@@ -26,7 +27,14 @@ CKPT_DIR = 'results/benchmark/rr/layers_fusion_adapter'
 CKPT = f'{CKPT_DIR}/token_seed0/fusion_it200.pt'
 ARM_CKPT = {'adapter-pf': CKPT, 'adapter-s1': f'{CKPT_DIR}/token_seed1/fusion_it200.pt',
             'adapter-s2': f'{CKPT_DIR}/token_seed2/fusion_it200.pt',
-            'adapter-feat': os.environ.get('FEAT_CKPT', f'{CKPT_DIR}/feat_seed0/fusion_it200.pt')}   # learned feature integral
+            'adapter-feat': os.environ.get('FEAT_CKPT', f'{CKPT_DIR}/feat_seed0/fusion_it200.pt'),
+            'adapter-featref': f'{CKPT_DIR}/feat_refined_seed0/fusion_it200.pt',
+            'adapter-featfull': f'{CKPT_DIR}/feat_refinedfull_seed0/fusion_it200.pt',
+            'adapter-featbig': f'{CKPT_DIR}/feat_big_seed0/fusion_it200.pt',
+            'adapter-featbigam': f'{CKPT_DIR}/feat_bigam_seed0/fusion_it200.pt',   # + training-only amodal aux head (§10.x 24)
+            'adapter-featbigpf': f'{CKPT_DIR}/feat_bigpf/plug.pt',
+            'adapter-featbigpft': f'{CKPT_DIR}/feat_bigpf/trained_it1000.pt',
+            'adapter-featbigpft2': f'{CKPT_DIR}/feat_bigpf/trained_v2.pt'}   # v2: pixel a + seq1 s1–s6   # + trained through the frozen pixel Fusion (§10.x 23)   # big student under the frozen pixel Fusion (§10.x 23)   # all strides + mass (§10.x 17)   # + distilled refiner (findings §10.x 15)   # learned feature integral
 
 
 def load_net(pred, ckpt):
@@ -38,7 +46,17 @@ def load_net(pred, ckpt):
         from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
         net.load_state_dict(sd['fusion'])
         nbr = int(round((sd['agg']['b_off'].numel() ** 0.5 - 1) / 2)) if 'b_off' in sd['agg'] else 0
-        net.agg = FeatIntegral(pred.model.no_mem_embed, nbr=nbr).cuda().eval(); net.agg.load_compat(sd['agg'])
+        if 'net.0.weight' in sd['agg']:                            # BigS16 (Refined + big s16 student, §10.x 20)
+            from benchmark.nfo_vos.adapter.feat_integral import BigS16, Refined
+            net.agg = BigS16(Refined(FeatIntegral(pred.model.no_mem_embed).cuda())).cuda().eval()
+            net.agg.load_state_dict(sd['agg'])
+            net.pixel_a = bool(sd.get('pixel_a'))      # evidence mass from the pixel gate (§10.x 23 v2)
+        elif 'g.0.weight' in sd['agg']:                              # Refined (aggregator + s16 refiner)
+            from benchmark.nfo_vos.adapter.feat_integral import Refined
+            net.agg = Refined(FeatIntegral(pred.model.no_mem_embed).cuda(), full='g8.0.weight' in sd['agg']).cuda().eval()
+            net.agg.load_state_dict(sd['agg'])
+        else:
+            net.agg = FeatIntegral(pred.model.no_mem_embed, nbr=nbr).cuda().eval(); net.agg.load_compat(sd['agg'])
     else:
         net.load_state_dict(sd)
     net.eval()
@@ -63,8 +81,8 @@ def main(arm, idx):
         return print(arm, t['id'], 'saved', path)
     h = re.search(r'-h(\d+)$', arm)
     base = arm.removesuffix(h.group(0)) if h else arm
-    net = None if base == 'trk' else load_net(pred, ARM_CKPT[base.removesuffix('-noC')])
-    m, sec = fast_masks(pred, net, t, noC=base.endswith('-noC'), hist=int(h.group(1)) if h else 6)
+    net = None if base == 'trk' else load_net(pred, ARM_CKPT[base.removesuffix('-noC').removesuffix('-noA')])
+    m, sec = fast_masks(pred, net, t, noC=base.endswith('-noC'), noA=base.endswith('-noA'), hist=int(h.group(1)) if h else 6)
     np.savez_compressed(path, masks=m, frames=np.array(t['frames']))
     print(arm, t['id'], 'saved', path, f'{1000 * sec:.0f} ms/frame', 'mean area px', int(m.sum((1, 2)).mean()))
 

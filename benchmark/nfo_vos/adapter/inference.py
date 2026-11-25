@@ -49,7 +49,7 @@ def _shift_x(x, dx):
 
 
 @torch.no_grad()
-def fast_masks(pred, net, t, tau=3.5, noC=False, hist=6):
+def fast_masks(pred, net, t, tau=3.5, noC=False, hist=6, noA=False):
     """Adapter masks of one NFO window. Each frame is encoded ONCE (shared by tracker, adapter and decoder), the empty
     scene once per window, each frame's gate once, the integral image on the GPU (61 ms/frame vs 445 ms for the original
     path that re-encoded frame / integral image / empty scene per frame; same box AUC and hand J, 2026-10-20).
@@ -60,10 +60,10 @@ def fast_masks(pred, net, t, tau=3.5, noC=False, hist=6):
     seq, fr = t['seq'], t['frames']
     w0, w1 = t['warmup']
     bg = np.median(np.stack([TR.native(i, seq) for i in range(w0, w1 + 1)]), 0).astype(np.float32)
-    return masks_from_arrays(pred, net, [TR.native(k, seq) for k in fr], bg, gt_box(seq, fr[0]), tau, noC, hist)
+    return masks_from_arrays(pred, net, [TR.native(k, seq) for k in fr], bg, gt_box(seq, fr[0]), tau, noC, hist, noA=noA)
 
 
-def masks_from_arrays(pred, net, Xn, bg, g, tau=3.5, noC=False, hist=6, feats=None, aux=None):
+def masks_from_arrays(pred, net, Xn, bg, g, tau=3.5, noC=False, hist=6, feats=None, aux=None, noA=False, probe=None):
     from benchmark.nfo_vos.adapter.feat_integral import shift_keys
     agg = getattr(net, 'agg', None)       # learned feature integral (eval/dump_arms.load_net of a FEAT checkpoint)
     """fast_masks on arrays: Xn = list of [H, W] uint8 gray frames, bg = empty scene [H, W], g = t0 box (x0, y0, x1, y1) px.
@@ -94,7 +94,7 @@ def masks_from_arrays(pred, net, Xn, bg, g, tau=3.5, noC=False, hist=6, feats=No
             F.append(enc(x) if feats is None else feats[i])
             m = 1 - torch.nn.functional.cosine_similarity(F[-1][0][0], Bf[0][0], dim=0)
             m16.append(torch.nn.functional.interpolate(m[None, None], size=x.shape, mode='bilinear', align_corners=False)[0, 0])
-            if agg is None or aux is not None:                           # the feature path needs no pixel gate
+            if agg is None or aux is not None or getattr(net, 'pixel_a', False):   # feature path: gate only for pixel a
                 G.append(_gate_gpu(torch.as_tensor(x, device='cuda', dtype=torch.float32), Bg))
     kc = kernel_track(torch.stack(m16).cpu().numpy(), ((g[0] + g[2]) / 2, (g[1] + g[3]) / 2), g[2] - g[0], g[3] - g[1])
     wh = (g[2] - g[0], g[3] - g[1])
@@ -122,6 +122,8 @@ def masks_from_arrays(pred, net, Xn, bg, g, tau=3.5, noC=False, hist=6, feats=No
                     K[l], v = shift_keys(torch.stack([F[q][i][0] for q in idx])[None], dx, int(l))
                     valid = v if l == '16' else valid
                 f.update({f'B{l}': Bf[i] for i, l in enumerate(('16', '8', '4'))})
+                if probe is not None:                     # tools/feat_distil: the aggregator's s16 inputs
+                    f['_agg'] = (K, valid, dx)
                 if noC:
                     f.update({f'C{l}': Bf[i] for i, l in enumerate(('16', '8', '4'))}, a=torch.zeros(1, 256, 256, device='cuda'))
                 else:
@@ -129,7 +131,17 @@ def masks_from_arrays(pred, net, Xn, bg, g, tau=3.5, noC=False, hist=6, feats=No
                              {l: Bf[i] for i, l in enumerate(('16', '8', '4'))}, torch.arange(hist, 0, -1, device='cuda')[None],
                              phase=dx / 16 - torch.round(dx / 16))
                     f.update({f'C{l}': oa[f'C{l}'].float() for l in ('16', '8', '4')}, a=oa['a'].float())
+                    if getattr(net, 'pixel_a', False):   # evidence mass from the pixel gate (as the pixel branch), no encode
+                        cs = list(range(max(0, j - 12), j + 1))
+                        fx = theil_at(cs, [kc[l, 0] for l in cs], [j] + list(range(j - hist, j)))
+                        dxp = torch.tensor([fx[j] - fx[l] for l in range(j - hist, j)], device='cuda', dtype=torch.float32)
+                        pm = (wk * _shift_x(Gg[j - hist:j], dxp)).sum(0)
+                        f['a'] = torch.nn.functional.interpolate(pm.clamp(0, 1)[None, None], size=(256, 256), mode='area')[0]
                 mass = torch.nn.functional.interpolate(f['a'][None], size=(H, W), mode='bilinear', align_corners=False)[0, 0]
+                if noA:                                   # occupancy channel removed (2026-11-24 ablation), C kept
+                    f['a'] = torch.zeros_like(f['a'])
+                if probe is not None:                     # tools/feat_probe_nfo: the adapter's inputs of frame j
+                    probe(j, f)
                 o = net(f, sam=pred.model)
                 low = decode(pred.model, o, token=o['token'], aux=da)
             else:
@@ -147,6 +159,10 @@ def masks_from_arrays(pred, net, Xn, bg, g, tau=3.5, noC=False, hist=6, feats=No
                 f.update({f'C{l}': Cf[i] for i, l in enumerate(('16', '8', '4'))})
                 f.update({f'B{l}': Bf[i] for i, l in enumerate(('16', '8', '4'))})
                 f['a'] = torch.nn.functional.interpolate(mass.clamp(0, 1)[None, None], size=(256, 256), mode='area')[0]
+                if noA:                                   # occupancy channel removed (2026-11-24 ablation), C kept
+                    f['a'] = torch.zeros_like(f['a'])
+                if probe is not None:                     # tools/feat_probe_nfo: the adapter's inputs of frame j
+                    probe(j, f)
                 o = net(f, sam=pred.model)
                 low = decode(pred.model, o, token=o['token'], aux=da)
         out[j] = cv2.resize(low[0, 0].float().cpu().numpy(), (W, H), interpolation=cv2.INTER_LINEAR) > 0

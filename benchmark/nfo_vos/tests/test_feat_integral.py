@@ -195,7 +195,7 @@ def test_train_step_feat_reaches_fusion_and_aggregator():
     net = FA.Fusion().cuda(); net.init_fallback(pred.model)
     agg = FeatIntegral(pred.model.no_mem_embed).cuda()
     raw = clip_raw(specs('val')[0], np.random.default_rng(0))
-    loss = FA.train_step(pred, net, agg, raw, np.random.default_rng(0), lam=1.0, max_targets=4)
+    loss = FA.train_step(pred, net, agg, raw, np.random.default_rng(0), lam=1.0, max_targets=4)[0]
     loss.backward()
     assert np.isfinite(loss.item())
     assert any(net.out[l].weight.grad.abs().max() > 0 for l in net.out)

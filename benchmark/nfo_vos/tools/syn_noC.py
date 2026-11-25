@@ -36,7 +36,7 @@ def main(*ckpts):
         net = load_net(pred, c)
         rows, _ = evaluate(pred, net, val, getattr(net, 'agg', None))
         name = c.split('layers_fusion_adapter/')[-1].replace('/', '_').replace('.pt', '')
-        json.dump(rows, open(f'{OUT}/syn_noC_rows_{name}.json', 'w'))
+        json.dump(rows, open(f'{OUT}/syn_noC_rows_{name}{os.environ.get("ROWS_TAG", "")}.json', 'w'))
         m0 = [r for r in rows if r['mode'] == 0]                      # frames with an integral image (history)
         hard = [r for r in m0 if r['vis'] < 0.5 and r['rec'] >= 0.5 * (1 - r['vis'])]
         print(f"== {name}: mode-0 frames {len(m0)}; median vis {np.median([r['vis'] for r in m0]):.2f}, "
@@ -48,6 +48,9 @@ def main(*ckpts):
         groups += [(f'vis {lo}-{hi}', [r for r in m0 if lo <= r['vis'] < hi]) for lo, hi in ((0, .3), (.3, .6), (.6, 1.01))]
         for g, rs in groups:
             print(f"  {g:12s} adapter − noC J {boot(rs)} | box IoU {boot(rs, 3)}", flush=True)
+            for o in ['only-a', 'only-C'] + [k for k in rs[0] if k.startswith('scaled-')]:
+                if o in rs[0]:
+                    print(f"  {'':12s} {o} − noC J {boot(rs, 0, o, 'adapter-noC')} | box IoU {boot(rs, 3, o, 'adapter-noC')}", flush=True)
             for o in ('oracle-fine', 'oracle-all'):
                 if o in rs[0]:
                     print(f"  {'':12s} {o} − adapter J {boot(rs, 0, o, 'adapter')} | box IoU {boot(rs, 3, o, 'adapter')}", flush=True)

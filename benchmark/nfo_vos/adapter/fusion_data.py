@@ -159,7 +159,7 @@ def _feat_inputs(pred, raw, ts, trk, nh, Fs, dev):
         for i, M in zip(hist, Ms):
             O |= cv2.warpAffine(raw['V'][i].astype(np.uint8), M, (W, H), flags=cv2.INTER_NEAREST) > 0
         Os.append(np.clip(cv2.resize(O.astype(np.float32), (256, 256), interpolation=cv2.INTER_AREA), 0, 1) * (raw['modes'][t] != 2))
-        hid = O & raw['S'][t] & ~raw['V'][t]
+        hid = O & raw['S'][t] & ~raw['V'][t] & (raw['modes'][t] != 2)   # Ω; empty where the integral is withheld (mode 2)
         for s, hw in (('16', 64), ('8', 128), ('4', 256)):
             Om[s].append(_cover(hid, hw))
         Vis.append(_cover(raw['V'][t], 64))
@@ -241,6 +241,7 @@ def build(pred, raw, max_targets=None, rng=None, dev='cuda', all_targets=False, 
          'B16': B16.float().expand(n, -1, -1, -1), 'B8': B8.float().expand(n, -1, -1, -1), 'B4': B4.float().expand(n, -1, -1, -1),
          'V': torch.as_tensor(np.stack([a256(raw['V'][t]) for t in ts]), device=dev),
          'W': torch.as_tensor(np.stack([loss_weights(raw['S'][t], raw['V'][t]) for t in ts]), device=dev),
+         'S': torch.as_tensor(np.stack([a256(raw['S'][t]) for t in ts]), device=dev),   # amodal target (AMODAL aux loss)
          'box': torch.as_tensor(np.stack(boxes), device=dev),
          'mode': torch.as_tensor(raw['modes'][ts].astype(np.float32), device=dev)}
     if pix:

@@ -1,0 +1,156 @@
+<title>Feature Layer-SAM</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=Inter:wght@400;500;600&display=swap">
+<script>
+window.MathJax = { tex: { inlineMath: [['\\(', '\\)']], displayMath: [['\\[', '\\]']] }, svg: { fontCache: 'global' },
+                   options: { enableMenu: false } };
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg.min.js"></script>
+<style>
+/* One narrow reading column, one comparison figure. Serif body for reading, Inter for labels. */
+:root {
+  --bg: #fbfbf9; --panel: #ffffff; --fg: #1c1f24; --muted: #646b76; --rule: #e2e4e8;
+  --ours: #2f63c8; --ours-soft: #e8effc; --gone: #b5473a;
+  --serif: "Source Serif 4", Georgia, serif; --sans: "Inter", "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #14171c; --panel: #1b1f26; --fg: #e6e8ec; --muted: #9aa2ae; --rule: #2d333d;
+  --ours: #86aaf2; --ours-soft: #1e2a42; --gone: #e48a7c; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #14171c; --panel: #1b1f26; --fg: #e6e8ec; --muted: #9aa2ae; --rule: #2d333d;
+  --ours: #86aaf2; --ours-soft: #1e2a42; --gone: #e48a7c; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font: 18px/1.65 var(--serif);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 0 4rem; }
+main { max-width: 760px; margin: 0 auto; display: grid; gap: 2.4rem; }
+header { padding-top: 3rem; }
+h1 { font: 600 2.4rem/1.1 var(--sans); margin: 0 0 .8rem; letter-spacing: -.01em; }
+h2 { font: 600 1.25rem/1.3 var(--sans); margin: 0 0 .5rem; }
+p { margin: 0 0 .9rem; }
+.lede { font-size: 1.2rem; }
+.n { font: 600 .8rem/1 var(--sans); color: var(--ours); letter-spacing: .06em; text-transform: uppercase; display: block; margin-bottom: .35rem; }
+figure { margin: 0; }
+.svgwrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: .8rem; }
+figure svg { display: block; width: 100%; min-width: 640px; height: auto; color: var(--fg); }
+figcaption { font: 15px/1.5 var(--sans); color: var(--muted); margin-top: .6rem; }
+mjx-container[display="true"] { margin: .6rem 0 1rem !important; overflow-x: auto; overflow-y: hidden; }
+table { border-collapse: collapse; width: 100%; font: 15px/1.4 var(--sans); font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: .5rem .6rem; border-bottom: 1px solid var(--rule); }
+th { font-weight: 500; color: var(--muted); }
+td.r, th.r { text-align: right; }
+.tablewrap { overflow-x: auto; }
+.small { font: 14px/1.5 var(--sans); color: var(--muted); }
+ul { margin: 0; padding-left: 1.2rem; display: grid; gap: .4rem; }
+.s-box { fill: var(--panel); stroke: currentColor; stroke-width: 1.3; }
+.s-ours { fill: var(--ours-soft); stroke: var(--ours); stroke-width: 2.2; }
+.s-gone { fill: none; stroke: var(--gone); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.s-line { stroke: currentColor; stroke-width: 1.5; fill: none; }
+.s-hi { stroke: var(--ours); stroke-width: 1.8; fill: none; }
+.t { fill: currentColor; font: 500 14px var(--sans); }
+.ts { fill: var(--muted); font: 12px var(--sans); }
+.th { fill: var(--ours); font: 600 13px var(--sans); }
+.tg { fill: var(--gone); font: 500 12px var(--sans); }
+.mk { fill: currentColor; } .mko { fill: var(--ours); }
+</style>
+
+<main>
+<header>
+  <h1>Feature Layer-SAM</h1>
+  <p class="lede">Layer-SAM helps a frozen SAM2 see a person behind foliage by combining the last few frames. This page explains how to do the same at real-time speed: combine the frames <em>after</em> encoding them, not before.</p>
+</header>
+
+<figure>
+  <div class="svgwrap">
+  <svg viewBox="0 0 900 300" role="img" aria-label="Pixel Layer-SAM averages past images and encodes the average with a second encoder pass. Feature Layer-SAM combines the already-encoded features of past frames, so the second pass disappears. Both feed the same adapter and frozen SAM2 decoder.">
+    <defs>
+      <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="mk"/></marker>
+      <marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="mko"/></marker>
+    </defs>
+    <text x="20" y="28" class="t">Pixel Layer-SAM: average, then encode</text>
+    <rect x="20" y="44" width="150" height="56" rx="8" class="s-box"/><text x="95" y="77" text-anchor="middle" class="t">past 6 images</text>
+    <rect x="215" y="44" width="150" height="56" rx="8" class="s-box"/><text x="290" y="70" text-anchor="middle" class="t">average them</text><text x="290" y="88" text-anchor="middle" class="ts">integral image C</text>
+    <rect x="410" y="44" width="150" height="56" rx="8" class="s-box"/><text x="485" y="70" text-anchor="middle" class="t">SAM2 encoder</text><text x="485" y="88" text-anchor="middle" class="ts">2nd pass · +23 ms</text>
+    <rect x="605" y="44" width="120" height="56" rx="8" class="s-box"/><text x="665" y="77" text-anchor="middle" class="t">adapter</text>
+    <rect x="770" y="44" width="110" height="56" rx="8" class="s-box"/><text x="825" y="70" text-anchor="middle" class="t">SAM2</text><text x="825" y="88" text-anchor="middle" class="ts">decoder → mask</text>
+    <line x1="170" y1="72" x2="213" y2="72" class="s-line" marker-end="url(#a)"/>
+    <line x1="365" y1="72" x2="408" y2="72" class="s-line" marker-end="url(#a)"/>
+    <line x1="560" y1="72" x2="603" y2="72" class="s-line" marker-end="url(#a)"/>
+    <line x1="725" y1="72" x2="768" y2="72" class="s-line" marker-end="url(#a)"/>
+
+    <text x="20" y="168" class="th">Feature Layer-SAM: encode, then combine</text>
+    <rect x="20" y="184" width="150" height="56" rx="8" class="s-box"/><text x="95" y="210" text-anchor="middle" class="t">past 6 features</text><text x="95" y="228" text-anchor="middle" class="ts">already encoded</text>
+    <rect x="215" y="184" width="150" height="56" rx="8" class="s-ours"/><text x="290" y="210" text-anchor="middle" class="th">feature integral</text><text x="290" y="228" text-anchor="middle" class="ts">learned, 1–2 ms</text>
+    <rect x="410" y="184" width="150" height="56" rx="8" class="s-gone"/><text x="485" y="210" text-anchor="middle" class="tg">no second</text><text x="485" y="228" text-anchor="middle" class="tg">encoder pass</text>
+    <rect x="605" y="184" width="120" height="56" rx="8" class="s-box"/><text x="665" y="210" text-anchor="middle" class="t">adapter</text><text x="665" y="228" text-anchor="middle" class="ts">same, frozen</text>
+    <rect x="770" y="184" width="110" height="56" rx="8" class="s-box"/><text x="825" y="210" text-anchor="middle" class="t">SAM2</text><text x="825" y="228" text-anchor="middle" class="ts">decoder → mask</text>
+    <line x1="170" y1="212" x2="213" y2="212" class="s-line" marker-end="url(#a)"/>
+    <path d="M365,212 C 400,212 400,262 485,262 C 570,262 570,212 603,212" class="s-hi" marker-end="url(#ao)"/>
+    <text x="485" y="282" text-anchor="middle" class="th">combined features go straight to the adapter</text>
+    <line x1="725" y1="212" x2="768" y2="212" class="s-line" marker-end="url(#a)"/>
+  </svg>
+  </div>
+  <figcaption>The only difference between the two models: where the past frames are combined. Every frame is encoded once anyway, for its own mask, so its features can be kept and reused. Not shown: the current frame and the empty scene also go to the adapter, and a tracker aligns the past frames to the person.</figcaption>
+</figure>
+
+<section>
+  <span class="n">Idea 1</span>
+  <h2>Reuse features instead of re-encoding</h2>
+  <p>Each past frame was already encoded when it was the current frame, so its SAM2 features \(K_k\) are in memory. After shifting them so the person lines up, a small network decides, for each location, how much to trust each past frame, or to fall back to the empty scene \(B\):</p>
+  \[ \hat C = \sum_{k=1}^{6} \alpha_k\, K_k \;+\; \alpha_\varnothing\, B, \qquad \textstyle\sum \alpha = 1 . \]
+  <p>This saves the second encoder pass: about 39 ms per frame instead of 62.</p>
+</section>
+
+<section>
+  <span class="n">Idea 2</span>
+  <h2>A weighted average is not enough</h2>
+  <p>When a person is only ever seen in fragments, every past feature describes "leaves plus a fragment". An average of such features is still "leaves plus a fragment". Encoding the averaged <em>image</em> can produce "person", because the encoder sees all the fragments at once. That is a combination no weighted average can reach:</p>
+  \[ E\Big(\sum_k w_k\, X_k\Big) \;\neq\; \sum_k w_k\, E(X_k). \]
+  <p>So at the coarsest scale the average is replaced by a small nonlinear network \(N\) that sees all past features unmixed:</p>
+  \[ \hat C = N\big(K_1, \dots, K_6,\, F_t,\, B\big). \]
+  <p>It predicts the features of the averaged image well on real footage it never saw (cosine 0.85, against 0.79 for the best average), at under 1 ms per frame.</p>
+</section>
+
+<section>
+  <span class="n">Idea 3</span>
+  <h2>Train it through the reader that already works</h2>
+  <p>Matching the pixel model's features is not enough. The adapter has to <em>use</em> them, and an adapter retrained on synthetic data ignores them on real footage. The pixel model's adapter \(f\) is the one reader known to use the integral on real data. So we keep \(f\) frozen and train the feature integral so that \(f\) responds to it as it responds to the real thing:</p>
+  \[ \min_{\hat C} \; \mathcal{L}\Big( f(\hat C),\; f\big(E(C)\big) \Big). \]
+  <p>This needs no labels: any real video from a static camera is training data.</p>
+</section>
+
+<section>
+  <span class="n">Where it stands</span>
+  <h2>Close to the pixel model, at two-thirds of the cost</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th></th><th class="r">box AUC</th><th class="r">gain from the integral</th><th class="r">ms / frame</th></tr></thead>
+    <tbody>
+      <tr><td>Feature Layer-SAM, trained through the reader</td><td class="r">0.710</td><td class="r">+0.011</td><td class="r">≈ 40</td></tr>
+      <tr><td>Pixel Layer-SAM</td><td class="r">0.717</td><td class="r">+0.018</td><td class="r">62</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="small">All 24 held-out NFO crossings, one seed. "Gain from the integral" is the box AUC lost when the integral is removed: it shows whether the model uses it. Before idea 3 the feature model's gain was 0.000 and it trailed the pixel model by 0.038; now it recovers about 60% of the pixel model's gain and trails by 0.007.</p>
+</section>
+
+<section>
+  <span class="n">Extension</span>
+  <h2>A moving scene: learn the empty scene too</h2>
+  <p>Today the empty scene \(B\) is a median of the first frames, encoded once. That assumes a static camera and steady light. The same module can estimate it. It is another learned combination of cached features, with different weights \(\beta\) that pick, at each location, the past frames where the person was <em>not</em> there:</p>
+  \[ \hat B_t = \sum_{k} \beta_k\, \tilde K_k . \]
+  <p>Two changes from \(\hat C\):</p>
+  <ul>
+    <li>The past features \(\tilde K_k\) are aligned to the camera, not to the person.</li>
+    <li>The history is longer, because background must be seen with the person elsewhere.</li>
+  </ul>
+  <p>It even comes with free supervision. Away from the person, the current frame <em>is</em> the background, so \(\hat B_t\) can be trained to predict \(F_t\) outside the tracker box, on any video. This is not needed for NFO or camera traps, where the camera is fixed. It is the route to a moving camera, which would also need full 2-D alignment.</p>
+</section>
+
+<section>
+  <span class="n">Next</span>
+  <ul>
+    <li>Confirm on all held-out crossings and three seeds.</li>
+    <li>Train idea 3 on more unlabelled real video.</li>
+    <li>Reach 30 FPS: compile the encoder and run the tracker on the GPU.</li>
+  </ul>
+</section>
+</main>

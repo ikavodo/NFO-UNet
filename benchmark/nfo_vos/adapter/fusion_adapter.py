@@ -82,6 +82,7 @@ class Fusion(nn.Module):
         o = dict(f)
         for l, x in (('16', x16), ('8', x8), ('4', x4)):
             o[f'X{l}'] = f[f'X{l}'] + self.out[l](x)
+        o['_x4'], o['_x16'] = x4, x16          # trunk activations (AMODAL aux head)
         if sam is not None:
             # token = SAM2's own positive-point embedding at the evidence-weighted centroid of the integral image (a working
             # prompt at step 0) + a zero-initialised learned correction from the integral image's prototype feature
@@ -169,7 +170,30 @@ def with_feat(agg, f, fixed=False):
     return dict(f, C16=o['C16'].float(), C8=o['C8'].float(), C4=o['C4'].float(), a=o['a'].float()), o
 
 
-def train_step(pred, net, agg, raw, rng, lam=1.0, max_targets=32):
+AMODAL = os.environ.get('AMODAL') == '1'   # training-only amodal aux head (findings §10.x 24), λ = 1
+
+
+class AmHead(nn.Module):
+    """Aux amodal logits from the Fusion trunk (x4 + upsampled x16), so the aux shapes the shared trunk but never the residual
+    outputs out[l] that the modal decoder reads. Dropped at inference."""
+    def __init__(self, w=64):
+        super().__init__()
+        self.h = nn.Sequential(nn.Conv2d(2 * w, 32, 3, padding=1), nn.GELU(), nn.Conv2d(32, 1, 1))
+
+    def forward(self, o):
+        return self.h(torch.cat([o['_x4'], F.interpolate(o['_x16'], scale_factor=4, mode='bilinear', align_corners=False)], 1))
+
+
+def am_loss(head, o, f):
+    """Amodal loss restricted to what history can supply: weight 1 on Ω (hidden at t, visible in the aligned history; Om4) and on
+    background outside S, 0 on V and on unrecoverable hidden cells. None if Ω is (almost) empty."""
+    Wa = (1 - f['S'].float()) + f['Om4'][:, 0].float()
+    if f['Om4'].sum() < 50:
+        return None
+    return loss_fn(head(o).float(), f['S'], Wa)
+
+
+def train_step(pred, net, agg, raw, rng, lam=1.0, max_targets=32, am=None):
     """Loss of one training clip. agg None: today's pixel integral image. agg given (FEAT=1): the learned feature integral,
     loss v3.4 + lam · (clean-feature loss on hidden-recoverable cells + evidence-mass BCE) (plan Tasks 5b / 6)."""
     from benchmark.nfo_vos.adapter.feat_integral import feat_loss, mass_loss
@@ -180,18 +204,19 @@ def train_step(pred, net, agg, raw, rng, lam=1.0, max_targets=32):
         if agg is not None:
             f, oa = with_feat(agg, f)
             S = ('16', '8', '4')
-            aux = lam * (feat_loss(oa, {s: f[f'T{s}'] for s in S}, {s: f[f'Om{s}'] for s in S}, f['mu16'])
+            aux = 0.0 if lam == 0 else lam * (feat_loss(oa, {s: f[f'T{s}'] for s in S}, {s: f[f'Om{s}'] for s in S}, f['mu16'])
                          + mass_loss(oa['a'], f['O4']))
         o = net(f, sam=sam)
-        return loss_fn(decode(sam, o, token=o.get('token')).float(), f['V'], f.get('W')) + aux
+        loss = loss_fn(decode(sam, o, token=o.get('token')).float(), f['V'], f.get('W')) + aux
+        return loss, (am_loss(am, o, f) if am is not None else None)
 
 
 @torch.no_grad()
-def evaluate(pred, net, val, agg=None):
+def evaluate(pred, net, val, agg=None, am=None):
     """Synthetic val (raw clips, built with the test-time path): J / P / R vs native V; arms box, box+pt, trk-box,
     adapter. Also the input statistics used for the parity check against NFO. agg: the feature-integral path."""
     net.eval()
-    rows, a_mass, a_on = [], [], []
+    rows, a_mass, a_on, am_gap = [], [], [], []
     for raw in val:
         f, meta = build(pred, raw, feat=agg is not None)
         if agg is not None:
@@ -203,12 +228,23 @@ def evaluate(pred, net, val, agg=None):
         fb = dict(f, box=f['box_trk'])          # tracker centre, t0 box size: the same GT-free control as on NFO
         with torch.autocast('cuda', dtype=AMP):
             o = net(f, sam=pred.model)
+            la = am_loss(am, o, f) if am is not None else None
             outs = {'box': decode(pred.model, f), 'box+pt': decode(pred.model, f, point=True),
                     'trk-box': decode(pred.model, fb), 'adapter': decode(pred.model, o, token=o.get('token'))}
             del o                                    # one adapter output alive at a time (16 GB)
             o = net(dict(f, C16=f['B16'], C8=f['B8'], C4=f['B4'], a=torch.zeros_like(f['a'])), sam=pred.model)
             outs['adapter-noC'] = decode(pred.model, o, token=o.get('token'))   # integral removed (C := B, a := 0)
+            if la is not None:                       # kill readout: does the aux head need Ĉ on Ω? gap = L_am(noC) − L_am(Ĉ)
+                am_gap.append(float(am_loss(am, o, f) - la))
             del o
+            for sc in os.environ.get('SCALE', '').split(','):   # C' = B + s (C − B): is the change signal too weak?
+                if sc:
+                    o = net(dict(f, **{f'C{k}': f[f'B{k}'] + float(sc) * (f[f'C{k}'] - f[f'B{k}']) for k in ('16', '8', '4')}), sam=pred.model)
+                    outs[f'scaled-{sc}'] = decode(pred.model, o, token=o.get('token')); del o
+            if os.environ.get('ABL'):                 # which channel carries the integral: occupancy a or appearance C
+                for nm, d in (('only-a', dict(C16=f['B16'], C8=f['B8'], C4=f['B4'])), ('only-C', dict(a=torch.zeros_like(f['a'])))):
+                    o = net(dict(f, **d), sam=pred.model)
+                    outs[nm] = decode(pred.model, o, token=o.get('token')); del o
             if agg is not None and os.environ.get('ORACLE'):   # upper bounds for better mixing: clean-frame features Xt
                 for nm, ks in (('oracle-fine', ('8', '4')), ('oracle-all', ('16', '8', '4'))):
                     o = net(dict(f, **{f'C{k}': f[f'T{k}'].to(f[f'C{k}'].dtype) for k in ks}), sam=pred.model)
@@ -227,7 +263,7 @@ def evaluate(pred, net, val, agg=None):
             rows.append(r)
         a_mass += meta['a_mass']; a_on += meta['a_on']
     net.train()
-    return rows, dict(a_mass=float(np.median(a_mass)), a_on=float(np.nanmean(a_on)))
+    return rows, dict(a_mass=float(np.median(a_mass)), a_on=float(np.nanmean(a_on)), am_gap=am_gap)
 
 
 def _box_iou(m, S):
@@ -274,7 +310,7 @@ def fmt(d, arms):
 
 
 def main(steps=1500, seed=0, eval_every=100, max_targets=32, n_val_fast=12, test=True):
-    """FEAT=1 AGG=<stage-0 checkpoint> [LAM=1]: the learned feature integral (one encoder pass per frame) instead of the
+    """FEAT=1 AGG=<stage-0 checkpoint> [LAM=1] [AGG_FREEZE=1: aggregator fixed, no aux loss] [REFINED=<feat_refine state>] [BIGS16=<feat_bigstudent state>] [RUN_DIR, STOP]: the learned feature integral (one encoder pass per frame) instead of the
     pixel integral image; the aggregator is fine-tuned jointly (own AdamW group); checkpoints {'fusion', 'agg'} in
     feat_seed<seed>/."""
     """One clip per step (≤ max_targets frames), built with the test-time path (fusion_data.build). Fast validation every
@@ -294,9 +330,20 @@ def main(steps=1500, seed=0, eval_every=100, max_targets=32, n_val_fast=12, test
     if os.environ.get('FEAT') == '1':
         from benchmark.nfo_vos.adapter.feat_integral import FeatIntegral
         agg = FeatIntegral(sam.no_mem_embed).cuda()
-        agg.load_compat(torch.load(os.environ.get('AGG') or 'results/benchmark/rr/feat_integral/stage0c_seed0.pt', map_location='cuda'))
+        sd0 = torch.load(os.environ.get('AGG') or 'results/benchmark/rr/feat_integral/stage0c_seed0.pt', map_location='cuda')
+        agg.load_compat(sd0.get('agg', sd0))                       # an adapter checkpoint {'fusion', 'agg'} also works
+        if os.environ.get('REFINED'):                              # distilled aggregator + s16 refiner (feat_refine)
+            from benchmark.nfo_vos.adapter.feat_integral import Refined
+            sdr = torch.load(os.environ['REFINED'], map_location='cuda')
+            agg = Refined(agg, full='g8.0.weight' in sdr).cuda(); agg.load_state_dict(sdr)
+        if os.environ.get('BIGS16'):                               # + big s16 student (tools/feat_bigstudent; needs REFINED)
+            from benchmark.nfo_vos.adapter.feat_integral import BigS16
+            agg = BigS16(agg).cuda(); agg.load_state_dict(torch.load(os.environ['BIGS16'], map_location='cuda'))
+        if os.environ.get('AGG_FREEZE') == '1':                    # fixed history signal, as for the pixel integral
+            agg.requires_grad_(False); agg.eval(); lam = 0.0
     n_par = sum(p_.numel() for p_ in net.parameters()) + (sum(p_.numel() for p_ in agg.parameters()) if agg else 0)
-    groups = [{'params': list(net.parameters())}] + ([{'params': list(agg.parameters())}] if agg else [])
+    am = AmHead().cuda() if AMODAL else None
+    groups = [{'params': list(net.parameters()) + (list(am.parameters()) if am is not None else [])}] + ([{'params': list(agg.parameters())}] if agg and any(p_.requires_grad for p_ in agg.parameters()) else [])
     opt = torch.optim.AdamW(groups, lr=3e-4, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, steps)
     scaler = torch.amp.GradScaler('cuda', enabled=AMP == torch.float16)
@@ -305,15 +352,18 @@ def main(steps=1500, seed=0, eval_every=100, max_targets=32, n_val_fast=12, test
     val_all = list(torch.utils.data.DataLoader(Clips('val'), batch_size=None, num_workers=6, collate_fn=_ident))
     val = val_all[:n_val_fast]
     sel = fusion_nfo.items('select', pred, feat=agg is not None)
-    out = f'{OUT}/{"feat" if agg else "token"}_seed{seed}'
-    save = lambda p: torch.save({'fusion': net.state_dict(), 'agg': agg.state_dict()} if agg else net.state_dict(), p)
+    out = os.environ.get('RUN_DIR') or f'{OUT}/{"feat" if agg else "token"}_seed{seed}'
+    stop = int(os.environ.get('STOP', steps))                     # end early at a pre-fixed step, schedule still over `steps`
+    save = lambda p: torch.save(({'fusion': net.state_dict(), 'agg': agg.state_dict()} | ({'am': am.state_dict()} if am is not None else {})) if agg else net.state_dict(), p)
     os.makedirs(out, exist_ok=True)
     print(f'params {n_par}; val clips {len(val)} fast / {len(val_all)} final; seq1 select frames {len(sel)}', flush=True)
     rng, log, best, t0 = np.random.default_rng(seed), [], (-1.0, None), time.time()
 
     def validate(it, rows_inp=None):
         torch.cuda.empty_cache()                     # FEAT: the train graph's freed blocks fragment the 16 GB card (OOM 2026-11-19)
-        rows, inp = evaluate(pred, net, val, agg)
+        rows, inp = evaluate(pred, net, val, agg, am)
+        if inp['am_gap']:
+            g = np.array(inp['am_gap']); print(f'AMGAP it {it}: L_am(noC) − L_am(C) on Ω {g.mean():+.4f} (pos {np.mean(g > 0):.2f}, {len(g)} clips)', flush=True)
         s = summarise(rows); ss = fusion_nfo.evaluate(pred, net, sel, agg)
         s.update(it=it, sec=time.time() - t0, sel=ss, inputs_syn=inp)
         gap_syn = s['adapter']['J'] - s['trk-box']['J']; gap_sel = ss['adapter']['J'] - ss['trk-box']['J']
@@ -326,7 +376,11 @@ def main(steps=1500, seed=0, eval_every=100, max_targets=32, n_val_fast=12, test
 
     log.append(validate(0))
     for it in range(1, steps + 1):
-        loss = train_step(pred, net, agg, next(dl), rng, lam, max_targets)
+        loss, la = train_step(pred, net, agg, next(dl), rng, lam, max_targets, am)
+        if la is not None:     # λ_am = 1: same normalised loss_fn as the modal term (a step-1 grad-norm match is 0: out[l] is zero-init)
+            if it % 25 == 0:
+                print(f'it {it} modal {loss.item():.4f} amodal {la.item():.4f}', flush=True)
+            loss = loss + la
         opt.zero_grad(set_to_none=True); scaler.scale(loss).backward(); scaler.step(opt); scaler.update(); sched.step()
         if it % 25 == 0:
             print(f'it {it} loss {loss.item():.4f} {(time.time() - t0) / it:.2f} s/it', flush=True)
@@ -337,6 +391,8 @@ def main(steps=1500, seed=0, eval_every=100, max_targets=32, n_val_fast=12, test
             if s['sel']['adapter']['J'] > best[0]:
                 best = (s['sel']['adapter']['J'], it)
             json.dump(log, open(f'{out}/log.json', 'w'), indent=1, default=float)
+        if it == stop:                                             # diagnostic runs: no selection, no test set
+            return
     sd = torch.load(f'{out}/fusion_it{best[1]}.pt')
     if agg:
         net.load_state_dict(sd['fusion']); agg.load_state_dict(sd['agg'])

@@ -470,6 +470,279 @@ held-out sequences: on the box, the feature adapter equals its own tracker promp
 integral's held-out box gain (+0.018 to +0.037 per seed vs `-noC`). Consistent with feat ≈ noC. The bar for any Ĉ fix is
 now explicit: recover ≈ +0.04 box AUC. The pixel adapter beats SAM2 memory + tracker prompts on box AUC.
 
+### 10.x Diagnosis of the one-pass adapter: where the integral acts and why Ĉ is weaker (2026-11-24, laptop)
+
+Question: where does the feature adapter (feat it700) fall short of the pixel adapter, and is its integral useful at all?
+All synthetic numbers: 30 val clips, 964 frames with history, paired clip bootstrap (`tools/syn_noC.py`, rows in
+`results/benchmark/rr/feat_integral/syn_noC_rows_*.json`). Pixel synthetic reference = token_seed0 it600.
+
+**1. The held-out gap is not reproduced on any selection set.**
+- Synthetic, feat − pixel (paired, same clips): box IoU +0.003 [−0.007, +0.014]; J −0.016 [−0.020, −0.013], all of it
+  precision (P −0.022, R +0.004). Same −0.020 J with the integral removed from both, and on frames without history:
+  the difference is in the trained Fusion, not the integral.
+- seq1 (8 crossings, box AUC): feat − pf **+0.028** [+0.015, +0.040]; the cluster (0.574) and the laptop (0.572) agree, so
+  environment drift is excluded. Decomposition: feat − feat-noC +0.004 [−0.003, +0.012] vs pf − pf-noC +0.018
+  [+0.013, +0.022]; feat-noC − pf-noC +0.042 [+0.024, +0.058]. On real data the feature integral is idle as well; the
+  seq1 advantage is the feat Fusion's.
+- seq1 is failure-dominated (fail share feat 0.047, pf 0.100, trk 0.116); seq2–4 has fail = 0 for every arm, and feat
+  trails pf on 22 of 24 crossings. seq1 measures not losing the person, seq2–4 box extent. On seq1 frames where every arm
+  tracks, feat still leads (box IoU +0.019 [+0.000, +0.038], `tools/box_bias.py`), so seq1 does not reproduce the extent
+  deficit either. Open confound: training length (feat it700 vs pf it200), only testable on seq2–4.
+
+**2. FP split (where false positives land).** Share of FP pixels inside the hidden person S ∧ ¬V: feat 0.695, feat-noC
+0.686, pixel 0.722, pixel-noC 0.710. About 70% of every adapter's FPs are amodal fill (loss v3.4 does not penalise it);
+the integral adds ≈ 0.01 of that share. Feat's precision deficit is background spill.
+
+**3. Which channel carries the integral: appearance C, not evidence mass a.** Inference ablation (`ABL=1`), each − noC:
+
+| | feat J / box IoU | pixel J / box IoU |
+|---|---|---|
+| only C (a := 0) | **+0.004 / +0.008** | **+0.006 / +0.016** |
+| only a (C := B) | −0.005 / +0.004 | −0.012 / +0.002 |
+| both (as trained) | −0.002 / +0.008 | −0.006 / +0.018 |
+
+`a` raises recall and spills onto the background (FP share in the hidden person drops); C raises J, precision and box
+together and adds person-shaped fill. The occupancy-only redesign proposed the same morning is refuted.
+Downstream check (`-noA` arm, first crossing s0 of each of seq1–4, laptop; screening rule below): a := 0 costs box AUC
+−0.006 (feat, 3 of 4 clips) / −0.002 (pixel) and recognition conf −0.005 to −0.017. Rejected; `a` stays.
+Runtime on the same run: **feat 42 ms/frame, pixel 66 ms/frame** (RTX PRO 4000 laptop).
+
+**4. Neighbourhood keys (test 1, NBR = 1; aggregator-only stage 0, 200 steps from it700, Fusion frozen).** s16 cos to
+clean on Ω 0.503 → 0.528 (s8 0.503 → 0.519), val L_C + L_a 0.499 → 0.477; adapter − noC box IoU +0.007 vs +0.008
+(control), J −0.010 vs −0.002. Fails its bar (≥ +0.015 and > control). Read as a diagnostic: better Ĉ direction alone
+does not reach the output. Not tested: a Fusion retrained on neighbourhood Ĉ.
+
+**5. Why Ĉ helps less although closer to clean: shrinkage towards B.** `tools/feat_stats.py`, s16, synthetic val:
+
+| source | ‖C − B‖ / ‖T − B‖ on Ω (visible) | cos(C − B, T − B) on Ω (visible) |
+|---|---|---|
+| learned Ĉ | **0.74 (0.67)** | **0.72 (0.73)** |
+| enc(pixel integral) | 0.92 (0.93) | 0.65 (0.66) |
+| F_t | 0.83 | 0.56 |
+
+Ĉ has the best direction of the change signal but about ¾ of its magnitude, below the frame itself; consistent with
+the softmax pulling towards the null key ∅ = B where it is uncertain. Mechanism test (inference rescaling
+C′ = B + s (C − B), s ∈ {1.35, 1.7}, `SCALE=`, all strides, feat it700, Fusion as trained), − noC:
+J −0.002 (s = 1) → −0.004 → −0.007, box IoU +0.008 → +0.005 → +0.005 (HARD box +0.011 → +0.007 → +0.014, CIs span 0).
+Amplifying hurts, monotonically in s: no inference-time fix. The trained Fusion is calibrated to the shrunk scale, so
+this does not separate "magnitude is irrelevant" from "Fusion adapted to it". Neighbourhood keys (test 1) also raise
+the magnitude (Ω 0.76 → 0.81, visible 0.71 → 0.78; direction 0.724 → 0.735; nbr0 = same 200 extra stage-0 steps) without
+output gain. Together: neither a better direction nor a stronger Ĉ reaches a frozen Fusion; the open lever is
+how the Fusion is trained on Ĉ.
+
+**6. Probe: does Ĉ carry the information, independent of any adapter?** The inference perturbations above (rescaling,
+a := 0, swapping in the nbr aggregator under a frozen Fusion) measure the trained Fusion's calibration, not the content of
+its inputs; so do the `-noC` controls used throughout (reliance, not usefulness). `tools/feat_probe.py` (linear probe,
+Alain & Bengio arXiv 1610.01644): frozen s16 features, a fresh class-balanced logistic regression per input set, trained on
+60 synthetic TRAIN clips (355k cells), tested on the 30 val clips (279k cells); cells in the amodal person box + 50%;
+person (S share ≥ 0.5) vs background (share 0). Hidden = person cells with visible share < 0.1. Cells cached
+(`results/benchmark/rr/feat_integral/probe/cells_n60.pt`, 4.5 GB); MLP reader (1 × 256) on the same cells.
+
+| input (+ F_t, B) | hidden-vs-background AUC, linear (MLP) | gain over no history |
+|---|---|---|
+| no history | 0.966 (0.964) | |
+| learned Ĉ it700 | 0.973 (0.974) | +0.007 [+0.002, +0.012] (+0.010) |
+| enc(pixel integral) | 0.974 (0.976) | +0.009 [+0.002, +0.015] (+0.011) |
+| oracle T (clean frame) | 1.000 (1.000) | +0.034 (+0.036) |
+
+Decisive comparison, paired per clip, learned Ĉ − pixel on hidden cells: linear **−0.0015 [−0.0040, +0.0008]**, MLP
+−0.0014 [−0.0036, +0.0006]. Ĉ carries about the same hidden-person information as the pixel integral (both close ≈ 25–30%
+of the gap to the oracle). nbr1 Ĉ = learned Ĉ (+0.007 / +0.010): neighbourhood keys add no information. Conclusion: the
+feature adapter's idle integral is a training / usage problem of the Fusion, not missing content. Blind spot of the probe:
+AUC is near saturation (the no-history floor is 0.966, s16 context sees the adjacent visible person), so it compresses
+differences; it measures content on synthetic data, not transfer to NFO.
+
+**7. Where Ĉ's information stops (zero-training checks for the retraining proposal).**
+- Through the Fusion's shared s16 projection P (256 → 64, applied to X, C and B; `fusion_adapter.py:73`),
+  `tools/feat_probe_P.py`, same cached cells: hidden-vs-background gain with the feat adapter's own P: Ĉ +0.015 [+0.008,
+  +0.023], pixel +0.018 [+0.009, +0.027]; learned − pixel −0.003 [−0.006, +0.001]. The bottleneck keeps Ĉ's information;
+  it reaches the Fusion's first block.
+- Reliance over training, from the runs' own logs (seq1 brush J, adapter − noC, 20 frames; weak labels, but paired within
+  each checkpoint): feat it100…700 +0.000, +0.010, +0.008, −0.011, +0.009, +0.006, +0.007; pixel it100…600 +0.037, +0.020,
+  +0.017, +0.023, −0.013, +0.022. Recall gain from C: feat +0.007…+0.03, pixel +0.04…+0.11. The feat Fusion never learned
+  to use Ĉ, from the first 100 steps on; no rise-then-decay, so the training-length confound does not explain idleness.
+Remaining difference between the two recipes: the aggregator is trained jointly (mask-loss gradients + λ(L_C + mass BCE))
+while the Fusion learns, versus a fixed pixel integral.
+
+**Screening rule (fixed 2026-11-24).** *Superseded 2026-11-25: seq2–4 s0 are held-out test crossings; screen on seq1 crossings only.* Inference switches within one checkpoint are screened on the first crossing (s0)
+of each of seq1–4 with box AUC + recognition (paired per-clip SD of such switches ≈ 0.007 box AUC, so 4 clips resolve
+≈ ±0.01). Promising switches then run on all crossings, reported with and without the 4 screening clips. Comparisons
+between different checkpoints are never screened on 4 clips (per-clip SD ≈ 0.03). Hand J is no longer a decision metric.
+
+8. **Synthetic reliance does not separate the two adapters; the deficit is NFO-specific (2026-11-24).** Reference
+   for the frozen-aggregator retrain: the *deployed* pixel adapter (token_seed0 it200) on the 30 synthetic val clips,
+   adapter − noC: box IoU +0.008 [+0.002, +0.014], J +0.002 [−0.002, +0.007] (964 history frames); HARD frames box IoU
+   +0.015 [−0.001, +0.037]. The feat adapter (it700) has the same +0.008. The +0.018 used earlier as "pixel reliance"
+   was it600. So on synthetic data both adapters use their history equally; only on NFO seq1 does the pixel adapter use
+   it more (box AUC reliance +0.018 vs +0.004). The defect is a synthetic → NFO transfer of Ĉ or of its use, not
+   in-domain usage. Consequence: synthetic reliance cannot read out the frozen-aggregator retrain (its pre-set bar
+   +0.015 was taken from the wrong checkpoint). Also seen in the training logs: joint training cut the aggregator's
+   evidence mass Σa on synthetic from 8614 (stage0c, step 0) to ≈ 1000 by step 100 (pixel integral 6577); the seq1
+   mass in the feat log.json (6271) is the pixel mass, a print bug fixed in 157a1b5 (the adapter itself read Ĉ).
+   Files: results/benchmark/rr/feat_integral/frozen/run.log.
+
+9. **Frozen-aggregator retrain: freezing does not make the adapter use Ĉ (2026-11-24).** Fusion from scratch, it700
+   aggregator frozen (`AGG_FREEZE=1`, LAM = 0), pixel recipe (1000-step cosine, seed 0), stopped at step 200
+   (`feat_frozen_seed0/`). adapter − noC: synthetic box IoU +0.005 [+0.001, +0.009], J −0.007 [−0.011, −0.003]
+   (feat it700 +0.008 / pixel it200 +0.008 box IoU); seq1 hand J +0.004 at step 200 (pixel it200 +0.020). Joint
+   training is not why the feat adapter ignores Ĉ on NFO. One seed.
+10. **NFO probe: on real footage Ĉ carries the same person information as the pixel integral (2026-11-24).**
+   `tools/feat_probe_nfo.py`: inputs captured from the deployed inference path (`masks_from_arrays(probe=)`) on the 8
+   seq1 full-pass crossings, history frames with a GT box (320k s16 cells); label person = GT-box core (central 50% w,
+   80% h) vs background outside the box; 'occl' = the third of person cells with the lowest current-frame change
+   1 − cos(F_t, B) vs background. Leave-one-crossing-out, crossing bootstrap. Linear reader, AUC gain over [F_t, B]
+   (0.989 all / 0.970 occl): pixel +0.006 / +0.015, it700 Ĉ +0.006 / +0.015, stage0c Ĉ +0.006 / +0.015;
+   it700 − pixel +0.0001 [−0.003, +0.005] all, +0.0004 [−0.008, +0.012] occl. it700 − stage0c = 0.0000: joint
+   training left Ĉ's content unchanged. Ĉ's gain is steadier across crossings (pixel is −0.028 on s1, Ĉ +0.011). MLP
+   reader saturates (none 0.997), gains ≤ 0.003, same ordering. Caveat: box-core labels, and each probe is standardised
+   on NFO itself, so it is blind to a synthetic → NFO shift in Ĉ's statistics (the remaining candidate). Visual trace:
+   `results/benchmark/rr/feat_integral/probe_nfo/labels_*.jpg`.
+
+11. **Transfer probe: Ĉ's information is there on NFO, but a reader trained on synthetic data cannot read it as well as
+   the pixel integral's (2026-11-24).** `tools/feat_probe_transfer.py`: linear reader fitted and standardised on the 60
+   synthetic train clips (feat_probe cache), scored on the 8 seq1 crossings (feat_probe_nfo cache), the adapter's own
+   situation without the adapter. Transfer AUC all / occl: none 0.920 / 0.820, pixel 0.958 / 0.907, Ĉ (it700)
+   0.938 / 0.863. Gain over none: pixel +0.039 [+0.025, +0.053], Ĉ +0.018 [+0.013, +0.023]; **Ĉ − pixel −0.020
+   [−0.032, −0.009]** all, −0.044 [−0.067, −0.019] occl (6 of 8 crossings negative, 2 ≈ 0). Fitted on NFO itself the
+   two are equal (item 10). So the synthetic → NFO shift is larger for Ĉ than for enc(C), consistent with the adapters'
+   reliance on NFO (pixel +0.018 vs feat +0.004 box AUC) and their equal reliance on synthetic data (+0.008 each).
+   Diagnosis: the feat line's NFO deficit is a domain shift in how Ĉ encodes the person, not missing information and not
+   joint training. Caveat: the label definitions differ between domains (mask vs box core), but equally for all sets.
+
+12. **The Ĉ transfer gap is not a mean / scale shift (2026-11-24).** Same transfer probe with every set standardised
+   per channel within each clip / crossing (`NORM=clip`, AdaBN-style; Li et al. ICLR-W 2017, arXiv 1603.04779):
+   Ĉ − pixel −0.021 [−0.035, −0.010] all, −0.047 [−0.072, −0.021] occl (unnormalised −0.020 / −0.044). Pixel gain
+   +0.040, Ĉ +0.018, unchanged. A per-frame normalisation of Ĉ inside the adapter would therefore not fix the NFO
+   deficit: the shift is in which feature directions carry the person, not in their first two moments.
+
+13. **Distillation pilot: teaching the aggregator's α to match the pixel integral on unlabelled NFO closes ≈ 25% of the
+   transfer gap (2026-11-24).** `tools/feat_distil.py`: the it700 aggregator fine-tuned (400 steps, AdamW 1e-4, batch 8)
+   so that its s16 output matches enc(C) (centred cosine) on tracker-centred 40×40-cell crops of seq1 crossings s4–s7
+   (386 frames, no GT). Teacher cosine: train 0.535 → 0.578, held-out s0–s3 0.596 → 0.633 (the fit generalises).
+   Transfer gain over [F_t, B] on held-out s0–s3 (reader fitted on 30 synthetic clips), all / occl: pixel +0.028 /
+   +0.071, it700 Ĉ +0.013 / +0.036, **distilled Ĉ +0.017 / +0.043** (≥ it700 on all 4 crossings: +0.003 +0.001 +0.002
+   +0.010 all). Gap closed: 27% (all), 21% (occl). Since only α was trained, Ĉ stays a convex combination of keys and B:
+   the remaining gap may be the limit of mixing alone. Files: results/benchmark/rr/feat_integral/distil/.
+
+14. **A fixed (pixel-rule) α in feature space transfers worse than the learned one (2026-11-24).**
+   `tools/feat_fixed_transfer.py`, same held-out readout as item 13: transfer gain all / occl fixed +0.004 / +0.013 vs
+   learned +0.013 / +0.036, pixel +0.028 / +0.071. Re-weighting the keys cannot close the gap; the limit is that Ĉ is a
+   convex mix of per-frame encodings. Mechanism (argued): the pixel route averages BEFORE the nonlinear encoder E, so the
+   occluders are thinned and E encodes a de-occluded person the way it encodes any person; the feature route mixes
+   E(X_k), each of which already entangles the person fragment with that frame's foliage, and E(Σ w X) ≠ Σ w E(X). The
+   entanglement depends on the foliage's appearance, which differs between procedural and real foliage.
+15. **Distillation with a refiner closes the transfer gap (2026-11-24).** `tools/feat_refine.py`: Ĉ' = Ĉ + g([Ĉ − μ,
+   B − μ]) at s16 (g: 1×1 512→128, 3×3, 1×1 →256, zero-init; history and empty scene only, no F_t), α and g trained
+   (1500 steps, lr 1e-4 / 3e-4) to match enc(C)16 in centred cosine on seq1 s4–s7 (unlabelled) alternating with 20
+   synthetic clips (seed 11). Held-out teacher cosine 0.596 → 0.785 (still rising at 1500). Transfer gain on held-out
+   s0–s3, all / occl: **refined +0.028 / +0.066**, pixel +0.028 / +0.071, it700 Ĉ +0.013 / +0.036: 96% / 85% of the gap
+   closed; per crossing refined vs pixel +0.020/+0.027, +0.022/+0.016, +0.031/+0.009, +0.038/+0.061. Caveats: held-out
+   crossings are from the same sequence (scene) as the distillation crossings; probe proxy, not the adapter.
+   Next: retrain the Fusion on the refined aggregator, screen on NFO.
+
+16. **Adapter retrained on the refined aggregator: half of the NFO gap closes, recognition does not move (2026-11-24).**
+   Fusion from scratch on the frozen distilled + refined aggregator (`REFINED=`, `feat_refined_seed0/`, pixel recipe,
+   step 200, seed 0); screen on the four s0 crossings, laptop, paired per crossing (seq1 s0 / seq2 / seq3 / seq4).
+   Box AUC: featref 0.616 / 0.703 / 0.630 / 0.719 (mean 0.667), old feat 0.646 / 0.677 / 0.607 / 0.693 (0.656),
+   pixel 0.607 / 0.722 / 0.644 / 0.738 (0.678). Reliance (adapter − noC, the screening quantity): featref +0.015 /
+   +0.004 / +0.001 / +0.004 (mean +0.006, positive on 4/4), old feat −0.004 (1/4 positive), pixel +0.014 (4/4).
+   seq2–4 s0 box AUC gap to pixel −0.042 → −0.017. Recognition (N = 5): seq2–4 s0 conf featref 0.646, feat 0.647,
+   pixel 0.656; featref reliance −0.001 vs pixel +0.023; seq1 s0 featref conf 0.589 vs feat 0.633. Only s16 is refined
+   (s8 / s4 keep the plain mix) and the evidence mass a still differs between domains (on-person a syn 0.56 / seq1 0.33).
+   Four crossings, one seed: indicative only. Files: results/benchmark/rr/feat_integral/refined/run.log.
+
+17. **Full-input distillation (all strides + evidence mass) adds nothing measurable over s16-only (2026-11-24).**
+   `tools/feat_refine_full.py` (refiners g / g8 / g4, mass head BCE to the pixel mass; same data and budget as item 15).
+   Held-out (s0–s3, every 3rd frame) teacher cosine s16 / s8 / s4 0.597 / 0.649 / 0.713 → 0.783 / 0.735 / 0.783 (train
+   0.778 / 0.717 / 0.776), mass L1 0.104 → 0.054; the evidence mass is now domain-matched (Σa median syn 8637 / seq1
+   8737, on-person 0.44 / 0.39; s16-only: 889 / 406, 0.56 / 0.33). Fusion retrained on it (`feat_refinedfull_seed0/`),
+   s0 screen, box AUC seq1 / seq2 / seq3 / seq4: 0.605 / 0.693 / 0.628 / 0.728 (mean 0.663; s16-only 0.667, old feat
+   0.656, pixel 0.678); reliance +0.005 / −0.012 / +0.010 / +0.011 (mean +0.004; s16-only +0.006, pixel +0.014).
+   Recognition conf reliance: seq1 s0 +0.014, seq2–4 s0 −0.013 (pixel +0.024 / +0.023). Summary of items 15–17:
+   distillation lifts the one-pass adapter's box AUC by ≈ +0.01 and makes its use of the history positive, ≈ half of
+   the pixel adapter's; recognition does not follow. Residual: the student matches the teacher at cos ≈ 0.95 on
+   synthetic (training loss) but ≈ 0.78 on NFO, i.e. the distilled input is itself still domain-shifted.
+   Four crossings, one seed per arm: differences of ±0.01 are within noise.
+
+18. **Student-capacity test: is the distillation gap data, student or information?** (`tools/feat_capacity.py`,
+   `results/benchmark/rr/feat_integral/capacity.log`). The distilled students of items 15/17 fit the pixel teacher
+   enc(C)16 equally on their NFO training crossings and held-out ones (0.779 / 0.785): underfitting, not data-limited.
+   Test: a 5.9 M-parameter conv student sees all one-pass inputs unmixed (6 shifted keys K_k, validity, sub-cell phase,
+   F_t, B; 2066 ch → 1×1 512 → 3×3 512 → 3×3 512 → 1×1 256), NFO only (seq1 s4–s7, 386 frames), 3000 steps, AdamW 3e-4
+   cosine, seed 0; centred cosine to enc(C)16 in 40×40-cell tracker crops. Reference cos (held-out): B 0.474, F_t 0.515,
+   plain mean of K 0.609, current refined student 0.785. Result: train 0.918, held-out **0.849** (plateau from step 2000).
+   Reading: most of enc(C) is recoverable from per-frame cached features (the "encoder nonlinearity loses it" account is
+   wrong at this level); the main limit of the current student is that it sees only the α-mixed map; a 0.07
+   train/held-out gap says more unlabelled real footage would add some. Residual: train fit saturates at 0.92, not 1
+   (capacity or information, not separated). One seed; teacher cos is a proxy, not a downstream metric. Next: put this
+   student (trained on NFO + synthetic) in the feat adapter, retrain Fusion, s0 screen.
+
+19. **Student size vs real-time cost** (`tools/feat_capacity.py big|small c w`, `capacity_small.log`; same data and
+   recipe as item 18; timing: full 64×64 grid, batch 1, bf16 autocast, RTX PRO 4000 laptop, 100 reps). Held-out NFO
+   teacher cos / ms per frame: big (5.9 M) **0.849 / 0.83 ms**; shared-1×1 c64 w128 (0.8 M) 0.805 / 0.30 ms; c32 w64
+   (0.2 M) 0.767 / 0.15 ms (current refined student 0.785). Shrinking costs accuracy roughly in proportion; the big
+   student is already < 1 ms (the FLOP estimate overstated its cost), so it fits the real-time budget as is; a tracker
+   crop would cut it further. Choice: the big student.
+
+20. **Which teacher? Clean-frame similarity on synthetic** (`tools/teacher_oracle.py`, `teacher_oracle.json`; 30 synthetic
+   val clips, centred cos to T16 = SAM2 features of the occluder-free frame; clip bootstrap). Person cells / hidden cells:
+   B 0.075 / 0.083, F_t 0.580 / 0.249, feat-α (Ĉ, stage-0c weights) **0.483 / 0.385**, pixel-hand (deployed C) 0.420 / 0.303,
+   pixel-α (same weights mixed in pixels) 0.388 / 0.297, pixel-orc (GT-visibility gate) 0.516 / **0.387**.
+   Oracle gate − hand gate +0.096 [+0.068, +0.124] / +0.085 [+0.055, +0.117]; pixel-hand − feat-α −0.063 / −0.082;
+   pixel-α − feat-α −0.095 / −0.088. Reading: on synthetic, by this metric, feature mixing is *closer* to the clean
+   frame than any non-oracle pixel image, and the "E(C) leaves the convex hull" mechanism gives pixels no advantage
+   here. Confound: feat-α's weights were trained on this target and domain; the pixel arms were not. Together with item
+   21, cos-to-clean-features does not predict NFO reliance, so the oracle headroom is in a currency that does not
+   transfer; no learned pixel gate is built on it.
+
+21. **Big student in the feat adapter: s0 screen** (`tools/feat_bigstudent.py` → `distil/bigs16_s4-7.pt`; Fusion
+   retrained 200 steps, AGG_FREEZE, seed 0 → `feat_big_seed0`; arm `adapter-featbig`; `bigstudent/run.log`). Teacher
+   fit (centred cos to enc(C)16) at 3000 steps: NFO train 0.889, held-out **0.844** (refined student 0.785), synthetic
+   (training clips) 0.865. s0 crossings (seq1 s0 + seq2–4 s0, @lap), box AUC / reliance (arm − noC) / recognition conf
+   reliance: featbig 0.662 / **+0.000** / −0.011; featref 0.667 / +0.006 / −0.001; feat 0.656 / −0.004 / +0.000;
+   pf (pixel) 0.678 / +0.014 / +0.024 (pf reliance positive on all 4 crossings in both metrics). Reading: raising the
+   student's fit to the pixel teacher (0.785 → 0.844 held-out) did not raise reliance; teacher cos does not predict
+   whether the adapter uses C. One seed, 4 crossings (screen).
+
+22. **Per-stage runtime** (`tools/profile_stages.py`, `profile_stages.log`; 11 seq1 windows, RTX PRO 4000 laptop, syncs
+   per stage). feat 38.8 ms/frame: encoder 25.3, tracker (CPU) 4.0, key shift 0.7, aggregator 1.1, adapter 3.0, decoder
+   2.5, rest 3.9. pixel 62.3 ms: encoder 46.8 (two passes), tracker 3.8, adapter 3.6, decoder 2.5, rest 6.5. 30 FPS
+   needs ≤ 33 ms: encoder compile (`compile_image_encoder: False` in sam2.1_hiera_b+.yaml) and a GPU/grid tracker are the
+   untested levers.
+
+23. **Through the frozen pixel reader** (advisor route 1; `tools/feat_through_reader.py`, `feat_integral/bigpf/`).
+   Premise: every feature-route Fusion was retrained on synthetic, where neither integral is rewarded, so its reading of C
+   is arbitrary; the pixel Fusion f_pf (token_seed0 it200) is the one reader whose use of C transfers. Step 0 (no
+   training; arm `adapter-featbigpf` = item-21 big student + aggregator under f_pf; s0 crossings, @lap): box AUC 0.668,
+   reliance +0.010 / +0.000 / +0.002 / +0.003 (mean **+0.004**; featbig with its retrained reader +0.000), recognition conf
+   reliance mean **+0.011** (featbig −0.011); pf +0.014 / +0.024. The reader alone moves recognition reliance halfway to
+   pixel; box reliance stays below the +0.010 bar. Step 1 (arm `adapter-featbigpft`: aggregator trained 1000 steps through f_pf on seq1 s4–s6, 170 frames; loss = decoder-logit KL + per-stride residual MSE + token + 0.2·anchor to enc(C)/a_pix, dataset-mean normalised): held-out seq1 s7 reader mismatch r16 0.030 → 0.013, token 0.76 → 0.001 (the token, driven by the mass a, was the dominant step-0 mismatch). s0 screen: box AUC **0.675** (pf 0.678; featbig 0.662), reliance +0.012 / +0.004 / +0.017 / +0.009 (mean **+0.010**, pf +0.014), recognition reliance +0.008 / +0.008 / +0.022 / +0.006 (mean +0.011, positive on all 4; pf +0.024). The -noC inputs are identical for f_pf-based arms (C := B, a := 0), so this is arm-vs-pf directly. Pre-set bar (≥ +0.010 on ≥ 2 of 3 seq2–4 crossings): mean met, count 1 of 3: borderline. Closest one-pass result so far; one seed, 4 crossings. Caveat: `box_metrics score` rewrites box_gt.csv with only the arms it is given (earlier screen rows must be rescored from the saved masks). **Held-out, all 24 seq2–4 crossings** (`bigpf/heldout.sh`, @lap; noC = pf-noC, identical f_pf inputs; crossing bootstrap, 5000): box AUC featbigpft **0.710**, pf 0.717 (= the seed-0 headline, so the environment matches), noC 0.699. Reliance featbigpft **+0.011 [+0.009, +0.014]** (positive on 23/24) vs pf +0.018 [+0.015, +0.021]; featbigpft − pf **−0.007 [−0.009, −0.005]** (the earlier one-pass adapter was −0.038, commit d2fe44b). Recognition conf (24 crossings, `recog_N5_uniform_meanfill_heldout_bigpft2.csv`): reliance +0.006 [−0.001, +0.012] (14/24) vs pf +0.014 [+0.006, +0.021]; featbigpft − pf −0.008 [−0.016, −0.000]. Reading: the one-pass route now uses the integral on held-out real footage and recovers ≈ 60% of the pixel route's box gain at ≈ 40 vs 62 ms/frame; recognition gain not yet resolved from 0. One seed (CIs over crossings, not seeds). **v2** (`bigpf/v2.sh`: pixel-gate mass a fed to the reader instead of the student's a + seq1 s1–s6 every 3rd frame, 187 frames; same init and recipe): step-0 token mismatch 0.76 → 0.27 from pixel a alone, final s7 mismatch ≈ v1. Held-out 24 crossings: box AUC 0.710 (= v1), v2 − v1 −0.000 [−0.001, +0.001]; reliance +0.011 (= v1); recognition reliance +0.006 [+0.001, +0.011] (v1 +0.006); v2 − pf box −0.007. No effect; pixel a costs the per-frame gate (dump timing ≈ 47 vs ≈ 43 ms/frame, not profiled). Keep v1. **Screen leak, recount (2026-11-25, cold review):** the s0 screen used seq2/3/4 s0, i.e. 3 of the 24 held-out crossings, for design choices. On the 21 untouched crossings: box AUC featbigpft 0.712, pf 0.720, noC 0.701; reliance +0.012 [+0.009, +0.014] vs pf +0.019 [+0.015, +0.023]; featbigpft − pf −0.007 [−0.009, −0.005]; recognition reliance +0.005 [−0.003, +0.012] vs pf +0.012 [+0.003, +0.021]; v2 − v1 box −0.000. Conclusions unchanged. From now on screens use seq1 crossings only.
+
+24. **Training-only amodal aux head: does a loss that needs history make the reader use Ĉ? (2026-11-25, running)**
+   Hypothesis (cold review): loss v3.4 targets the visible mask V with hidden pixels weighted 0 / 0.3, so no term needs history and any
+   reader trained on synthetic ignores the integral (items 8, 9, 16, 21). Change, one variable vs `feat_big_seed0` (FEAT, AGG_FREEZE,
+   BigS16, Fusion from scratch, 200 of 1000 cosine steps, seed 0): `AMODAL=1` adds `AmHead` (3×3 + 1×1 conv on the Fusion trunk
+   x4 + ↑x16; it never trains the residual outputs out[l], so amodal fill is not pushed into the modal mask), loss_fn on the amodal mask S
+   weighted 1 on Ω (hidden at t, visible in aligned history; `Om4`) and outside S, 0 on V and unrecoverable hidden cells, λ = 1.
+   Dropped at inference: one modal mask is scored. Also fixed: Ω was not zeroed on mode-2 frames (`fusion_data`). Pre-registered:
+   kill if the synthetic readout AMGAP = L_am(noC) − L_am(Ĉ) on Ω at it 200 is ≤ 0 or positive on < 8/12 clips; else seq1-only
+   screen (8 crossings, @lap) vs featbig: pass = box AUC reliance Δ ≥ +0.010 with CI > 0 and recognition reliance not lower; one
+   seed, so a pass means "run a second seed". Smoke: AMGAP at init −0.015. Files: `feat_integral/amodal/run.sh`, `run.log`.
+   **Result.** Synthetic AMGAP +0.073 (it 100), **+0.146 (it 200), positive on 12/12 clips** (kill rule passed); synthetic modal J
+   adapter 0.600. seq1, 8 crossings, @lap, crossing bootstrap: box AUC featbigam 0.539 / its noC 0.439 vs featbig 0.551 / 0.540;
+   reliance **+0.101 [+0.069, +0.128]** (8/8) vs +0.010; Δreliance +0.090 [+0.059, +0.119]; but featbigam − featbig box **−0.011
+   [−0.034, +0.015]**: the reliance rise is the noC arm collapsing, not the with-C arm improving. Recognition conf featbigam 0.611
+   vs featbig 0.588: **+0.023 [+0.000, +0.043]** (6/8); recognition reliance +0.034 [+0.015, +0.053] vs −0.005. Pre-registered
+   bar met (one seed). Reading: the aux loss makes the reader depend on Ĉ (first time on real data), recognition improves, box AUC
+   does not. Caveats: one seed; BigS16 was distilled on seq1 s4–s7 frames (unlabelled, both arms).
+
+25. **Speed levers for the one-pass path** (`tools/speed_check.py`, `feat_integral/speed_check.log`, idle GPU). Tracker on GPU
+   (same arithmetic, cumsum integral image, vectorised search, numpy Theil–Sen): **0.49 vs 4.62 ms/frame, identical tracks (0.00 px)**
+   on 4 seq1 windows. Encoder: full 1024² eager 25.2 ms, `torch.compile` 19.7 ms; 512² crop eager 6.8 ms but the crop changes the
+   features: median 1 − cos crop-vs-full s16 **0.194** / s8 0.034 / s4 0.004 vs frame-to-frame (2 apart) 0.003 (Hiera's global
+   attention sees the whole image); compiling the crop failed (Inductor error). Projection (derived, not run end-to-end): 38.8 −
+   4.1 (tracker) − 5.5 (compile) ≈ 29 ms/frame ≈ 34 FPS.
+
 ## Code map
 
 - `benchmark/nfo_vos/downstream/`:
