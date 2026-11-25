@@ -27,14 +27,15 @@ CKPT_DIR = 'results/benchmark/rr/layers_fusion_adapter'
 CKPT = f'{CKPT_DIR}/token_seed0/fusion_it200.pt'
 ARM_CKPT = {'adapter-pf': CKPT, 'adapter-s1': f'{CKPT_DIR}/token_seed1/fusion_it200.pt',
             'adapter-s2': f'{CKPT_DIR}/token_seed2/fusion_it200.pt',
+            # one-pass feature integral (findings §10.x): learned α mix; + refiner (15); all strides + mass (17);
+            # + big s16 student (21); + training-only amodal head (24); big student under / trained through the frozen pixel Fusion (23)
             'adapter-feat': os.environ.get('FEAT_CKPT', f'{CKPT_DIR}/feat_seed0/fusion_it200.pt'),
             'adapter-featref': f'{CKPT_DIR}/feat_refined_seed0/fusion_it200.pt',
             'adapter-featfull': f'{CKPT_DIR}/feat_refinedfull_seed0/fusion_it200.pt',
             'adapter-featbig': f'{CKPT_DIR}/feat_big_seed0/fusion_it200.pt',
-            'adapter-featbigam': f'{CKPT_DIR}/feat_bigam_seed0/fusion_it200.pt',   # + training-only amodal aux head (§10.x 24)
+            'adapter-featbigam': f'{CKPT_DIR}/feat_bigam_seed0/fusion_it200.pt',
             'adapter-featbigpf': f'{CKPT_DIR}/feat_bigpf/plug.pt',
-            'adapter-featbigpft': f'{CKPT_DIR}/feat_bigpf/trained_it1000.pt',
-            'adapter-featbigpft2': f'{CKPT_DIR}/feat_bigpf/trained_v2.pt'}   # v2: pixel a + seq1 s1–s6   # + trained through the frozen pixel Fusion (§10.x 23)   # big student under the frozen pixel Fusion (§10.x 23)   # all strides + mass (§10.x 17)   # + distilled refiner (findings §10.x 15)   # learned feature integral
+            'adapter-featbigpft': f'{CKPT_DIR}/feat_bigpf/trained_it1000.pt'}
 
 
 def load_net(pred, ckpt):
@@ -50,7 +51,6 @@ def load_net(pred, ckpt):
             from benchmark.nfo_vos.adapter.feat_integral import BigS16, Refined
             net.agg = BigS16(Refined(FeatIntegral(pred.model.no_mem_embed).cuda())).cuda().eval()
             net.agg.load_state_dict(sd['agg'])
-            net.pixel_a = bool(sd.get('pixel_a'))      # evidence mass from the pixel gate (§10.x 23 v2)
         elif 'g.0.weight' in sd['agg']:                              # Refined (aggregator + s16 refiner)
             from benchmark.nfo_vos.adapter.feat_integral import Refined
             net.agg = Refined(FeatIntegral(pred.model.no_mem_embed).cuda(), full='g8.0.weight' in sd['agg']).cuda().eval()

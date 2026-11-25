@@ -742,6 +742,8 @@ between different checkpoints are never screened on 4 clips (per-clip SD ≈ 0.0
    features: median 1 − cos crop-vs-full s16 **0.194** / s8 0.034 / s4 0.004 vs frame-to-frame (2 apart) 0.003 (Hiera's global
    attention sees the whole image); compiling the crop failed (Inductor error). Projection (derived, not run end-to-end): 38.8 −
    4.1 (tracker) − 5.5 (compile) ≈ 29 ms/frame ≈ 34 FPS.
+   Ported into `adapter/tracker.kernel_track` (2026-11-25; device of the input map, numpy input runs on CPU torch): identical
+   tracks on all 32 full-pass windows (3027 frames, 0.000 px), 0.35 vs 4.55 ms/frame.
 
 ## Code map
 

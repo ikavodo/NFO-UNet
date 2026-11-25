@@ -17,6 +17,8 @@ Results and their numbers live in `docs/vos_benchmark/nfo_vos_pilot_findings.md`
 `docs/vos_benchmark/nfo_failure_log.md` (one line per dead end). The collaborator briefing is `docs/briefing/index.html`.
 Code removed in the 2026-10-21 cleanup (≈ 90 experiment scripts, the blob tracker and live-tracker app `tracking/`,
 the SAM2-memory arms) is at git tag **`archive/pre-cleanup-2026-10-21`**; docs older than that cite paths from there.
+The one-off feature-integral experiment scripts (`tools/feat_*`, `teacher_oracle`, `feat_through_reader`, `speed_check`,
+`box_bias`; findings §10.x items 1–25) were removed on 2026-11-25 and are at tag **`archive/feat-integral-2026-11-25`**.
 
 ## The method (what produced the current results)
 
@@ -24,7 +26,8 @@ Frozen SAM2.1-b+ **image** predictor, per frame, no memory. Per frame t of an NF
 
 - **Tracker** (`adapter/tracker.py`): kernel-f16. A fixed-size box kernel matched on 1 − cos(F_t, F_B) (SAM2 stride-16
   features of frame t and of the empty scene B = warm-up median), Theil–Sen constant-velocity search window.
-  Replaced the MOG2 blob tracker on 2026-10-16: it locates the person in 100% of synthetic frames vs 48%.
+  Replaced the MOG2 blob tracker on 2026-10-16: it locates the person in 100% of synthetic frames vs 48%. Runs on the
+  GPU since 2026-11-25 (0.5 vs 4.6 ms/frame, identical tracks).
 - **Integral image** (`adapter/integral_image.py`): frames t−6..t−1, each shifted by the x-only Theil–Sen fit of the tracker
   track, change-gated against B (robust z-score, adaptive threshold max(3, q90)), recency-weighted (τ = 3.5):
   C = Σ w G A / Σ w G, evidence mass a = Σ w G. Ancestor: Airborne Optical Sectioning (arXiv 2111.06959, 2207.13344).
@@ -55,8 +58,14 @@ vs 0.687 (on par); AP50 0.916 / 0.916 / 0.917 vs 0.904. The 40-frame-window tabl
 superseded first protocol; do not mix the two.
 
 Closed directions (do not reopen without new evidence): SAM2 memory variants (the oracle bound is +0.012 J), the
-balanced loss, the one-pass feature-space adapter (designed, not pursued:
-`docs/layer_sam2/archive/2026-10-20-one-pass-adapter-design.md`).
+balanced loss.
+
+**Current line (2026-11-25): the one-pass feature integral** (`adapter/feat_integral.py`, `FEAT=1` training; method page
+`docs/layer_sam2/feature_layer_sam.html`; findings §10.x). The integral is formed from cached SAM2 features of past frames
+(convex α-mix of shifted keys + empty-scene slot) instead of a second encoder pass on the pixel integral image (≈ 39 vs
+62 ms/frame). Readers trained on the visible-mask loss ignore it; a training-only amodal head on Ω (`AMODAL=1`, item 24)
+makes the reader use it on real data (seq1: recognition +0.023 over the same model without it). Next: from-scratch light
+integral with tied evidence mass a = 1 − α_∅ (`docs/layer_sam2/next_session_prompt.md`).
 
 ## Layout of `benchmark/nfo_vos/`
 
@@ -67,7 +76,7 @@ balanced loss, the one-pass feature-space adapter (designed, not pursued:
 | `adapter/` | the method: `tracker`, `integral_image`, `fusion_adapter` (model, loss, training `main`, `image_predictor`), `fusion_data` (synthetic batches), `dataset` (clip specs), `fusion_nfo` (NFO hand frames for checkpoint selection/test), `inference` (`fast_masks`), `fusion_adapter.sbatch` |
 | `synth/` | synthetic training clips: `gpjatk_foliage`, `occluders` (vendored), `noise`, `photo_depth` (one-off: depth map of the foliage photo) |
 | `eval/` | `dump_arms` (+ sbatch: masks of our arms), `box_metrics` (LaSOT one-pass AUC from masks), `recognition` (YOLO11m on GT-motion masked stacks), `recog_vs_N`, `report` (the table + paired window bootstrap) |
-| `tools/` | `remote_smoke` (cluster doctor: paths, GPU, one training step; run before long jobs), `timing`, `briefing_figures`, `cvat_io` (CVAT round trip for hand labels; the second annotator) |
+| `tools/` | `remote_smoke` (cluster doctor: paths, GPU, one training step; run before long jobs), `timing`, `profile_stages` (per-stage ms/frame), `syn_noC` (synthetic integral-removal control), `briefing_figures`, `cvat_io` (CVAT round trip for hand labels; the second annotator) |
 | `tests/` | pytest suite; `parity_snapshot.py` = refactor guard (bit-exact before/after diff of the live paths) |
 
 Arms (mask dirs under `results/benchmark/rr/masks/`): `b0-c2`, `t1-c2` (baselines, cluster rerun), `trk` (SAM2 +
@@ -127,7 +136,8 @@ Nothing large is in git. The cluster copy is the source of truth for everything 
 
 ## Rules for this benchmark
 
-- seq2–4 is the single held-out test. Select checkpoints and tune on seq1 / synthetic data only.
+- seq2–4 is the single held-out test. Select checkpoints, tune and screen on seq1 / synthetic data only (the 2026-11-24
+  "s0 screen" used seq2–4 s0 crossings; superseded, findings §10.x item 23).
 - Synthetic val J is a sanity check, not a selection metric (it ranked the losses opposite to real data).
 - Report means over 3 seeds and paired window-bootstrap CIs (`eval/report.py`).
 

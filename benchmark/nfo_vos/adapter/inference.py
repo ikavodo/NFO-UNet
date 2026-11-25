@@ -94,9 +94,9 @@ def masks_from_arrays(pred, net, Xn, bg, g, tau=3.5, noC=False, hist=6, feats=No
             F.append(enc(x) if feats is None else feats[i])
             m = 1 - torch.nn.functional.cosine_similarity(F[-1][0][0], Bf[0][0], dim=0)
             m16.append(torch.nn.functional.interpolate(m[None, None], size=x.shape, mode='bilinear', align_corners=False)[0, 0])
-            if agg is None or aux is not None or getattr(net, 'pixel_a', False):   # feature path: gate only for pixel a
+            if agg is None or aux is not None:                               # change gate: pixel path and aux stats only
                 G.append(_gate_gpu(torch.as_tensor(x, device='cuda', dtype=torch.float32), Bg))
-    kc = kernel_track(torch.stack(m16).cpu().numpy(), ((g[0] + g[2]) / 2, (g[1] + g[3]) / 2), g[2] - g[0], g[3] - g[1])
+    kc = kernel_track(torch.stack(m16), ((g[0] + g[2]) / 2, (g[1] + g[3]) / 2), g[2] - g[0], g[3] - g[1])
     wh = (g[2] - g[0], g[3] - g[1])
     Xg = torch.as_tensor(np.stack(Xn), device='cuda', dtype=torch.float32)
     Gg = torch.stack(G) if G else None
@@ -131,12 +131,6 @@ def masks_from_arrays(pred, net, Xn, bg, g, tau=3.5, noC=False, hist=6, feats=No
                              {l: Bf[i] for i, l in enumerate(('16', '8', '4'))}, torch.arange(hist, 0, -1, device='cuda')[None],
                              phase=dx / 16 - torch.round(dx / 16))
                     f.update({f'C{l}': oa[f'C{l}'].float() for l in ('16', '8', '4')}, a=oa['a'].float())
-                    if getattr(net, 'pixel_a', False):   # evidence mass from the pixel gate (as the pixel branch), no encode
-                        cs = list(range(max(0, j - 12), j + 1))
-                        fx = theil_at(cs, [kc[l, 0] for l in cs], [j] + list(range(j - hist, j)))
-                        dxp = torch.tensor([fx[j] - fx[l] for l in range(j - hist, j)], device='cuda', dtype=torch.float32)
-                        pm = (wk * _shift_x(Gg[j - hist:j], dxp)).sum(0)
-                        f['a'] = torch.nn.functional.interpolate(pm.clamp(0, 1)[None, None], size=(256, 256), mode='area')[0]
                 mass = torch.nn.functional.interpolate(f['a'][None], size=(H, W), mode='bilinear', align_corners=False)[0, 0]
                 if noA:                                   # occupancy channel removed (2026-11-24 ablation), C kept
                     f['a'] = torch.zeros_like(f['a'])

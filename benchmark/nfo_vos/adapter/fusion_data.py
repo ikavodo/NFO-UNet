@@ -205,7 +205,7 @@ def build(pred, raw, max_targets=None, rng=None, dev='cuda', all_targets=False, 
         trk = raw['track']
     else:
         dmap = 1 - torch.nn.functional.cosine_similarity(F16.float(), B16.float(), dim=1)
-        dmap = torch.nn.functional.interpolate(dmap[:, None], size=(H, W), mode='bilinear', align_corners=False)[:, 0].cpu().numpy()
+        dmap = torch.nn.functional.interpolate(dmap[:, None], size=(H, W), mode='bilinear', align_corners=False)[:, 0]
         trk = kernel_track(dmap, (cx0, cy0), asp0 * h0, h0)
     nh = occ['nh']
     ok = ~np.isnan(raw['boxes']).any(1)

@@ -9,10 +9,8 @@ on 2026-10-16 (61 NFO windows; comparison script at tag archive/pre-cleanup-2026
 """
 import os
 
-import cv2
 import numpy as np
 import torch
-from scipy.stats import theilslopes
 
 from benchmark.nfo_vos import trials as TR
 from gen_data.nfo_pseudo_masks.gen_nfo_pseudo_masks import gt_to_native
@@ -27,34 +25,39 @@ def gt_box(seq, k):
     return np.array(gt_to_native(bb[0], 800, 600), float)
 
 
+def _theil_sen_next(P):
+    """Theil–Sen prediction of the next point from P [n, 2] at times 0..n−1 (= scipy.stats.theilslopes per coordinate:
+    slope = median pairwise slope, intercept = median(y) − slope · median(t)), evaluated at t = n."""
+    n = len(P); x = np.arange(n, dtype=float)
+    i, j = np.triu_indices(n, 1)
+    s = np.median((P[j] - P[i]) / (x[j] - x[i])[:, None], 0)
+    return s * n + (np.median(P, 0) - s * np.median(x))            # same rounding order as scipy (int() of the result)
+
+
 def kernel_track(maps, c0, w0, h0):
-    """maps: [T, H, W] float; c0 = t0 centre. Returns [T, 2] centres."""
+    """maps: [T, H, W] numpy array or torch tensor (searched on its device; the GPU path is 0.5 vs 4.6 ms/frame, identical
+    tracks, findings §10.x 25); c0 = t0 centre. Returns [T, 2] centres (numpy). Per frame: integral image (float64), all
+    candidate kernel positions on a stride-2 grid around the prediction scored at once, first maximum in row-major order."""
+    maps = torch.as_tensor(maps)
     T, H, W = maps.shape
+    I = torch.zeros(T, H + 1, W + 1, device=maps.device, dtype=torch.float64)
+    I[:, 1:, 1:] = maps.double().cumsum(1).cumsum(2)                    # = cv2.integral per frame
     out = [np.array(c0, float)]
     hw, hh = int(round(w0 / 2)), int(round(h0 / 2))
     for t in range(1, T):
         P = np.array(out[-8:])
-        if len(P) >= 3:
-            ts = np.arange(len(P))
-            pred = np.array([theilslopes(P[:, i], ts)[0] * len(P) + theilslopes(P[:, i], ts)[1] for i in (0, 1)])
-            v = np.abs(pred - P[-1])
-        else:
-            pred, v = P[-1], np.zeros(2)
+        pred, v = (_theil_sen_next(P), None) if len(P) >= 3 else (P[-1], np.zeros(2))
+        v = np.abs(pred - P[-1]) if v is None else v
         rx, ry = int(max(0.5 * w0, 3 * v[0] + 20)), int(max(0.25 * h0, 3 * v[1] + 10))
-        I = cv2.integral(maps[t].astype(np.float64))
-        best, bc = -np.inf, pred
-        for cy in range(int(pred[1]) - ry, int(pred[1]) + ry + 1, 2):
-            y0, y1 = np.clip([cy - hh, cy + hh], 0, H)
-            if y1 <= y0:
-                continue
-            xs = np.arange(int(pred[0]) - rx, int(pred[0]) + rx + 1, 2)
-            x0, x1 = np.clip(xs - hw, 0, W), np.clip(xs + hw, 0, W)
-            area = np.maximum((x1 - x0) * (y1 - y0), 1)
-            s = (I[y1, x1] - I[y0, x1] - I[y1, x0] + I[y0, x0]) / area
-            i = int(np.argmax(s))
-            if s[i] > best:
-                best, bc = s[i], np.array([xs[i], cy], float)
-        out.append(bc)
+        cy = torch.arange(int(pred[1]) - ry, int(pred[1]) + ry + 1, 2, device=maps.device)
+        xs = torch.arange(int(pred[0]) - rx, int(pred[0]) + rx + 1, 2, device=maps.device)
+        y0, y1 = (cy - hh).clamp(0, H)[:, None], (cy + hh).clamp(0, H)[:, None]
+        x0, x1 = (xs - hw).clamp(0, W), (xs + hw).clamp(0, W)
+        It = I[t]
+        s = (It[y1, x1] - It[y0, x1] - It[y1, x0] + It[y0, x0]) / ((x1 - x0) * (y1 - y0)).clamp(min=1)
+        s[(y1 <= y0)[:, 0]] = -float('inf')                               # kernel rows fully outside the frame
+        k = int(torch.argmax(s))
+        out.append(np.array([float(xs[k % len(xs)]), float(cy[k // len(xs)])]))
     return np.array(out)
 
 

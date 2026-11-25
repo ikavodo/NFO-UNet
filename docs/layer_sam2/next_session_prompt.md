@@ -4,9 +4,8 @@ Paste the block below as the first message of the new session.
 
 ---
 
-We continue the one-pass **feature-integral** line of the NFO adapter (branch `exp/layer-sam-feat`, nothing committed yet: commit
-the current work first if I ask). Read first: CLAUDE.md (its "closed directions" line on the one-pass adapter is outdated: the
-line is open and is THE line), findings `docs/vos_benchmark/nfo_vos_pilot_findings.md` §10.x items 8, 9, 20–25, failure log
+We continue the one-pass **feature-integral** line of the NFO adapter (branch `exp/layer-sam-feat`, all work committed; the one-off
+feature-integral experiment scripts are at tag `archive/feat-integral-2026-11-25`). Read first: CLAUDE.md ("Current line"), findings `docs/vos_benchmark/nfo_vos_pilot_findings.md` §10.x items 8, 9, 20–25, failure log
 tail, and `docs/layer_sam2/feature_layer_sam.html` (the method page).
 
 **Goal.** One per-frame model (frozen SAM2.1-b+ image encoder, one encoder pass, small learned modules in feature space) that
@@ -21,8 +20,7 @@ feature-space module.
   loss on the amodal mask S restricted to Ω (hidden at t, visible in aligned history; plus background), makes the reader depend on
   Ĉ on real data for the first time. seq1, 8 crossings: box reliance +0.101 vs +0.010; recognition 0.611 vs 0.588 (+0.023
   [+0.000, +0.043]); box AUC 0.539 vs 0.551 (n.s.). Integral used there: frozen BigS16 (distilled to the pixel teacher).
-- Item 25 speed: GPU tracker port 0.49 vs 4.6 ms/frame with identical tracks (`kernel_track_gpu` in `tools/speed_check.py`,
-  not yet moved into `adapter/tracker.py`); `torch.compile` encoder 19.7 vs 25.2 ms; encoder crop is invalid (s16 features
+- Item 25 speed: the tracker now runs on the GPU (`adapter/tracker.kernel_track`, 0.49 vs 4.6 ms/frame, identical tracks); `torch.compile` encoder 19.7 vs 25.2 ms; encoder crop is invalid (s16 features
   change, 1 − cos 0.19). Projected ≈ 29 ms/frame, not measured end to end.
 
 **Next experiment (decided).** Train everything from scratch on synthetic only, no pixel teacher:

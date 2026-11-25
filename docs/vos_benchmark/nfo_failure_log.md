@@ -92,3 +92,4 @@ One line per dead end: what was tried, why it failed.
 - 2026-11-25 Encoder on a 512² tracker crop (6.8 vs 25.2 ms): s16 features change (1 − cos 0.19 vs 0.003 frame-to-frame); not a drop-in speed-up (§10.x 25).
 - 2026-11-25 · `torch.compile` of the encoder on a 512² crop: Inductor error (full-size compile works, 19.7 ms); moot, the crop is invalid anyway.
 - 2026-11-25 · smoke: λ_am set by step-1 grad-norm match came out 0 (Fusion out[l] zero-init → no modal grad to the trunk at step 1); use λ = 1.
+- 2026-11-25 · tracker port: Theil–Sen as `s·n + med(y) − s·med(x)` (other rounding order than scipy's `s·n + (med(y) − s·med(x))`) flips `int(pred)` and diverges tracks by up to 13 px; keep scipy's order.
