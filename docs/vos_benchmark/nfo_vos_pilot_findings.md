@@ -823,6 +823,22 @@ between different checkpoints are never screened on 4 clips (per-clip SD ≈ 0.0
    Context: the pixel adapter beats T1 on box AUC (+0.10) and is on par on recognition (+0.002 to +0.011), so recognition is the
    binding metric. Also reported: the gap to the pixel adapter (two encoder passes) and box reliance per seed.
    The speed claim is not part of this job; it needs one end-to-end timing run.
+   **Result (job 2047755, all arms scored in one cluster run; seq2–4, 24 crossings, crossing bootstrap 4000;
+   `fullpass/downstream/box_gt_heldout_tie_cl.csv`, `recog_N5_uniform_meanfill_heldout_tie_cl.csv`).**
+   Box AUC: feattie s0/s1/s2 0.656 / 0.653 / 0.676 (noC 0.640 / 0.650 / 0.658); B0 0.611, T1 0.615; pixel adapter
+   0.717 / 0.724 / 0.718 (noC 0.699 / 0.692 / 0.681). 3-seed mean − B0 **+0.051 [+0.023, +0.090]**, − T1 **+0.047 [+0.016, +0.087]**,
+   every seed above both. − pixel adapter mean **−0.058 [−0.068, −0.049]**; − pixel noC mean −0.029 [−0.037, −0.022].
+   Box reliance (C − noC) per seed +0.016 [+0.011, +0.021] / +0.003 [−0.001, +0.008] / +0.018 [+0.010, +0.027] (pixel +0.018 / +0.032 / +0.037).
+   Recognition conf: feattie 0.697 / 0.695 / 0.694 (noC 0.691 / 0.692 / 0.692); B0 0.689, T1 0.687; pixel 0.689 / 0.696 / 0.698
+   (noC 0.677 / 0.674 / 0.675). Mean − B0 +0.006 [−0.009, +0.025], − T1 +0.008 [−0.006, +0.024], every seed above both;
+   − pixel adapter +0.001 [−0.011, +0.014]. Recognition reliance +0.006 / +0.003 / +0.002, all CIs span 0 (pixel +0.011 / +0.022 / +0.023).
+   **Verdict: bar not met.** Box passes; recognition fails the CI clause (the pixel adapter fails the same clause: + 0.007
+   [−0.012, +0.027] vs T1). As a replacement for the pixel adapter it loses 0.058 box AUC at equal recognition, and it is
+   0.048 below the through-reader one-pass arm featbigpft (item 23: 0.710, @lap, one seed; environments differ, pf = 0.717 in both).
+   Its integral contributes little on real footage (box reliance ≈ ½ the pixel route's, recognition reliance ≈ 0).
+   Reading: the tie itself is not the problem (item 26 synthetic checks pass); the deficit is consistent with the from-scratch,
+   teacher-free reader: even with the integral removed it sits 0.029 below the pixel noC arms (caveat: noC removes different
+   inputs in the two models, so this is suggestive only). Not tested: the light tied integral read by the frozen pixel reader.
 
 
 - `benchmark/nfo_vos/downstream/`:

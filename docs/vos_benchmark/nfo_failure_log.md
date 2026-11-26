@@ -93,3 +93,4 @@ One line per dead end: what was tried, why it failed.
 - 2026-11-25 · `torch.compile` of the encoder on a 512² crop: Inductor error (full-size compile works, 19.7 ms); moot, the crop is invalid anyway.
 - 2026-11-25 · smoke: λ_am set by step-1 grad-norm match came out 0 (Fusion out[l] zero-init → no modal grad to the trunk at step 1); use λ = 1.
 - 2026-11-25 · tracker port: Theil–Sen as `s·n + med(y) − s·med(x)` (other rounding order than scipy's `s·n + (med(y) − s·med(x))`) flips `int(pred)` and diverges tracks by up to 13 px; keep scipy's order.
+- 2026-11-26 · light tied (a = 1 − α_∅) feature integral, teacher-free reader from scratch, 3 seeds held-out (§10.x 27): beats B0/T1 on box (+0.05) but −0.058 box AUC vs the pixel adapter and −0.048 vs featbigpft; recognition +0.008 vs T1, CI spans 0. Don't retrain the reader from scratch for the one-pass route.
