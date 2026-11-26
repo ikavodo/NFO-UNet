@@ -779,8 +779,40 @@ between different checkpoints are never screened on 4 clips (per-clip SD ≈ 0.0
    Smoke (`tie/smoke.log`, same 12 clips; one train step ran clean). Tied from scratch at init: cos16 on Ω **0.451**,
    a on Ω 0.852 vs background 0.807, AMGAP −0.091. Untied stage-0c reference: cos16 **0.508**, a 0.440 vs 0.125.
    So the R2 bar is cos16 > 0.508 at it 200.
+   **Result (cluster job, all 4 arms dumped and scored there, tag @cl; `tie/train_cl.log`, `fullpass/downstream/box_gt_tie_cl.csv`,
+   `recog_N5_uniform_meanfill_seq1_tie_cl.csv`; crossing bootstrap, 8 seq1 crossings).**
+   Synthetic, it 200:
+   - kill rule passed: AMGAP **+0.050**, positive on 11/12 clips;
+   - R1 passed: a on Ω **0.934** vs background **0.821** (Δ 0.113 ≥ 0.05; init 0.852 / 0.807). The review had predicted a flat a;
+     it was wrong;
+   - R2 bar **missed**: cos16 **0.499** vs 0.508. But cos16 rises monotonically (0.452 → 0.468 → 0.499 at it 0 / 100 / 200),
+     the opposite of the failed tie's drop to 0.412. This is consistent with an under-trained Ĉ (200 steps from scratch), not with
+     the mass fight;
+   - AMGAPC +8.5 (12/12): sign only. C := B with a kept is an input combination the reader never saw, so its size measures
+     calibration, not information.
+   seq1, feattie vs featbigam (the cluster's featbigam reproduces the laptop's: box 0.538 / noC 0.442 vs 0.539 / 0.439):
+   - box AUC feattie **0.535** (noC 0.512) vs featbigam 0.538 (noC 0.442); feattie − featbigam **−0.003 [−0.009, +0.003]**;
+   - box reliance (with-C − noC) **+0.023 [+0.011, +0.038]** (8/8) vs +0.096. The reader uses the integral, but its no-integral
+     arm stays strong where featbigam's collapses;
+   - recognition conf (per-crossing mean) feattie **0.608** (noC 0.594) vs featbigam 0.603 (noC 0.573); feattie − featbigam
+     **+0.006 [−0.008, +0.018]**; recognition reliance +0.014 [−0.008, +0.040] (not shown > 0).
+   Verdict against the pre-registered bars: **viable, not better.** Both metrics are within −0.01 of featbigam; box is not > 0.
+   The light integral has 21,986 parameters (measured: `FeatIntegral(tie=True)`), against 5.9 M for BigS16 +
+   the refiner. It uses no pixel teacher and has never seen seq1, and it matches featbigam on seq1 box AUC and recognition (one seed).
+   Next (decided by the pre-registration: pass → seeds): freeze this recipe as the final configuration, train seeds 0–2, and
+   score held-out seq2–4 against B0, T1 and the pixel adapter in one environment.
 
-## Code map
+27. **Held-out seq2–4, 3 seeds of the tied light integral (2026-11-26, pre-registered, cluster).** The recipe of item 26
+   (`AMODAL=1 FEAT=1 TIE=1 AGG=none LAM=1`, step 200) is frozen. Seed 0 is the item-26 checkpoint; seeds 1 and 2 are new
+   (`adapter/feat_tie_seeds.sh`: training array → 6 mask arms × 24 crossings as array tasks → one scoring job).
+   All arms are scored in one cluster run: feattie s0–s2 and their -noC controls, B0 (`b0-c2`), T1 (`t1-c2`), and the pixel
+   adapter `adapter-pf/s1/s2` with its -noC controls. Paired bootstrap over crossings.
+   Goal bar: **beats both B0 and T1 on box AUC AND recognition**, i.e. the 3-seed mean − baseline > 0 with CI > 0, and every
+   seed > baseline.
+   Context: the pixel adapter beats T1 on box AUC (+0.10) and is on par on recognition (+0.002 to +0.011), so recognition is the
+   binding metric. Also reported: the gap to the pixel adapter (two encoder passes) and box reliance per seed.
+   The speed claim is not part of this job; it needs one end-to-end timing run.
+
 
 - `benchmark/nfo_vos/downstream/`:
   - `box_metrics.py`: OPE metrics, hand-vs-GT box ceiling;

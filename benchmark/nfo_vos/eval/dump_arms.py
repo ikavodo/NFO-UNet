@@ -36,7 +36,9 @@ ARM_CKPT = {'adapter-pf': CKPT, 'adapter-s1': f'{CKPT_DIR}/token_seed1/fusion_it
             'adapter-featbigam': f'{CKPT_DIR}/feat_bigam_seed0/fusion_it200.pt',
             'adapter-featbigpf': f'{CKPT_DIR}/feat_bigpf/plug.pt',
             'adapter-featbigpft': f'{CKPT_DIR}/feat_bigpf/trained_it1000.pt',
-            'adapter-feattie': f'{CKPT_DIR}/feat_tie_seed0/fusion_it200.pt'}     # light, tied a = 1 − α_∅, from scratch (26)
+            'adapter-feattie': f'{CKPT_DIR}/feat_tie_seed0/fusion_it200.pt',     # light, tied a = 1 − α_∅, from scratch (26)
+            'adapter-feattie-s1': f'{CKPT_DIR}/feat_tie_seed1/fusion_it200.pt',
+            'adapter-feattie-s2': f'{CKPT_DIR}/feat_tie_seed2/fusion_it200.pt'}
 
 
 def load_net(pred, ckpt):
