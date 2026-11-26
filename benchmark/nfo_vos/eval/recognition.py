@@ -41,19 +41,27 @@ def gt_shifts(boxes, frames, t):
 
 def masked_stack(imgs, masks, shifts, bg, weights=None, fill='mean'):
     """Uniform (or weighted) masked mean of the shifted frames; where no mask covers a pixel: the plain aligned mean
-    (fill 'mean') or the empty scene (fill 'bg')."""
+    (fill 'mean') or the empty scene (fill 'bg'). Gray frames stored as 3 identical channels (NFO) are computed on one
+    channel and replicated: the same float64 operations per channel, so a bit-identical result at 1/3 of the arithmetic."""
+    if bg.ndim == 3 and all(_gray3(x) for x in list(imgs) + [bg]):
+        return np.repeat(masked_stack([x[..., 0] for x in imgs], masks, shifts, bg[..., 0], weights, fill)[..., None], 3, -1)
     H, W = bg.shape[:2]
+    e = (lambda a: a[..., None]) if bg.ndim == 3 else (lambda a: a)        # broadcast a mask over the channels
     w = np.ones(len(imgs)) if weights is None else np.asarray(weights, np.float64)
     num, den, plain = np.zeros(bg.shape, np.float64), np.zeros((H, W), np.float64), np.zeros(bg.shape, np.float64)
     for im, m, (dx, dy), wi in zip(imgs, masks, shifts, w):
         A = np.float32([[1, 0, dx], [0, 1, dy]])
         imw = cv2.warpAffine(im, A, (W, H), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
         mw = cv2.warpAffine(m.astype(np.float32), A, (W, H), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
-        num += wi * mw[..., None] * imw
+        num += wi * e(mw) * imw
         plain += imw / len(imgs)
         den += wi * mw
-    out = np.where(den[..., None] > 1e-6, num / np.maximum(den, 1e-6)[..., None], plain if fill == 'mean' else bg)
+    out = np.where(e(den) > 1e-6, num / e(np.maximum(den, 1e-6)), plain if fill == 'mean' else bg)
     return np.clip(np.round(out), 0, 255).astype(np.uint8)
+
+
+def _gray3(x):
+    return x.ndim == 3 and x.shape[2] == 3 and np.array_equal(x[..., 0], x[..., 1]) and np.array_equal(x[..., 0], x[..., 2])
 
 
 def _iou(a, b):
@@ -87,6 +95,7 @@ def ap50(per_stack):
 
 
 @functools.lru_cache(maxsize=None)
+@functools.lru_cache(maxsize=512)          # read-only: a crossing's frames are decoded once, not once per stack and arm
 def frame(seq, k):
     return cv2.imread(f'data/nfo_final/nfo_final/{seq}/{k:05d}.jpg')
 

@@ -110,13 +110,24 @@ def clip_raw(spec, rng):
                 modes=rng.choice(4, len(d['X']), p=P_MODES), occ=occ, cid=d['cid'])
 
 
+@torch.no_grad()                    # as SAM2ImagePredictor.set_image_batch: the frozen encoder never records a graph
+def sam_feats(pred, imgs):
+    """(s16, s8, s4) SAM2 features of uint8 gray images [n, H, W] = pred.set_image_batch, with SAM2's transforms (to-tensor,
+    1024² resize, normalise) on the GPU, as at inference (inference.fast_masks.enc); the CPU transforms were 46% of a
+    training step (2026-11-26 profile)."""
+    sam = pred.model
+    x = torch.as_tensor(np.asarray(imgs), device='cuda').float().div(255)[:, None].expand(-1, 3, -1, -1)
+    _, vf, _, _ = sam._prepare_backbone_features(sam.forward_image(pred._transforms.transforms(x)))
+    if sam.directly_add_no_mem_embed:
+        vf[-1] = vf[-1] + sam.no_mem_embed
+    f4, f8, f16 = [v.permute(1, 2, 0).view(len(x), -1, *s_) for v, s_ in zip(vf, pred._bb_feat_sizes)]
+    return f16, f8, f4
+
+
 def _enc(pred, imgs, chunk=8):
-    rgb = lambda a: [np.stack([x] * 3, -1) for x in a]
     out = [[], [], []]
     for i in range(0, len(imgs), chunk):
-        pred.set_image_batch(rgb(imgs[i:i + chunk]))
-        hr = pred._features['high_res_feats']
-        for o, x in zip(out, (pred._features['image_embed'], hr[1], hr[0])):
+        for o, x in zip(out, sam_feats(pred, imgs[i:i + chunk])):
             o.append(x.half())
     return [torch.cat(o) for o in out]
 
@@ -290,13 +301,10 @@ def encode(pred, clips, dev='cuda', feat=False):
     empty scene B (encoded once per clip, broadcast to its frames). Returns one flat batch.
     feat=True (one target per clip, NFO hand items with 'hist' / 'dx1024'): no C encode; instead the history keys
     K16/8/4 shifted onto the target (feat_integral.shift_keys), Kvalid16, age, phase — the inputs of with_feat."""
-    rgb = lambda a: [np.stack([x] * 3, -1) for x in a]
     f = {}
 
     def run(imgs):
-        pred.set_image_batch(rgb(imgs))
-        hr = pred._features['high_res_feats']
-        return pred._features['image_embed'].float(), hr[1].float(), hr[0].float()
+        return [x.float() for x in sam_feats(pred, imgs)]
 
     with torch.autocast('cuda', dtype=AMP):
         for key, src in (('X', 'X'),) + ((('C', 'Ct'),) if not feat else ()):

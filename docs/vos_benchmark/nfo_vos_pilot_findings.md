@@ -744,6 +744,16 @@ between different checkpoints are never screened on 4 clips (per-clip SD ≈ 0.0
    4.1 (tracker) − 5.5 (compile) ≈ 29 ms/frame ≈ 34 FPS.
    Ported into `adapter/tracker.kernel_track` (2026-11-25; device of the input map, numpy input runs on CPU torch): identical
    tracks on all 32 full-pass windows (3027 frames, 0.000 px), 0.35 vs 4.55 ms/frame.
+   **Pipeline wall-time pass (2026-11-26, laptop, measured).**
+   - **Training step, FEAT/TIE/AMODAL, 24 targets: 4.13 → 2.40 s.** SAM2's CPU preprocessing (to-tensor, 1024² resize,
+     normalise) was 46% of a step, because the 6 data workers occupy the CPU. `fusion_data.sam_feats` now runs it on the GPU,
+     as inference already did. Not bit-exact: 1 − cos median 4.5e-5 vs 1.9e-3 for frames two apart (bf16 noise). It aligns
+     training with inference, so new training runs are not bit-comparable to old ones.
+   - **Recognition: 52 → 31 s** for 2 arms × 8 seq1 crossings, CSV byte-identical. Decoded frames are cached per crossing, and the
+     float64 masked mean is computed on one channel of NFO's gray frames.
+   - **dump_arms:** one process takes several arms and windows (`dump_arms A,B i j ...`); masks identical, 36 → 26 s for 4 dumps.
+   - **Open, not bit-exact:** a GPU masked mean in recognition (≈ 5 vs ≈ 30 ms per stack) and `torch.compile` of the encoder (−20%).
+   - **Open, exact:** share the encoder pass between an arm and its -noC control (`masks_from_arrays(feats=)`).
 
 26. **Light, tied, teacher-free integral, from scratch (2026-11-25, pre-registered).** Question: can the 6-key `FeatIntegral`
    (≈ 40k parameters, no `Refined` / `BigS16`, no pixel teacher) with its evidence mass tied to the softmax, a = 1 − α_∅

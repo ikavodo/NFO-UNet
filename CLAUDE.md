@@ -92,7 +92,7 @@ $PY -m pytest benchmark/nfo_vos/tests -q                               # 29 test
 $PY -m pytest benchmark/nfo_vos/tests/test_trials.py::test_each_frame_used_at_most_once   # one test
 $PY -m benchmark.nfo_vos.tools.remote_smoke                            # before any cluster job
 $PY -m benchmark.nfo_vos.adapter.fusion_adapter 1000 0                 # train (steps, seed); cluster: adapter/fusion_adapter.sbatch
-$PY -m benchmark.nfo_vos.eval.dump_arms adapter-pf 0                   # masks of one arm, one window; cluster: eval/dump_arms.sbatch
+$PY -m benchmark.nfo_vos.eval.dump_arms adapter-pf,adapter-pf-noC 0 1 # masks: arms × windows in one process; cluster: eval/dump_arms.sbatch
 $PY -m benchmark.nfo_vos.eval.box_metrics score b0-c2 t1-c2 trk adapter-pf ...   # -> results/benchmark/rr/downstream/box_gt.csv
 $PY -m benchmark.nfo_vos.eval.recognition 5 uniform ARMS...             # see its docstring; -> recog_N5_*.csv (N = 5 since 2026-10-23)
 $PY -m benchmark.nfo_vos.eval.report                                   # the table: seq1-4 (headline), seq1, seq2-4

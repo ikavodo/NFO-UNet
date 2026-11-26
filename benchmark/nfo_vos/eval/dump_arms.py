@@ -11,6 +11,7 @@ Writes results/benchmark/rr/masks/<arm>/<trial_id>.npz in the B0/T1 schema (mask
 
     PYTHONPATH=. ../samurai/.venv/bin/python -m benchmark.nfo_vos.eval.dump_arms ARM TRIAL_INDEX
 """
+import functools
 import json
 import os
 import re
@@ -41,6 +42,7 @@ ARM_CKPT = {'adapter-pf': CKPT, 'adapter-s1': f'{CKPT_DIR}/token_seed1/fusion_it
             'adapter-feattie-s2': f'{CKPT_DIR}/feat_tie_seed2/fusion_it200.pt'}
 
 
+@functools.lru_cache(maxsize=4)                    # several windows of one arm in one process: load once
 def load_net(pred, ckpt):
     """Fusion from a checkpoint; a FEAT checkpoint ({'fusion', 'agg'}) also attaches the learned feature integral as
     net.agg, which inference.masks_from_arrays then uses instead of the pixel integral image (one encoder pass)."""
@@ -91,5 +93,7 @@ def main(arm, idx):
     print(arm, t['id'], 'saved', path, f'{1000 * sec:.0f} ms/frame', 'mean area px', int(m.sum((1, 2)).mean()))
 
 
-if __name__ == '__main__':
-    main(*sys.argv[1:])
+if __name__ == '__main__':      # dump_arms ARM[,ARM2,...] IDX [IDX2 ...]: one process (SAM2 loaded once, ≈ 5 s per call saved)
+    for a in sys.argv[1].split(','):
+        for i in sys.argv[2:]:
+            main(a, i)
