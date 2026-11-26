@@ -49,18 +49,40 @@ def _shift_x(x, dx):
 
 
 @torch.no_grad()
-def fast_masks(pred, net, t, tau=3.5, noC=False, hist=6, noA=False):
+def encode_frame(pred, img):
+    """pred.set_image on a uint8 gray image, with SAM2's transforms (to-tensor, 1024² resize, normalise) run on the
+    GPU instead of the CPU (sam2_image_predictor.py:110-127). Call under torch.autocast('cuda', dtype=FD.AMP), as
+    masks_from_arrays does. Returns (f16, f8, f4) float."""
+    sam = pred.model
+    x = torch.as_tensor(img, device='cuda').to(torch.uint8).float().div(255)[None].expand(3, -1, -1)
+    _, vf, _, _ = sam._prepare_backbone_features(sam.forward_image(pred._transforms.transforms(x)[None]))
+    if sam.directly_add_no_mem_embed:
+        vf[-1] = vf[-1] + sam.no_mem_embed
+    f4, f8, f16 = [v.permute(1, 2, 0).view(1, -1, *s_) for v, s_ in zip(vf, pred._bb_feat_sizes)]
+    return f16.float(), f8.float(), f4.float()
+
+
+@torch.no_grad()
+def fast_masks(pred, net, t, tau=3.5, noC=False, hist=6, noA=False, feats=None):
     """Adapter masks of one NFO window. Each frame is encoded ONCE (shared by tracker, adapter and decoder), the empty
     scene once per window, each frame's gate once, the integral image on the GPU (61 ms/frame vs 445 ms for the original
     path that re-encoded frame / integral image / empty scene per frame; same box AUC and hand J, 2026-10-20).
     net None: the 'trk' arm (per-frame SAM2, tracker box + point, every frame). noC: the integral image removed
     (C := empty scene, a := 0). hist: past frames in the integral image (training drew 4..8). Frames j < hist have no history
-    and use the tracker prompts alone.
+    and use the tracker prompts alone. feats: the window's per-frame encoder outputs (window_feats), shared by the arms of
+    one window (an arm and its -noC control see the same frames); identical masks, the encoder pass is not re-run.
     Returns ([T, H, W] bool, s / frame)."""
     seq, fr = t['seq'], t['frames']
     w0, w1 = t['warmup']
     bg = np.median(np.stack([TR.native(i, seq) for i in range(w0, w1 + 1)]), 0).astype(np.float32)
-    return masks_from_arrays(pred, net, [TR.native(k, seq) for k in fr], bg, gt_box(seq, fr[0]), tau, noC, hist, noA=noA)
+    return masks_from_arrays(pred, net, [TR.native(k, seq) for k in fr], bg, gt_box(seq, fr[0]), tau, noC, hist, feats=feats, noA=noA)
+
+
+@torch.no_grad()
+def window_feats(pred, t):
+    """Per-frame encoder outputs of window t, exactly as masks_from_arrays computes them (same autocast)."""
+    with torch.autocast('cuda', dtype=FD.AMP):
+        return [encode_frame(pred, TR.native(k, t['seq'])) for k in t['frames']]
 
 
 def masks_from_arrays(pred, net, Xn, bg, g, tau=3.5, noC=False, hist=6, feats=None, aux=None, noA=False, probe=None):
@@ -76,15 +98,7 @@ def masks_from_arrays(pred, net, Xn, bg, g, tau=3.5, noC=False, hist=6, feats=No
     H, W = Xn[0].shape
     S1 = np.array([1024 / W, 1024 / H] * 2, np.float32)  # native xyxy -> SAM2's 1024² input
 
-    def enc(img):
-        """pred.set_image on a uint8 gray image, with SAM2's transforms (to-tensor, 1024² resize, normalise) run on the
-        GPU instead of the CPU (sam2_image_predictor.py:110-127)."""
-        x = torch.as_tensor(img, device='cuda').to(torch.uint8).float().div(255)[None].expand(3, -1, -1)
-        _, vf, _, _ = sam._prepare_backbone_features(sam.forward_image(pred._transforms.transforms(x)[None]))
-        if sam.directly_add_no_mem_embed:
-            vf[-1] = vf[-1] + sam.no_mem_embed
-        f4, f8, f16 = [v.permute(1, 2, 0).view(1, -1, *s_) for v, s_ in zip(vf, pred._bb_feat_sizes)]
-        return f16.float(), f8.float(), f4.float()
+    enc = lambda img: encode_frame(pred, img)
 
     with torch.autocast('cuda', dtype=FD.AMP):
         Bf = enc(bg)

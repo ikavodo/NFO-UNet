@@ -753,7 +753,8 @@ between different checkpoints are never screened on 4 clips (per-clip SD ≈ 0.0
      float64 masked mean is computed on one channel of NFO's gray frames.
    - **dump_arms:** one process takes several arms and windows (`dump_arms A,B i j ...`); masks identical, 36 → 26 s for 4 dumps.
    - **Open, not bit-exact:** a GPU masked mean in recognition (≈ 5 vs ≈ 30 ms per stack) and `torch.compile` of the encoder (−20%).
-   - **Open, exact:** share the encoder pass between an arm and its -noC control (`masks_from_arrays(feats=)`).
+   - **dump_arms, shared encoder pass:** the arms of one window share its encoder outputs (`inference.window_feats` →
+     `fast_masks(feats=)`); masks identical to the old per-process path, **53 → 23 s** for 3 arms × 2 seq1 windows.
 
 26. **Light, tied, teacher-free integral, from scratch (2026-11-25, pre-registered).** Question: can the 6-key `FeatIntegral`
    (≈ 40k parameters, no `Refined` / `BigS16`, no pixel teacher) with its evidence mass tied to the softmax, a = 1 − α_∅

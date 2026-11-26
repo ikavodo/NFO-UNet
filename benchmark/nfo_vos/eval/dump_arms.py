@@ -69,7 +69,7 @@ def load_net(pred, ckpt):
     return net
 
 
-def main(arm, idx):
+def main(arm, idx, feats=None):
     t = json.load(open(TR.OUT))[int(idx)]
     path = f'{TR.RES}/masks/{arm}{os.environ.get("MASK_TAG", "")}/{t["id"]}.npz'   # MASK_TAG: e.g. '@lap' (one environment)
     if os.path.exists(path):
@@ -88,12 +88,18 @@ def main(arm, idx):
     h = re.search(r'-h(\d+)$', arm)
     base = arm.removesuffix(h.group(0)) if h else arm
     net = None if base == 'trk' else load_net(pred, ARM_CKPT[base.removesuffix('-noC').removesuffix('-noA')])
-    m, sec = fast_masks(pred, net, t, noC=base.endswith('-noC'), noA=base.endswith('-noA'), hist=int(h.group(1)) if h else 6)
+    m, sec = fast_masks(pred, net, t, noC=base.endswith('-noC'), noA=base.endswith('-noA'), hist=int(h.group(1)) if h else 6,
+                        feats=feats(t) if feats else None)
     np.savez_compressed(path, masks=m, frames=np.array(t['frames']))
-    print(arm, t['id'], 'saved', path, f'{1000 * sec:.0f} ms/frame', 'mean area px', int(m.sum((1, 2)).mean()))
+    print(arm, t['id'], 'saved', path, f'{1000 * sec:.0f} ms/frame' + (' (encoder shared)' if feats else ''), 'mean area px', int(m.sum((1, 2)).mean()))
 
 
 if __name__ == '__main__':      # dump_arms ARM[,ARM2,...] IDX [IDX2 ...]: one process (SAM2 loaded once, ≈ 5 s per call saved)
-    for a in sys.argv[1].split(','):
-        for i in sys.argv[2:]:
-            main(a, i)
+    from benchmark.nfo_vos.adapter.inference import window_feats
+    arms = sys.argv[1].split(',')
+    for i in sys.argv[2:]:          # window-major: the arms of one window share its encoder pass (identical masks)
+        cache = {}
+        share = (lambda t: cache[t['id']] if t['id'] in cache else cache.setdefault(t['id'], window_feats(image_predictor(), t))) \
+            if sum(a != 'trkbox' for a in arms) > 1 else None
+        for a in arms:
+            main(a, i, share)

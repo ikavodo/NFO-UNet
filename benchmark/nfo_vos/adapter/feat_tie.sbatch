@@ -40,8 +40,7 @@ g=$(grep "AMGAP it 200" $D/train_cl.log); echo "$g"; grep "TIE it 200\|AMGAPC it
 
 export NFO_RUN=fullpass MASK_TAG=@cl
 echo "== dumps seq1 (crossings 0-7) $(date +%T)"
-for i in 0 1 2 3 4 5 6 7; do for a in adapter-feattie adapter-feattie-noC adapter-featbigam adapter-featbigam-noC; do
-  "$PYTHON" -m benchmark.nfo_vos.eval.dump_arms $a $i 2>&1 | tail -1; done; done
+"$PYTHON" -m benchmark.nfo_vos.eval.dump_arms adapter-feattie,adapter-feattie-noC,adapter-featbigam,adapter-featbigam-noC 0 1 2 3 4 5 6 7 2>&1 | grep saved
 L="adapter-feattie@cl adapter-feattie-noC@cl adapter-featbigam@cl adapter-featbigam-noC@cl"
 B=results/benchmark/fullpass/downstream; cp $B/box_gt.csv $B/box_gt_before_tie_cl.bak.csv
 echo "== box $(date +%T)"; "$PYTHON" -m benchmark.nfo_vos.eval.box_metrics score $L 2>&1 | tail -6
